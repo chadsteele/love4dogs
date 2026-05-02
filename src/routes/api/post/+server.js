@@ -201,7 +201,8 @@ export async function POST({ request }) {
 
 		if (!createRecordRes.ok) {
 			cachedSession = null;
-			throw new Error('Failed to publish post to Bluesky.');
+			const errBody = await createRecordRes.json().catch(() => ({}));
+			throw new Error(errBody.message || errBody.error || `Bluesky error ${createRecordRes.status}`);
 		}
 
 		const result = await createRecordRes.json();

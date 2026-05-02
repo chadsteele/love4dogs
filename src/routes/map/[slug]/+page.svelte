@@ -11,6 +11,12 @@
 		<h1>Decoded Location</h1>
 		<p class="meta">Slug: {data.slug}</p>
 		<p class="meta">Coordinates: {data.lat}, {data.lon}</p>
+		{#if data.exactHash}
+			<p class="meta">Exact hash: <code>{data.exactHash}</code></p>
+		{/if}
+		{#if data.approxHash}
+			<p class="meta">Approx hash: <code>{data.approxHash}</code></p>
+		{/if}
 		<p class="meta">
 			<a href={data.mapUrl} target="_blank" rel="noopener noreferrer"
 				>Open in Google Maps</a

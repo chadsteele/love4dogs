@@ -14,16 +14,27 @@ function parseLatLon(value) {
 	return { lat, lon };
 }
 
-function decodeSlug(slug) {
-	const direct = parseLatLon(slug);
-	if (direct) return direct;
-	return hashToGps(slug);
-}
-
 export function load({ params }) {
 	const slug = params.slug || '';
-	const decoded = decodeSlug(slug);
 
+	// Try direct lat,lon first.
+	const direct = parseLatLon(slug);
+	if (direct) {
+		const lat = Number(direct.lat.toFixed(5));
+		const lon = Number(direct.lon.toFixed(5));
+		return {
+			slug,
+			valid: true,
+			lat,
+			lon,
+			approxHash: null,
+			exactHash: null,
+			mapUrl: `https://maps.google.com/?q=${lat},${lon}`
+		};
+	}
+
+	// Decode approx/exact geohash pair (or single hash).
+	const decoded = hashToGps(slug);
 	if (!decoded) {
 		return {
 			slug,
@@ -32,14 +43,17 @@ export function load({ params }) {
 		};
 	}
 
-	const lat = Number(decoded.lat.toFixed(5));
-	const lon = Number(decoded.lon.toFixed(5));
+	// Always use exact coords for the map pin.
+	const lat = Number(decoded.exact.lat.toFixed(5));
+	const lon = Number(decoded.exact.lon.toFixed(5));
 
 	return {
 		slug,
 		valid: true,
 		lat,
 		lon,
+		approxHash: decoded.hashes.approx,
+		exactHash: decoded.hashes.exact,
 		mapUrl: `https://maps.google.com/?q=${lat},${lon}`
 	};
 }
