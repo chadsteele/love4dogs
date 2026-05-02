@@ -5,7 +5,7 @@
 		lookupLocationDetails,
 		lookupLocationWithCache,
 	} from "$lib/utils"
-	import {CircleAlert, ImagePlus, Send} from "lucide-svelte"
+	import {CircleAlert, ClipboardCopy, ImagePlus, Send} from "lucide-svelte"
 	import {goto} from "$app/navigation"
 	import HashTagCloud from "$lib/HashTagCloud.svelte"
 	import LocationPicker from "$lib/LocationPicker.svelte"
@@ -15,6 +15,8 @@
 	const ps = "❤️4🐶s"
 
 	let draft = $state("")
+	let title = $state("")
+	let locationText = $state("")
 	let selectedFiles = $state([])
 	let previews = $state([])
 	let selectedLocation = $state(null)
@@ -23,6 +25,7 @@
 	let posting = $state(false)
 	let postError = $state("")
 	let postSuccess = $state("")
+	let copySuccess = $state(false)
 	let isDraggingFiles = $state(false)
 	let textareaEl = $state(null)
 	let feedTags = $state([])
@@ -112,18 +115,9 @@
 		postError = ""
 	}
 
-	function syncLocationBlockInDraft(location) {
+	function syncLocationText(location) {
 		const nextBlock = buildLocationBlock(location)
-		if (!nextBlock) return
-
-		const withoutExistingBlock = draft
-			.replace(
-				/\n\n📍 https:\/\/love4dogs\.club\/map\/[^\n]+\n[^\n]*/u,
-				"",
-			)
-			.trimEnd()
-
-		draft = `${withoutExistingBlock}${nextBlock}`
+		locationText = nextBlock ? nextBlock.replace(/^\n+/, "") : ""
 	}
 
 	async function updateLocationFromPin(lat, lon) {
@@ -142,7 +136,7 @@
 			zip: "",
 		}
 		locationError = error
-		syncLocationBlockInDraft(selectedLocation)
+		syncLocationText(selectedLocation)
 		locationLoading = false
 	}
 
@@ -153,19 +147,54 @@
 		const {location, error} = await lookupLocationWithCache()
 		selectedLocation = location
 		locationError = error
-		if (location) syncLocationBlockInDraft(location)
+		if (location) syncLocationText(location)
 		locationLoading = false
+	}
+
+	function composeFinalText() {
+		const trimmedTitle = title.trim()
+		const body = draft.trim()
+		const location = locationText.trim()
+		const parts = [trimmedTitle, body, location].filter(Boolean)
+		let text = parts.join("\n\n")
+
+		if (!text.includes(ps)) {
+			const withSignature = text ? `${text}\n${ps}` : ps
+			if ([...withSignature].length <= MAX_CHARS) {
+				text = withSignature
+			}
+		}
+
+		return text
 	}
 
 	async function submitPost() {
 		postError = ""
 		postSuccess = ""
-		const finalText = draft.trim() + (draft.includes(ps) ? "" : `\n${ps}`)
 
-		if (!finalText.trim()) {
+		const trimmedTitle = title.trim()
+		if (!trimmedTitle) {
+			postError = "A title is required."
+			return
+		}
+
+		if ([...trimmedTitle].length <= 5) {
+			postError = "Title must be more than 5 characters."
+			return
+		}
+
+		if ([...trimmedTitle].length > 50) {
+			postError = "Title must be 50 characters or fewer."
+			return
+		}
+
+		const body = draft.trim()
+		if (!body) {
 			postError = "Write something before posting."
 			return
 		}
+
+		const finalText = composeFinalText()
 
 		if ([...finalText].length > MAX_CHARS) {
 			postError = `Post exceeds ${MAX_CHARS} characters with location included.`
@@ -193,6 +222,7 @@
 
 			incrementLocalTags(extractHashtags(finalText))
 			draft = ""
+			locationText = ""
 			selectedLocation = null
 			clearFiles()
 			postSuccess = "Post published successfully."
@@ -204,8 +234,78 @@
 		}
 	}
 
+	async function copyAsHtml() {
+		const trimmedTitle = title.trim()
+		const bodyText = draft.trim()
+		const locationInfo = locationText.trim()
+
+		function escHtml(str) {
+			return str
+				.replace(/&/g, "&amp;")
+				.replace(/</g, "&lt;")
+				.replace(/>/g, "&gt;")
+		}
+
+		function linkify(str) {
+			return escHtml(str).replace(
+				/(https?:\/\/[^\s<]+)/g,
+				'<a href="$1">$1</a>',
+			)
+		}
+
+		const imgTags = await Promise.all(
+			selectedFiles.map(
+				(file) =>
+					new Promise((resolve) => {
+						const reader = new FileReader()
+						reader.onload = (e) =>
+							resolve(
+								`<img src="${e.target.result}" alt="${escHtml(file.name)}" style="max-width:100%;max-height:400px;display:block;margin:4px 0;">`,
+							)
+						reader.readAsDataURL(file)
+					}),
+			),
+		)
+
+		const parts = []
+		if (trimmedTitle)
+			parts.push(
+				`<h2 style="font-weight:700;font-size:1.2em;margin:0 0 10px 0;">${escHtml(trimmedTitle)}</h2>`,
+			)
+		if (bodyText)
+			parts.push(
+				`<p style="margin:0 0 10px 0;white-space:pre-wrap;">${linkify(bodyText).replace(/\n/g, "<br>")}</p>`,
+			)
+		if (locationInfo)
+			parts.push(
+				`<p style="margin:0 0 10px 0;white-space:pre-wrap;">${linkify(locationInfo).replace(/\n/g, "<br>")}</p>`,
+			)
+		if (imgTags.length)
+			parts.push(
+				`<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;">${imgTags.join("")}</div>`,
+			)
+
+		const html = `<div style="font-family:sans-serif;line-height:1.5;">${parts.join("")}</div>`
+
+		try {
+			await navigator.clipboard.write([
+				new ClipboardItem({
+					"text/html": new Blob([html], {type: "text/html"}),
+					"text/plain": new Blob([composeFinalText()], {
+						type: "text/plain",
+					}),
+				}),
+			])
+		} catch {
+			await navigator.clipboard.writeText(composeFinalText())
+		}
+
+		copySuccess = true
+		setTimeout(() => (copySuccess = false), 2000)
+	}
+
 	function remainingChars() {
-		return MAX_CHARS - [...draft].length
+		return MAX_CHARS - [...composeFinalText()].length
 	}
 
 	onMount(() => {
@@ -235,6 +335,23 @@
 	</nav>
 
 	<article class="panel compose">
+		<div class="title-row">
+			<input
+				class="title-input"
+				type="text"
+				bind:value={title}
+				placeholder="Title (required)"
+				maxlength="50"
+				required
+			/>
+			<span
+				class="title-counter"
+				class:title-danger={[...title].length > 45}
+			>
+				{50 - [...title].length}
+			</span>
+		</div>
+
 		<textarea
 			bind:value={draft}
 			bind:this={textareaEl}
@@ -245,12 +362,21 @@
 			ondragleave={onDragLeave}
 			ondrop={onDropFiles}
 		></textarea>
-
-		<HashTagCloud bind:draft {feedTags} {textareaEl} />
+		<textarea
+			class="location-input"
+			bind:value={locationText}
+			placeholder="Location details (auto-updates when map pin moves)"
+			rows="3"
+		></textarea>
 
 		<p class="counter" class:danger={remainingChars() < 0}>
 			{remainingChars()} chars left
 		</p>
+
+		<div>
+			Be sure and add tags so that people will easily find your post!
+		</div>
+		<HashTagCloud bind:draft {feedTags} {textareaEl} />
 
 		{#if locationLoading}
 			<p class="location-status muted">Detecting location…</p>
@@ -281,30 +407,42 @@
 		{/if}
 
 		<div class="toolbar">
-			<label class="icon-btn file-btn" for="images">
-				<ImagePlus size={17} />
-				<span>Add photos</span>
-			</label>
-			<input
-				id="images"
-				type="file"
-				accept="image/*"
-				multiple
-				onchange={handleFiles}
-			/>
-			<p class="drop-hint">
-				Or drag'n drop up to 4 photos onto the text box.
-			</p>
-
-			<button
-				class="post-btn"
-				type="button"
-				onclick={submitPost}
-				disabled={posting}
-			>
-				<Send size={16} />
-				<span>{posting ? "Sharing..." : "Share"}</span>
-			</button>
+			<div class="toolbar-left">
+				<label class="icon-btn file-btn" for="images">
+					<ImagePlus size={17} />
+					<span>Add photos</span>
+				</label>
+				<input
+					id="images"
+					type="file"
+					accept="image/*"
+					multiple
+					onchange={handleFiles}
+				/>
+				<p class="drop-hint">
+					Or drag'n drop up to 4 photos onto the text box.
+				</p>
+			</div>
+			<div class="toolbar-right">
+				<button
+					class="icon-btn copy-btn"
+					type="button"
+					onclick={copyAsHtml}
+					title="Copy as rich HTML for email"
+				>
+					<ClipboardCopy size={16} />
+					<span>{copySuccess ? "Copied!" : "Copy"}</span>
+				</button>
+				<button
+					class="post-btn"
+					type="button"
+					onclick={submitPost}
+					disabled={posting}
+				>
+					<Send size={16} />
+					<span>{posting ? "Sharing..." : "Share"}</span>
+				</button>
+			</div>
 		</div>
 		<div class="location-panel">
 			<h2>Location</h2>
@@ -366,6 +504,31 @@
 	.location-status.muted {
 		color: #8a8a8a;
 	}
+	.title-row {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-bottom: 0.5rem;
+	}
+	.title-input {
+		flex: 1;
+		font: inherit;
+		font-weight: 700;
+		font-size: 1.05rem;
+		border: 1px solid #d7c8b6;
+		border-radius: 12px;
+		padding: 0.6rem 0.75rem;
+		box-sizing: border-box;
+	}
+	.title-counter {
+		font-size: 0.8rem;
+		color: #8a8a8a;
+		white-space: nowrap;
+	}
+	.title-danger {
+		color: #b94a4a;
+		font-weight: 600;
+	}
 	textarea {
 		width: 100%;
 		border: 1px solid #d7c8b6;
@@ -380,6 +543,10 @@
 		background: #ece8d7;
 		border-color: #55724d;
 	}
+	.location-input {
+		min-height: 88px;
+		margin-top: 0.45rem;
+	}
 	.drop-hint {
 		font-size: 0.85rem;
 		color: #5f665f;
@@ -387,8 +554,22 @@
 	.toolbar {
 		display: flex;
 		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
 		gap: 0.55rem;
 		margin-top: 0.75rem;
+	}
+	.toolbar-left {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.55rem;
+	}
+	.toolbar-right {
+		display: flex;
+		align-items: center;
+		gap: 0.55rem;
+		margin-left: auto;
 	}
 	.icon-btn,
 	.post-btn {
@@ -441,24 +622,26 @@
 		margin: 0 0 0.5rem;
 		font-size: 1rem;
 	}
-	.location-copy,
 	.location-coords {
 		margin: 0.55rem 0 0;
 		font-size: 0.9rem;
 		color: #506157;
 	}
 	.preview-grid {
-		display: grid;
-		grid-template-columns: repeat(4, minmax(0, 1fr));
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-start;
 		gap: 0.4rem;
 		margin-top: 0.75rem;
 	}
 	.preview-item {
 		position: relative;
+		width: fit-content;
+		flex: 0 0 auto;
 	}
 	.preview-item img {
-		width: 100%;
-		height: 88px;
+		width: auto;
+		height: 100px;
 		object-fit: cover;
 		border-radius: 10px;
 		display: block;
