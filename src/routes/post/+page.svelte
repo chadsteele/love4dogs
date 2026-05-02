@@ -2,6 +2,7 @@
 	import {onMount} from "svelte"
 	import {buildLocationBlock, lookupLocationWithCache} from "$lib/utils"
 	import {CircleAlert, ImagePlus, Send} from "lucide-svelte"
+	import {goto} from "$app/navigation"
 
 	const LOCAL_TAG_KEY = "love4dogs.tag-counts"
 	const MAX_CHARS = 300
@@ -95,6 +96,13 @@
 		previews = []
 	}
 
+	function removeFile(index) {
+		URL.revokeObjectURL(previews[index].url)
+		selectedFiles = selectedFiles.filter((_, i) => i !== index)
+		previews = previews.filter((_, i) => i !== index)
+		postError = ""
+	}
+
 	function addLocationBlockToDraft(location) {
 		const nextBlock = buildLocationBlock(location)
 		if (!nextBlock) return
@@ -153,6 +161,7 @@
 			selectedLocation = null
 			clearFiles()
 			postSuccess = "Post published successfully."
+			goto("/")
 		} catch (error) {
 			postError = error.message || "Unable to post right now."
 		} finally {
@@ -213,8 +222,16 @@
 
 		{#if previews.length}
 			<div class="preview-grid">
-				{#each previews as item}
-					<img src={item.url} alt={item.name} />
+				{#each previews as item, i}
+					<div class="preview-item">
+						<img src={item.url} alt={item.name} />
+						<button
+							class="remove-photo"
+							type="button"
+							onclick={() => removeFile(i)}
+							aria-label="Remove photo">✕</button
+						>
+					</div>
 				{/each}
 			</div>
 		{/if}
@@ -359,10 +376,32 @@
 		gap: 0.4rem;
 		margin-top: 0.75rem;
 	}
-	.preview-grid img {
+	.preview-item {
+		position: relative;
+	}
+	.preview-item img {
 		width: 100%;
 		height: 88px;
 		object-fit: cover;
 		border-radius: 10px;
+		display: block;
+	}
+	.remove-photo {
+		position: absolute;
+		top: 3px;
+		right: 3px;
+		width: 20px;
+		height: 20px;
+		border-radius: 50%;
+		border: none;
+		background: rgba(0, 0, 0, 0.55);
+		color: #fff;
+		font-size: 10px;
+		line-height: 1;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
 	}
 </style>
