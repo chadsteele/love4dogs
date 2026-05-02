@@ -1,8 +1,14 @@
 <script>
 	import {onMount} from "svelte"
-	import {buildLocationBlock, lookupLocationWithCache} from "$lib/utils"
+	import {
+		buildLocationBlock,
+		lookupLocationDetails,
+		lookupLocationWithCache,
+	} from "$lib/utils"
 	import {CircleAlert, ImagePlus, Send} from "lucide-svelte"
 	import {goto} from "$app/navigation"
+	import HashTagCloud from "$lib/HashTagCloud.svelte"
+	import LocationPicker from "$lib/LocationPicker.svelte"
 
 	const LOCAL_TAG_KEY = "love4dogs.tag-counts"
 	const MAX_CHARS = 300
@@ -18,6 +24,9 @@
 	let postError = $state("")
 	let postSuccess = $state("")
 	let isDraggingFiles = $state(false)
+	let textareaEl = $state(null)
+	let feedTags = $state([])
+	let lastLocationUpdateId = 0
 
 	function extractHashtags(text = "") {
 		const matches = text.match(/(^|\s)#([\p{L}\p{N}_-]+)/gu) || []
@@ -103,12 +112,38 @@
 		postError = ""
 	}
 
-	function addLocationBlockToDraft(location) {
+	function syncLocationBlockInDraft(location) {
 		const nextBlock = buildLocationBlock(location)
 		if (!nextBlock) return
-		if (draft.includes("\n📍 ")) return
 
-		draft = `${draft.trimEnd()}${nextBlock}`
+		const withoutExistingBlock = draft
+			.replace(
+				/\n\n📍 https:\/\/love4dogs\.club\/map\/[^\n]+\n[^\n]*/u,
+				"",
+			)
+			.trimEnd()
+
+		draft = `${withoutExistingBlock}${nextBlock}`
+	}
+
+	async function updateLocationFromPin(lat, lon) {
+		const requestId = ++lastLocationUpdateId
+		locationError = ""
+		locationLoading = true
+
+		const {location, error} = await lookupLocationDetails(lat, lon)
+		if (requestId !== lastLocationUpdateId) return
+
+		selectedLocation = location || {
+			lat,
+			lon,
+			city: "",
+			country: "",
+			zip: "",
+		}
+		locationError = error
+		syncLocationBlockInDraft(selectedLocation)
+		locationLoading = false
 	}
 
 	async function lookupLocation() {
@@ -118,7 +153,7 @@
 		const {location, error} = await lookupLocationWithCache()
 		selectedLocation = location
 		locationError = error
-		if (location) addLocationBlockToDraft(location)
+		if (location) syncLocationBlockInDraft(location)
 		locationLoading = false
 	}
 
@@ -175,6 +210,12 @@
 
 	onMount(() => {
 		lookupLocation()
+		fetch("/api/feed")
+			.then((r) => r.json())
+			.then((j) => {
+				feedTags = (j.commonRecentTags || []).slice(0, 10)
+			})
+			.catch(() => {})
 		return () => {
 			for (const preview of previews) {
 				URL.revokeObjectURL(preview.url)
@@ -196,6 +237,7 @@
 	<article class="panel compose">
 		<textarea
 			bind:value={draft}
+			bind:this={textareaEl}
 			placeholder={"Share your " + ps}
 			rows="7"
 			class:is-dragging={isDraggingFiles}
@@ -203,6 +245,8 @@
 			ondragleave={onDragLeave}
 			ondrop={onDropFiles}
 		></textarea>
+
+		<HashTagCloud bind:draft {feedTags} {textareaEl} />
 
 		<p class="counter" class:danger={remainingChars() < 0}>
 			{remainingChars()} chars left
@@ -261,6 +305,26 @@
 				<Send size={16} />
 				<span>{posting ? "Sharing..." : "Share"}</span>
 			</button>
+		</div>
+		<div class="location-panel">
+			<h2>Location</h2>
+			<div>Please ensure the location is accurate before sharing!</div>
+			<LocationPicker
+				location={selectedLocation}
+				onChange={({lat, lon}) => updateLocationFromPin(lat, lon)}
+			/>
+
+			{#if selectedLocation}
+				<p class="location-coords">
+					{selectedLocation.lat.toFixed(5)}, {selectedLocation.lon.toFixed(
+						5,
+					)}
+					{#if selectedLocation.city || selectedLocation.country}
+						· {selectedLocation.city || "Unknown city"}, {selectedLocation.country ||
+							"Unknown country"}
+					{/if}
+				</p>
+			{/if}
 		</div>
 	</article>
 </main>
@@ -369,6 +433,19 @@
 	}
 	.counter.danger {
 		color: #8e2f21;
+	}
+	.location-panel {
+		margin-top: 1rem;
+	}
+	.location-panel h2 {
+		margin: 0 0 0.5rem;
+		font-size: 1rem;
+	}
+	.location-copy,
+	.location-coords {
+		margin: 0.55rem 0 0;
+		font-size: 0.9rem;
+		color: #506157;
 	}
 	.preview-grid {
 		display: grid;

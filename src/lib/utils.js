@@ -97,6 +97,55 @@ export function buildLocationBlock(location, mapBaseUrl = DEFAULT_MAP_BASE_URL) 
 	return `\n\n📍 ${mapBaseUrl}/${hash.path}\n${details}`;
 }
 
+export async function lookupLocationDetails(lat, lon, options = {}) {
+	const reverseGeoCacheKeyName = options.reverseGeoCacheKey || DEFAULT_REVERSE_GEO_CACHE_KEY;
+	const reverseGeoMaxEntries = options.reverseGeoMaxEntries || DEFAULT_REVERSE_GEO_MAX_ENTRIES;
+	const acceptLanguage = options.acceptLanguage || 'en';
+	const nextLat = Number(lat);
+	const nextLon = Number(lon);
+
+	if (!isValidCoordinate(nextLat, nextLon)) {
+		return {
+			location: null,
+			error: 'Invalid map coordinates.',
+			fromCache: false
+		};
+	}
+
+	let city = '';
+	let country = '';
+	let zip = '';
+	let fromCache = false;
+
+	const reverseGeo = getCachedReverseGeo(reverseGeoCacheKeyName, nextLat, nextLon);
+	if (reverseGeo) {
+		city = reverseGeo.city;
+		country = reverseGeo.country;
+		zip = reverseGeo.zip;
+		fromCache = true;
+	} else {
+		try {
+			const res = await fetch(
+				`https://nominatim.openstreetmap.org/reverse?lat=${nextLat}&lon=${nextLon}&format=json`,
+				{ headers: { 'Accept-Language': acceptLanguage } }
+			);
+			const data = await res.json();
+			city = data?.address?.city || data?.address?.town || data?.address?.village || data?.address?.hamlet || '';
+			country = data?.address?.country || '';
+			zip = data?.address?.postcode || '';
+			setCachedReverseGeo(reverseGeoCacheKeyName, reverseGeoMaxEntries, nextLat, nextLon, { city, country, zip });
+		} catch {
+			// Keep coordinate updates working even if reverse geocoding fails.
+		}
+	}
+
+	return {
+		location: { lat: nextLat, lon: nextLon, city, country, zip },
+		error: '',
+		fromCache
+	};
+}
+
 function getCurrentPosition(options = { enableHighAccuracy: true, timeout: 8000 }) {
 	return new Promise((resolve, reject) => {
 		navigator.geolocation.getCurrentPosition(resolve, reject, options);
@@ -127,33 +176,11 @@ export async function lookupLocationWithCache(options = {}) {
 		const position = await getCurrentPosition({ enableHighAccuracy: true, timeout: 8000 });
 		const lat = Number(position.coords.latitude);
 		const lon = Number(position.coords.longitude);
-
-		let city = '';
-		let country = '';
-		let zip = '';
-
-		const reverseGeo = getCachedReverseGeo(reverseGeoCacheKeyName, lat, lon);
-		if (reverseGeo) {
-			city = reverseGeo.city;
-			country = reverseGeo.country;
-			zip = reverseGeo.zip;
-		} else {
-			try {
-				const res = await fetch(
-					`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`,
-					{ headers: { 'Accept-Language': acceptLanguage } }
-				);
-				const data = await res.json();
-				city = data?.address?.city || data?.address?.town || data?.address?.village || data?.address?.hamlet || '';
-				country = data?.address?.country || '';
-				zip = data?.address?.postcode || '';
-				setCachedReverseGeo(reverseGeoCacheKeyName, reverseGeoMaxEntries, lat, lon, { city, country, zip });
-			} catch {
-				// Keep location data even if reverse geocoding fails.
-			}
-		}
-
-		const location = { lat, lon, city, country, zip };
+		const { location } = await lookupLocationDetails(lat, lon, {
+			reverseGeoCacheKey: reverseGeoCacheKeyName,
+			reverseGeoMaxEntries,
+			acceptLanguage
+		});
 		setCachedLocation(locationCacheKey, location);
 		return { location, error: '', fromCache: false };
 	} catch {

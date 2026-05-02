@@ -1,0 +1,23 @@
+export const defaultHashtags = [
+    'shelter',
+    'urgent',
+    'foster',
+    'adopt',
+    'dogwalker',
+    'petsitter',
+    'volunteer',
+    'wanted',
+    'found',
+    'lost',
+    'rescued',
+    'help',
+    'share',
+    'vetinary',
+    'clinic',
+    'donate',
+    'fundraiser',
+    'event',
+    'training',
+    'behavior',
+
+];
