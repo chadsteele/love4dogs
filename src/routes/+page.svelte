@@ -660,11 +660,15 @@
 
 	.about-modal-close {
 		position: sticky;
-		top: 0.4rem;
-		right: 0.4rem;
+		top: 5px;
+		right: 5px;
 		align-self: flex-end;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 		width: 32px;
 		height: 32px;
+		padding: 0;
 		border-radius: 50%;
 		border: 1px solid rgba(58, 91, 65, 0.24);
 		background: rgba(255, 255, 255, 0.9);
@@ -672,6 +676,7 @@
 		font-size: 1.2rem;
 		line-height: 1;
 		color: #2f4936;
+		box-sizing: border-box;
 		z-index: 10;
 	}
 
