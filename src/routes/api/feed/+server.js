@@ -61,6 +61,7 @@ function mapPost(postWrapper) {
 		uri: post.uri,
 		cid: post.cid,
 		text: record.text || '',
+		facets: Array.isArray(record.facets) ? record.facets : [],
 		createdAt: record.createdAt || null,
 		images,
 		replyCount: post.replyCount || 0,

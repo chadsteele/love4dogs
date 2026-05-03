@@ -12,7 +12,7 @@
 
 	const LOCAL_TAG_KEY = "love4dogs.tag-counts"
 	const MAX_CHARS = 300
-	const ps = "❤️4🐶s"
+	const ps = "" //"❤️4🐶s"
 
 	let draft = $state("")
 	let title = $state("")
