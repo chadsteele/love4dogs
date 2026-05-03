@@ -2,6 +2,8 @@
 	import {defaultHashtags} from "$lib/config"
 
 	const LOCAL_TAG_KEY = "love4dogs.tag-counts"
+	const LOCATION_CACHE_KEY = "love4dogs.location-cache"
+	const LOCATION_PILLS_CACHE_KEY = "love4dogs.location-pill-cache"
 
 	/** @type {{ draft: string, feedTags?: {tag:string}[], textareaEl?: HTMLTextAreaElement|null }} */
 	let {
@@ -12,6 +14,7 @@
 	} = $props()
 
 	let myTags = $state([])
+	let locationTags = $state([])
 
 	$effect(() => {
 		const sourceValue = textareaEl?.value
@@ -37,13 +40,103 @@
 		}
 	})
 
+	function normalizeTagToken(value = "") {
+		return String(value)
+			.trim()
+			.toLowerCase()
+			.replace(/^#/, "")
+			.replace(/[^\p{L}\p{N}_-]+/gu, " ")
+			.replace(/\s+/g, " ")
+	}
+
+	function getPriorityLocationTags(location = {}) {
+		const ordered = [location.country, location.city, location.zip]
+		const seen = new Set()
+		const tags = []
+		for (const raw of ordered) {
+			const token = normalizeTagToken(raw)
+			if (!token || seen.has(token)) continue
+			seen.add(token)
+			tags.push(token)
+		}
+		return tags
+	}
+
+	$effect(() => {
+		if (typeof window === "undefined") return
+
+		let persisted = null
+		try {
+			persisted = JSON.parse(
+				localStorage.getItem(LOCATION_PILLS_CACHE_KEY) || "null",
+			)
+		} catch {
+			persisted = null
+		}
+
+		let cache = null
+		try {
+			cache = JSON.parse(
+				localStorage.getItem(LOCATION_CACHE_KEY) || "null",
+			)
+		} catch {
+			cache = null
+		}
+
+		const persistedTags = Array.isArray(persisted?.tags)
+			? persisted.tags.map(normalizeTagToken).filter(Boolean)
+			: []
+		let nextTags = persistedTags
+
+		const cacheSavedAt = Number(cache?.savedAt) || 0
+		const persistedSavedAt = Number(persisted?.sourceSavedAt) || 0
+		const canRefreshFromLocation =
+			navigator.onLine && cacheSavedAt > 0 && cache?.location
+
+		if (canRefreshFromLocation && cacheSavedAt >= persistedSavedAt) {
+			nextTags = getPriorityLocationTags(cache.location)
+			try {
+				localStorage.setItem(
+					LOCATION_PILLS_CACHE_KEY,
+					JSON.stringify({
+						sourceSavedAt: cacheSavedAt,
+						tags: nextTags,
+					}),
+				)
+			} catch {
+				// Ignore storage write failures.
+			}
+		}
+
+		locationTags = nextTags.slice(0, 3)
+	})
+
+	function extractDraftTerms(text = "") {
+		const terms = []
+		for (const match of String(text).matchAll(/#?[\p{L}\p{N}_-]+/gu)) {
+			const token = (match[0] || "")
+				.replace(/^#/, "")
+				.trim()
+				.toLowerCase()
+			if (token) terms.push(token)
+		}
+		return terms
+	}
+
 	const tags = $derived(() => {
 		const seen = new Set()
 		const result = []
+		const draftTerms = extractDraftTerms(
+			typeof textareaEl?.value === "string" && textareaEl.value.length
+				? textareaEl.value
+				: draft,
+		)
 		for (const tag of [
+			...locationTags,
 			...defaultHashtags,
 			...myTags,
 			...feedTags.map((t) => t.tag),
+			...draftTerms,
 		]) {
 			if (tag && !seen.has(tag)) {
 				seen.add(tag)

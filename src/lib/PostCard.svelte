@@ -1,5 +1,5 @@
 <script>
-	import {Bookmark, Heart, MessageCircle, Repeat2} from "lucide-svelte"
+	import {Heart, MessageCircle, PawPrint, Repeat2} from "lucide-svelte"
 	import {CONTACT_LOCK_PREFIX, decryptContact} from "$lib/utils"
 
 	import Bluesky from "./assets/BlueSkyLogo.svelte"
@@ -13,6 +13,7 @@
 	} = $props()
 
 	let postTextEl = $state(null)
+	let postTitleEl = $state(null)
 
 	const BSKY_HANDLE = "mylove4dogs.bsky.social"
 
@@ -49,25 +50,68 @@
 	}
 
 	function hashtagButton(tag = "") {
-		return `<button type="button" class="inline-hashtag" data-tag="${escapeAttr(tag)}">#${escapeHtml(tag)}</button>`
+		return `<button type="button" class="inline-token inline-hashtag" data-token="${escapeAttr(`#${tag}`)}">#${escapeHtml(tag)}</button>`
+	}
+
+	function wordButton(word = "") {
+		return `<button type="button" class="inline-token inline-word" data-token="${escapeAttr(word)}">${escapeHtml(word)}</button>`
+	}
+
+	function renderInteractiveText(text = "") {
+		if (!text) return ""
+		const tokenRegex = /#?[\p{L}\p{N}_-]+/gu
+		let html = ""
+		let cursor = 0
+
+		for (const match of text.matchAll(tokenRegex)) {
+			const token = match[0]
+			const start = match.index ?? 0
+			html += escapeHtml(text.slice(cursor, start))
+			if (token.startsWith("#") && token.length > 1) {
+				html += hashtagButton(token.slice(1))
+			} else {
+				html += wordButton(token)
+			}
+			cursor = start + token.length
+		}
+
+		html += escapeHtml(text.slice(cursor))
+		return html
 	}
 
 	function handlePostTextClick(event) {
-		const hashtagButton = event.target?.closest?.(".inline-hashtag")
-		if (!hashtagButton) return
+		const tokenButton = event.target?.closest?.(".inline-token")
+		if (!tokenButton) return
 		event.preventDefault()
 		event.stopPropagation()
-		const tag = hashtagButton.getAttribute("data-tag") || ""
-		if (!tag) return
-		onToggleSearchTag(tag)
+		const token = tokenButton.getAttribute("data-token") || ""
+		if (!token) return
+		onToggleSearchTag(token)
+	}
+
+	function handlePostTextMouseDown(event) {
+		const tokenButton = event.target?.closest?.(".inline-token")
+		if (!tokenButton) return
+		// Keep search input focus while clicking words/hashtags.
+		event.preventDefault()
 	}
 
 	$effect(() => {
-		if (!postTextEl) return
+		const clickableEls = [postTitleEl, postTextEl].filter(Boolean)
+		if (clickableEls.length === 0) return
+
 		const onClick = (event) => handlePostTextClick(event)
-		postTextEl.addEventListener("click", onClick)
+		const onMouseDown = (event) => handlePostTextMouseDown(event)
+		for (const el of clickableEls) {
+			el.addEventListener("click", onClick)
+			el.addEventListener("mousedown", onMouseDown)
+		}
+
 		return () => {
-			postTextEl?.removeEventListener("click", onClick)
+			for (const el of clickableEls) {
+				el?.removeEventListener("click", onClick)
+				el?.removeEventListener("mousedown", onMouseDown)
+			}
 		}
 	})
 
@@ -87,19 +131,25 @@
 	}
 
 	function linkifyText(text = "", facets = []) {
-		const linkHashtags = (plainText = "") =>
-			plainText.replace(
-				/(^|[\s(])#([\p{L}\p{N}_-]+)/gu,
-				(_, prefix, tag) => `${prefix}${hashtagButton(tag)}`,
-			)
+		const renderWithUrlRegex = (plainText = "") => {
+			const urlRegex = /(https?:\/\/[^\s<]+)/g
+			let html = ""
+			let cursor = 0
+
+			for (const match of plainText.matchAll(urlRegex)) {
+				const url = match[0]
+				const start = match.index ?? 0
+				html += renderInteractiveText(plainText.slice(cursor, start))
+				html += `<a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`
+				cursor = start + url.length
+			}
+
+			html += renderInteractiveText(plainText.slice(cursor))
+			return html
+		}
 
 		if (!Array.isArray(facets) || facets.length === 0) {
-			return linkHashtags(
-				escapeHtml(text).replace(
-					/(https?:\/\/[^\s<]+)/g,
-					'<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>',
-				),
-			)
+			return renderWithUrlRegex(text)
 		}
 
 		const linkFacets = []
@@ -124,7 +174,7 @@
 		}
 
 		if (linkFacets.length === 0) {
-			return linkHashtags(escapeHtml(text))
+			return renderInteractiveText(text)
 		}
 
 		linkFacets.sort((a, b) => a.byteStart - b.byteStart)
@@ -136,12 +186,12 @@
 			const end = byteOffsetToJsIndex(text, facet.byteEnd)
 			if (start < cursor || end <= start) continue
 
-			html += linkHashtags(escapeHtml(text.slice(cursor, start)))
+			html += renderInteractiveText(text.slice(cursor, start))
 			html += `<a href="${escapeAttr(facet.uri)}" target="_blank" rel="noopener noreferrer">${escapeHtml(text.slice(start, end))}</a>`
 			cursor = end
 		}
 
-		html += linkHashtags(escapeHtml(text.slice(cursor)))
+		html += renderInteractiveText(text.slice(cursor))
 		return html
 	}
 
@@ -267,6 +317,7 @@
 	}
 
 	const parts = $derived(getPostParts(post))
+	const titleHtml = $derived(renderInteractiveText(parts.title))
 	const bodyLines = $derived(
 		buildBodyLines(parts.body, parts.bodyFacets, unlockedBodyLines),
 	)
@@ -286,13 +337,13 @@
 	</button>
 
 	{#if bookmarked}
-		<div class="bookmark-badge" title="Bookmarked">
-			<Bookmark size={16} />
+		<div class="bookmark-badge" title="Favorited">
+			<PawPrint size={16} />
 		</div>
 	{/if}
 
 	{#if parts.title}
-		<h3 class="post-title">{parts.title}</h3>
+		<h3 class="post-title" bind:this={postTitleEl}>{@html titleHtml}</h3>
 	{/if}
 	{#if parts.body}
 		<div class="post-text" bind:this={postTextEl}>
@@ -457,7 +508,8 @@
 		/* width: 100%; */
 		border: none;
 		background: #f5eee3;
-		box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45),
+		box-shadow:
+			inset 0 0 0 1px rgba(255, 255, 255, 0.45),
 			0 1px 4px rgba(74, 49, 24, 0.12);
 		color: #5f4b2d;
 		text-align: left;
@@ -473,15 +525,36 @@
 		text-decoration: underline;
 	}
 
-	.post-text :global(.inline-hashtag) {
+	.post-title :global(.inline-token),
+	.post-text :global(.inline-token) {
 		border: none;
 		padding: 0;
 		margin: 0;
 		background: transparent;
-		color: #2d5f9a;
-		text-decoration: underline;
 		font: inherit;
 		cursor: pointer;
+	}
+
+	.post-title :global(.inline-hashtag),
+	.post-text :global(.inline-hashtag) {
+		color: #2d5f9a;
+		text-decoration: none;
+	}
+
+	.post-title :global(.inline-hashtag:hover),
+	.post-text :global(.inline-hashtag:hover) {
+		text-decoration: underline;
+	}
+
+	.post-title :global(.inline-word),
+	.post-text :global(.inline-word) {
+		color: inherit;
+		text-decoration: none;
+	}
+
+	.post-title :global(.inline-word:hover),
+	.post-text :global(.inline-word:hover) {
+		text-decoration: underline;
 	}
 
 	.post-images {

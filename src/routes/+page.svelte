@@ -261,7 +261,7 @@
 						{#if currentView === "trash"}
 							Trash
 						{:else if currentView === "bookmarks"}
-							Bookmarks
+							Favorites
 						{:else if searchTerm.trim().length > 0}
 							Search Results
 						{:else}

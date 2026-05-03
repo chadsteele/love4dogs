@@ -1,14 +1,14 @@
 <script>
 	import {goto} from "$app/navigation"
 	import {
-		Bookmark,
 		Menu,
 		PawPrint,
 		Search,
 		Trash2,
 		Settings,
-		Heart,
+		Users,
 	} from "lucide-svelte"
+	import {slide} from "svelte/transition"
 	import HashTagCloud from "$lib/HashTagCloud.svelte"
 
 	let {
@@ -29,18 +29,38 @@
 
 	let logoLoaded = $state(true)
 	let searchFocused = $state(false)
+	let cloudPinnedBySignal = $state(false)
+	let cloudHadSearchFocus = $state(false)
 	let lastTagCloudSignal = 0
+	let selectionMenuEl = $state(null)
+	let searchBlurTimer = null
 
 	$effect(() => {
 		if (tagCloudSignal === lastTagCloudSignal) return
 		lastTagCloudSignal = tagCloudSignal
-		searchFocused = true
+		cloudPinnedBySignal = true
+		cloudHadSearchFocus = false
+	})
+
+	$effect(() => {
+		if (!selectionMenuOpen) return
+
+		const onPointerDown = (event) => {
+			if (!selectionMenuEl?.contains(event.target)) {
+				onToggleMenu()
+			}
+		}
+
+		document.addEventListener("pointerdown", onPointerDown)
+		return () => {
+			document.removeEventListener("pointerdown", onPointerDown)
+		}
 	})
 </script>
 
 <nav class="topbar">
 	<div class="topbar-left">
-		<div class="selection-menu-wrap">
+		<div class="selection-menu-wrap" bind:this={selectionMenuEl}>
 			<button
 				class="selection-menu-btn"
 				type="button"
@@ -66,7 +86,7 @@
 							class:is-active={currentView === "bookmarks"}
 							onclick={() => onSetView("bookmarks")}
 						>
-							<Bookmark size={16} /> Show bookmarks
+							<PawPrint size={16} /> Show favorites
 						</button>
 					{/if}
 					{#if trashedCount > 0}
@@ -88,7 +108,7 @@
 							type="button"
 							onclick={() => onSelectionAction("bookmark")}
 						>
-							<Bookmark size={16} /> Bookmark selected
+							<PawPrint size={16} /> Favorite selected
 						</button>
 						<button
 							type="button"
@@ -112,13 +132,13 @@
 							type="button"
 							onclick={() => onSelectionAction("unbookmark")}
 						>
-							<Bookmark size={16} /> Unbookmark selected
+							<PawPrint size={16} /> Remove favorite
 						</button>
 					{/if}
 
 					<div class="menu-sep"></div>
 					<button type="button" onclick={() => goto("/about")}
-						><Heart size={16} />About</button
+						><Users size={16} />About Us</button
 					>
 					<button type="button" onclick={() => goto("/settings")}
 						><Settings size={16} />Settings</button
@@ -154,12 +174,27 @@
 			onSearchSubmit()
 		}}
 		onfocusin={() => {
+			if (searchBlurTimer) {
+				clearTimeout(searchBlurTimer)
+				searchBlurTimer = null
+			}
 			searchFocused = true
+			cloudHadSearchFocus = true
 		}}
 		onfocusout={(event) => {
 			const nextTarget = event.relatedTarget
 			if (nextTarget && event.currentTarget.contains(nextTarget)) return
-			searchFocused = false
+			const searchForm = event.currentTarget
+			if (searchBlurTimer) clearTimeout(searchBlurTimer)
+			searchBlurTimer = setTimeout(() => {
+				if (searchForm?.contains(document.activeElement)) return
+				searchFocused = false
+				if (cloudHadSearchFocus) {
+					cloudPinnedBySignal = false
+					cloudHadSearchFocus = false
+				}
+				searchBlurTimer = null
+			}, 0)
 		}}
 	>
 		<Search size={18} />
@@ -176,8 +211,8 @@
 	<div class="topbar-links">
 		<a class="post-route-btn" href="/post">Create Post</a>
 	</div>
-	{#if searchFocused}
-		<div class="topnav-cloud">
+	{#if searchFocused || cloudPinnedBySignal}
+		<div class="topnav-cloud" transition:slide={{duration: 170, axis: "y"}}>
 			<HashTagCloud bind:draft={searchTerm} feedTags={recentTags} />
 		</div>
 	{/if}
