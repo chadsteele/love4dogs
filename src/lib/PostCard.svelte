@@ -1,5 +1,7 @@
 <script>
-	import {Bookmark} from "lucide-svelte"
+	import {Bookmark, Heart, MessageCircle, Repeat2} from "lucide-svelte"
+
+	import Bluesky from "./assets/BlueSkyLogo.svelte"
 
 	let {
 		post,
@@ -7,6 +9,23 @@
 		bookmarked = false,
 		onToggleSelect = () => {},
 	} = $props()
+
+	const BSKY_HANDLE = "mylove4dogs.bsky.social"
+
+	function bskyUrl(uri = "") {
+		const rkey = uri.split("/").pop()
+		return `https://bsky.app/profile/${BSKY_HANDLE}/post/${rkey}`
+	}
+
+	function formatDate(iso = "") {
+		if (!iso) return ""
+		const d = new Date(iso)
+		return d.toLocaleDateString(undefined, {
+			month: "short",
+			day: "numeric",
+			year: "numeric",
+		})
+	}
 	const utf8Encoder = new TextEncoder()
 
 	function escapeHtml(text = "") {
@@ -132,6 +151,8 @@
 	}
 
 	const parts = $derived(getPostParts(post))
+
+	const comments = $derived(post.comments || [])
 </script>
 
 <article class="post-card">
@@ -166,6 +187,50 @@
 			{/each}
 		</div>
 	{/if}
+
+	<a
+		class="post-footer"
+		href={bskyUrl(post.uri)}
+		target="_blank"
+		rel="noopener noreferrer"
+	>
+		<div class="post-stats">
+			<span class="stat"><Heart size={13} />{post.likeCount}</span>
+			<span class="stat"><Repeat2 size={13} />{post.repostCount}</span>
+			<span class="stat"
+				><MessageCircle size={13} />{post.replyCount}</span
+			>
+			{#if post.createdAt}<span class="stat-date"
+					>{formatDate(post.createdAt)}</span
+				>{/if}
+		</div>
+		{#if post.replyCount > 0 && comments.length > 0}
+			<ul class="comments-list">
+				{#each comments as c}
+					<li class="comment">
+						{#if c.avatar}
+							<img
+								class="comment-avatar"
+								src={c.avatar}
+								alt={`@${c.handle}`}
+								loading="lazy"
+							/>
+						{:else}
+							<span
+								class="comment-avatar comment-avatar-fallback"
+								aria-hidden="true"
+							></span>
+						{/if}
+						<div class="comment-main">
+							<span class="comment-author">@{c.handle}</span>
+							<span class="comment-text">{c.text}</span>
+						</div>
+					</li>
+				{/each}
+			</ul>
+			<div class="comments-more"><Bluesky size={13} />more...</div>
+		{/if}
+	</a>
 </article>
 
 <style>
@@ -261,5 +326,115 @@
 		height: auto;
 		object-fit: cover;
 		border-radius: 9px;
+	}
+
+	.post-footer {
+		display: block;
+		margin-top: 0.6rem;
+		border-top: 1px solid #ede5d8;
+		text-decoration: none;
+		cursor: pointer;
+	}
+
+	.post-stats {
+		display: flex;
+		align-items: center;
+		gap: 0.65rem;
+		flex-wrap: wrap;
+	}
+
+	.stat {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		font-size: 0.8rem;
+		color: #6b7280;
+	}
+
+	.stat-date {
+		font-size: 0.78rem;
+		color: #9ca3af;
+		margin-left: auto;
+	}
+
+	.post-footer .post-stats {
+		padding: 0.4rem 0;
+	}
+
+	.post-footer:hover .stat {
+		color: #1a4a7a;
+	}
+
+	.comments-list {
+		list-style: none;
+		margin: 0 -0.75rem;
+		padding: 0.55rem 0.75rem 0.4rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		width: calc(100% + 1.5rem);
+		background: #faf7f3;
+		border-top: 1px solid #ede5d8;
+	}
+
+	.comment {
+		font-size: 0.82rem;
+		line-height: 1.35;
+		display: flex;
+		align-items: flex-start;
+		gap: 0.5rem;
+	}
+
+	.comment-avatar {
+		width: 18px;
+		height: 18px;
+		border-radius: 999px;
+		object-fit: cover;
+		border: 1px solid #d9ccb9;
+		background: #fff;
+		flex: 0 0 18px;
+		margin-top: 1px;
+	}
+
+	.comment-avatar-fallback {
+		background: #e4ddd2;
+	}
+
+	.comment-main {
+		display: flex;
+		flex-direction: column;
+		gap: 0.08rem;
+		min-width: 0;
+	}
+
+	.comment-author {
+		font-weight: 600;
+		color: #3b6e4f;
+		font-size: 0.78rem;
+	}
+
+	.comment-text {
+		color: #374151;
+		word-break: break-word;
+	}
+
+	.comments-more {
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+		margin: 0 -0.75rem;
+		padding: 0.35rem 0.75rem;
+		width: calc(100% + 1.5rem);
+		background: #f3ede6;
+		border-top: 1px solid #ede5d8;
+		font-size: 0.78rem;
+		color: #2d5f9a;
+		text-align: left;
+		text-decoration: none;
+	}
+
+	.post-footer:hover .comments-more {
+		color: #1a4a7a;
+		text-decoration: none;
 	}
 </style>

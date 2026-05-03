@@ -11,6 +11,8 @@
 		normalizeContactInput,
 	} from "$lib/utils"
 	import {
+		ChevronDown,
+		ChevronRight,
 		CircleAlert,
 		ClipboardCopy,
 		Eye,
@@ -22,6 +24,7 @@
 	import {goto} from "$app/navigation"
 	import HashTagCloud from "$lib/HashTagCloud.svelte"
 	import LocationPicker from "$lib/LocationPicker.svelte"
+	import TopBar from "$lib/TopBar.svelte"
 
 	const LOCAL_TAG_KEY = "love4dogs.tag-counts"
 	const MAX_CHARS = 300
@@ -43,6 +46,8 @@
 	let textareaEl = $state(null)
 	let feedTags = $state([])
 	let lastLocationUpdateId = 0
+	let hideLocation = $state(false)
+	let tagsDrawerOpen = $state(true)
 
 	const LOCAL_CONTACT_KEY = "love4dogs.contact"
 	function loadContactState() {
@@ -366,7 +371,7 @@
 
 <main class="page">
 	<nav class="topline">
-		<a class="back" href="/">＜ Back to feed</a>
+		<a class="back" href="/">＜ Back home</a>
 		<h1>Create a post</h1>
 	</nav>
 
@@ -391,19 +396,83 @@
 		<textarea
 			bind:value={draft}
 			bind:this={textareaEl}
-			placeholder={"Share your " + ps}
+			placeholder={"Share your ❤️ for dogs..."}
 			rows="7"
 			class:is-dragging={isDraggingFiles}
 			ondragover={onDragOver}
 			ondragleave={onDragLeave}
 			ondrop={onDropFiles}
 		></textarea>
-		<textarea
-			class="location-input"
-			bind:value={locationText}
-			placeholder="Location details (auto-updates when map pin moves)"
-			rows="3"
-		></textarea>
+		<div class="tags-drawer">
+			<div>
+				<label>
+					<button
+						type="button"
+						class="tags-drawer-toggle"
+						onclick={() => (tagsDrawerOpen = !tagsDrawerOpen)}
+						aria-expanded={tagsDrawerOpen}
+					>
+						{#if tagsDrawerOpen}
+							<ChevronDown size={16} />
+						{:else}
+							<ChevronRight size={16} />
+						{/if}
+					</button>
+					Be sure and add tags so that people will easily find your post!
+				</label>
+			</div>
+			{#if tagsDrawerOpen}
+				<div class="tags-drawer-content">
+					<HashTagCloud bind:draft {feedTags} {textareaEl} />
+				</div>
+			{/if}
+		</div>
+
+		<div class="location-panel">
+			<label class="hide-location-label">
+				<button
+					type="button"
+					class="location-check-btn"
+					class:is-active={hideLocation}
+					onclick={() => (hideLocation = !hideLocation)}
+					aria-label={hideLocation ? "Show map" : "Hide map"}
+					><span class="location-check-dot"
+						>{hideLocation ? "✓" : ""}</span
+					></button
+				>
+				<h2>
+					{hideLocation ? "Location Confirmed" : "Confirm Location"}
+				</h2>
+			</label>
+			{#if !hideLocation}
+				<div>
+					Please ensure the location is accurate before sharing!
+				</div>
+				<LocationPicker
+					location={selectedLocation}
+					onChange={({lat, lon}) => updateLocationFromPin(lat, lon)}
+				/>
+
+				{#if selectedLocation}
+					<p class="location-coords">
+						{selectedLocation.lat.toFixed(5)}, {selectedLocation.lon.toFixed(
+							5,
+						)}
+						{#if selectedLocation.city || selectedLocation.country}
+							· {selectedLocation.city || "Unknown city"}, {selectedLocation.country ||
+								"Unknown country"}
+						{/if}
+					</p>
+				{/if}
+				<textarea
+					class="location-input"
+					bind:value={locationText}
+					placeholder="Location details (auto-updates when map pin moves)"
+					rows="3"
+				></textarea>
+			{/if}
+		</div>
+
 		<div class="contact-row">
 			<input
 				class="contact-input"
@@ -477,11 +546,6 @@
 			{remainingChars()} chars left
 		</p>
 
-		<div>
-			Be sure and add tags so that people will easily find your post!
-		</div>
-		<HashTagCloud bind:draft {feedTags} {textareaEl} />
-
 		{#if locationLoading}
 			<p class="location-status muted">Detecting location…</p>
 		{:else if locationError}
@@ -547,26 +611,6 @@
 					<span>{posting ? "Sending..." : "Submit"}</span>
 				</button>
 			</div>
-		</div>
-		<div class="location-panel">
-			<h2>Location</h2>
-			<div>Please ensure the location is accurate before sharing!</div>
-			<LocationPicker
-				location={selectedLocation}
-				onChange={({lat, lon}) => updateLocationFromPin(lat, lon)}
-			/>
-
-			{#if selectedLocation}
-				<p class="location-coords">
-					{selectedLocation.lat.toFixed(5)}, {selectedLocation.lon.toFixed(
-						5,
-					)}
-					{#if selectedLocation.city || selectedLocation.country}
-						· {selectedLocation.city || "Unknown city"}, {selectedLocation.country ||
-							"Unknown country"}
-					{/if}
-				</p>
-			{/if}
 		</div>
 	</article>
 </main>
@@ -793,12 +837,66 @@
 	.counter.danger {
 		color: #8e2f21;
 	}
+	.tags-drawer {
+		margin-top: 0.6rem;
+	}
+	.tags-drawer-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		border: none;
+		background: transparent;
+		padding: 0;
+		font: inherit;
+		font-size: 0.9rem;
+		font-weight: 600;
+		color: #3b6e4f;
+		cursor: pointer;
+		user-select: none;
+		-webkit-tap-highlight-color: transparent;
+	}
+	.tags-drawer-toggle:hover {
+		color: #305741;
+	}
+	.tags-drawer-content {
+		margin-top: 0.45rem;
+	}
 	.location-panel {
 		margin-top: 1rem;
 	}
-	.location-panel h2 {
-		margin: 0 0 0.5rem;
+	.hide-location-label {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		cursor: pointer;
+		margin-bottom: 0.5rem;
+	}
+	.hide-location-label h2 {
+		margin: 0;
 		font-size: 1rem;
+	}
+	.location-check-btn {
+		width: 28px;
+		height: 28px;
+		border-radius: 50%;
+		border: 1px solid rgba(60, 60, 60, 0.35);
+		background: rgba(255, 255, 255, 0.92);
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
+		flex-shrink: 0;
+	}
+	.location-check-btn.is-active {
+		background: #3b6e4f;
+		border-color: #305741;
+		color: #fff;
+	}
+	.location-check-dot {
+		font-size: 0.85rem;
+		line-height: 1;
+		font-weight: 700;
 	}
 	.location-coords {
 		margin: 0.55rem 0 0;

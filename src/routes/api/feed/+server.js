@@ -1,5 +1,29 @@
+import { env } from '$env/dynamic/private';
+
 const BSKY_PUBLIC_XRPC_HOSTS = ['https://api.bsky.app/xrpc', 'https://public.api.bsky.app/xrpc'];
+const BSKY_AUTH_XRPC = 'https://bsky.social/xrpc';
 const ACCOUNT_HANDLE = 'mylove4dogs.bsky.social';
+
+let cachedSession = null;
+
+async function getSession() {
+	if (cachedSession?.accessJwt) return cachedSession;
+	const identifier = env.BSKY_USERNAME || env.username;
+	const secret = env.BSKY_PASSWORD || env.password;
+	if (!identifier || !secret) return null;
+	try {
+		const res = await fetch(`${BSKY_AUTH_XRPC}/com.atproto.server.createSession`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ identifier, password: secret })
+		});
+		if (!res.ok) return null;
+		cachedSession = await res.json();
+		return cachedSession;
+	} catch {
+		return null;
+	}
+}
 
 const hashtagRegex = /(^|\s)#([\p{L}\p{N}_-]+)/gu;
 
@@ -66,8 +90,15 @@ function mapPost(postWrapper) {
 		images,
 		replyCount: post.replyCount || 0,
 		repostCount: post.repostCount || 0,
-		likeCount: post.likeCount || 0
+		likeCount: post.likeCount || 0,
+		comments: []
 	};
+}
+
+function isReplyPost(item) {
+	const post = item?.post || item;
+	const record = post?.record || {};
+	return Boolean(item?.reply || record?.reply?.parent?.uri || record?.reply?.root?.uri);
 }
 
 async function xrpcGet(pathAndQuery, options) {
@@ -88,6 +119,32 @@ async function xrpcGet(pathAndQuery, options) {
 	}
 
 	return { response: null, host: null, failures };
+}
+
+async function fetchComments(uri) {
+	try {
+		const session = await getSession();
+		const threadUrl = `${BSKY_AUTH_XRPC}/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}&depth=1`;
+		const headers = { Accept: 'application/json' };
+		if (session?.accessJwt) headers['Authorization'] = `Bearer ${session.accessJwt}`;
+		const res = await fetch(threadUrl, { headers });
+		if (!res.ok) return [];
+		const json = await res.json();
+		const replies = json?.thread?.replies || [];
+		return replies
+			.filter(r => r.$type === 'app.bsky.feed.defs#threadViewPost' && r.post?.record?.text)
+			.map(r => ({
+				handle: r.post.author?.handle || 'unknown',
+				displayName: r.post.author?.displayName || r.post.author?.handle || 'unknown',
+				avatar: r.post.author?.avatar || '',
+				text: r.post.record.text,
+				createdAt: r.post.record.createdAt || ''
+			}))
+			.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+			.slice(0, 3);
+	} catch {
+		return [];
+	}
 }
 
 export async function GET({ url }) {
@@ -118,10 +175,23 @@ export async function GET({ url }) {
 	}
 
 	const authorFeedJson = await authorFeedRes.json();
-	const feedItems = authorFeedJson.feed || [];
+	const feedItems = (authorFeedJson.feed || []).filter((item) => !isReplyPost(item));
 	const commonRecentTags = countTopTags(feedItems, 20);
 
 	let posts = feedItems.map(mapPost);
+
+	// fetch comments for posts that have replies, in parallel
+	const postsWithReplies = posts.filter(p => p.replyCount > 0);
+	if (postsWithReplies.length > 0) {
+		const results = await Promise.allSettled(
+			postsWithReplies.map(p => fetchComments(p.uri))
+		);
+		results.forEach((result, i) => {
+			if (result.status === 'fulfilled') {
+				postsWithReplies[i].comments = result.value;
+			}
+		});
+	}
 
 	if (query) {
 		const searchPath = `app.bsky.feed.searchPosts?q=${encodeURIComponent(query)}&author=${encodeURIComponent(ACCOUNT_HANDLE)}&limit=30`;
@@ -141,7 +211,9 @@ export async function GET({ url }) {
 		}
 
 		const searchJson = await searchRes.json();
-		posts = (searchJson.posts || []).map((post) => mapPost({ post }));
+		posts = (searchJson.posts || [])
+			.filter((post) => !isReplyPost(post))
+			.map((post) => mapPost({ post }));
 	}
 
 	return new Response(
