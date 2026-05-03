@@ -362,15 +362,8 @@
 					}
 				}}
 			>
-				<button
-					class="about-modal-close"
-					onclick={closeAboutModal}
-					aria-label="Close about modal"
-				>
-					×
-				</button>
 				<div id="about-modal-title">
-					<About mode="modal" />
+					<About mode="modal" onClose={closeAboutModal} />
 				</div>
 			</div>
 		</div>
@@ -656,32 +649,6 @@
 		border-radius: 16px;
 		box-shadow: 0 18px 45px rgba(65, 42, 20, 0.28);
 		padding: 1rem 1rem 0.9rem;
-	}
-
-	.about-modal-close {
-		position: sticky;
-		top: 5px;
-		right: 5px;
-		align-self: flex-end;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 32px;
-		height: 32px;
-		padding: 0;
-		border-radius: 50%;
-		border: 1px solid rgba(58, 91, 65, 0.24);
-		background: rgba(255, 255, 255, 0.9);
-		cursor: pointer;
-		font-size: 1.2rem;
-		line-height: 1;
-		color: #2f4936;
-		box-sizing: border-box;
-		z-index: 10;
-	}
-
-	.about-modal-close:hover {
-		background: rgba(243, 250, 244, 0.95);
 	}
 
 	@media (max-width: 900px) {

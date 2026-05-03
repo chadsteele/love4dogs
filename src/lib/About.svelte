@@ -1,9 +1,9 @@
 <script>
-	import {Share2} from "lucide-svelte"
+	import {Share2, X} from "lucide-svelte"
 	import {onMount} from "svelte"
 	import {goto} from "$app/navigation"
 
-	let {mode = "page"} = $props()
+	let {mode = "page", onClose} = $props()
 	const isModal = mode === "modal"
 
 	const siteUrl = "https://love4dogs.club"
@@ -89,6 +89,12 @@
 				<Share2 size="16" />
 				Share
 			</button>
+			{#if onClose}
+				<button class="nav-btn close-btn" onclick={onClose}>
+					<X size="16" />
+					Close
+				</button>
+			{/if}
 			{#if shareStatus}
 				<p class="share-status">{shareStatus}</p>
 			{/if}
@@ -205,9 +211,16 @@
 	}
 
 	.share-row {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
 		margin-top: 1rem;
 		padding-top: 0.9rem;
 		border-top: 1px solid rgba(58, 91, 65, 0.15);
+	}
+
+	.close-btn {
+		margin-left: auto;
 	}
 
 	.share-status {
