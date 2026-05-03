@@ -657,7 +657,7 @@
 	}
 
 	.about-modal-close {
-		position: absolute;
+		position: sticky;
 		top: 0.4rem;
 		right: 0.4rem;
 		width: 32px;
@@ -669,6 +669,9 @@
 		font-size: 1.2rem;
 		line-height: 1;
 		color: #2f4936;
+		align-self: flex-start;
+		margin-left: auto;
+		z-index: 10;
 	}
 
 	.about-modal-close:hover {
