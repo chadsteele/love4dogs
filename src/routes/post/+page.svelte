@@ -155,14 +155,22 @@
 		const image = await loadImageFile(file)
 		const scaleToBounds = Math.min(
 			1,
-			MAX_MEDIA_DIMENSION / Math.max(image.naturalWidth, image.naturalHeight),
+			MAX_MEDIA_DIMENSION /
+				Math.max(image.naturalWidth, image.naturalHeight),
 		)
-		const baseWidth = Math.max(1, Math.round(image.naturalWidth * scaleToBounds))
-		const baseHeight = Math.max(1, Math.round(image.naturalHeight * scaleToBounds))
+		const baseWidth = Math.max(
+			1,
+			Math.round(image.naturalWidth * scaleToBounds),
+		)
+		const baseHeight = Math.max(
+			1,
+			Math.round(image.naturalHeight * scaleToBounds),
+		)
 
 		const canvas = document.createElement("canvas")
 		const context = canvas.getContext("2d")
-		if (!context) throw new Error("Unable to process image on this browser.")
+		if (!context)
+			throw new Error("Unable to process image on this browser.")
 
 		let attemptScale = 1
 		let lastBlob = null
@@ -206,7 +214,9 @@
 	}
 
 	async function addMedia(files) {
-		const pickedFiles = files.filter((file) => file instanceof File && file.size > 0)
+		const pickedFiles = files.filter(
+			(file) => file instanceof File && file.size > 0,
+		)
 		if (!pickedFiles.length) return
 
 		const normalized = []
@@ -233,8 +243,12 @@
 		}
 
 		let merged = [...dedupe.values()]
-		const imageCount = merged.filter((file) => file.type.startsWith("image/")).length
-		const videoCount = merged.filter((file) => file.type.startsWith("video/")).length
+		const imageCount = merged.filter((file) =>
+			file.type.startsWith("image/"),
+		).length
+		const videoCount = merged.filter((file) =>
+			file.type.startsWith("video/"),
+		).length
 
 		if (imageCount > 0 && videoCount > 0) {
 			postError = "Choose either photos or one video per post."
@@ -248,7 +262,9 @@
 
 		if (imageCount > MAX_ATTACHMENTS) {
 			postError = "Only 4 photos are allowed."
-			merged = merged.filter((file) => file.type.startsWith("image/")).slice(0, MAX_ATTACHMENTS)
+			merged = merged
+				.filter((file) => file.type.startsWith("image/"))
+				.slice(0, MAX_ATTACHMENTS)
 		}
 
 		if (merged.length > MAX_ATTACHMENTS) {
@@ -410,8 +426,12 @@
 			return
 		}
 
-		const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/"))
-		const videoFiles = selectedFiles.filter((file) => file.type.startsWith("video/"))
+		const imageFiles = selectedFiles.filter((file) =>
+			file.type.startsWith("image/"),
+		)
+		const videoFiles = selectedFiles.filter((file) =>
+			file.type.startsWith("video/"),
+		)
 
 		if (imageFiles.length > 0 && videoFiles.length > 0) {
 			postError = "Choose either photos or one video per post."
@@ -476,8 +496,12 @@
 			)
 		}
 
-		const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/"))
-		const videoFiles = selectedFiles.filter((file) => file.type.startsWith("video/"))
+		const imageFiles = selectedFiles.filter((file) =>
+			file.type.startsWith("image/"),
+		)
+		const videoFiles = selectedFiles.filter((file) =>
+			file.type.startsWith("video/"),
+		)
 
 		const imgTags = await Promise.all(
 			imageFiles.map(
@@ -763,7 +787,8 @@
 					<div class="preview-item">
 						{#if item.kind === "video"}
 							<!-- svelte-ignore a11y_media_has_caption (local upload preview) -->
-							<video src={item.url} controls preload="metadata"></video>
+							<video src={item.url} controls preload="metadata"
+							></video>
 						{:else}
 							<img src={item.url} alt={item.name} />
 						{/if}
@@ -792,7 +817,8 @@
 					onchange={handleFiles}
 				/>
 				<p class="drop-hint">
-					Drag and drop up to 4 photos or one video (images are converted to PNG).
+					Drag and drop up to 4 photos or one video (images are
+					converted to PNG).
 				</p>
 			</div>
 			<div class="toolbar-right">
