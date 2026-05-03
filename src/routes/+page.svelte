@@ -106,6 +106,27 @@
 		}
 	}
 
+	function storeRecentTag(tag) {
+		if (typeof window === "undefined") return
+		const normalized = String(tag || "")
+			.trim()
+			.toLowerCase()
+			.replace(/^#/, "")
+			.replace(/[^\p{L}\p{N}_-]+/gu, "")
+		if (!normalized) return
+
+		try {
+			const counts = JSON.parse(
+				localStorage.getItem(LOCAL_TAG_KEY) || "{}",
+			)
+			counts[normalized] = (Number(counts[normalized]) || 0) + 1
+			localStorage.setItem(LOCAL_TAG_KEY, JSON.stringify(counts))
+			loadLocalTagCounts()
+		} catch {
+			// Ignore storage errors.
+		}
+	}
+
 	async function loadFeed() {
 		const requestId = ++lastFeedRequestId
 		loadingPosts = true
@@ -273,6 +294,8 @@
 			.toLowerCase()
 		if (!normalized) return
 
+		storeRecentTag(normalized)
+
 		const current = searchTerm.split(/\s+/).filter(Boolean)
 		const next = current.filter(
 			(token) => token.toLowerCase().replace(/^#/, "") !== normalized,
@@ -283,6 +306,12 @@
 		searchTerm = next.join(" ")
 		tagCloudSignal += 1
 	}
+
+	const isSearchResultsEmpty = $derived(
+		currentView === "feed" &&
+			searchTerm.trim().length > 0 &&
+			visiblePosts().length === 0,
+	)
 
 	onMount(() => {
 		if (typeof window !== "undefined") {
@@ -395,6 +424,9 @@
 							Favorites
 						{:else if searchTerm.trim().length > 0}
 							Search Results
+							{#if isSearchResultsEmpty}
+								<span class="results-empty-pill">(empty)</span>
+							{/if}
 						{:else}
 							Recent Posts
 						{/if}
@@ -422,7 +454,14 @@
 			{:else if feedError}
 				<p class="warning"><CircleAlert size={15} /> {feedError}</p>
 			{:else if visiblePosts().length === 0}
-				<p class="muted">No posts match this search.</p>
+				{#if searchTerm.trim().length > 0 && currentView === "feed"}
+					<p class="muted">No posts match this search.</p>
+					<p class="muted empty-search-results">
+						Search Results: empty
+					</p>
+				{:else}
+					<p class="muted">No posts match this view.</p>
+				{/if}
 			{:else}
 				<div class="post-list">
 					{#each visiblePosts() as post}
@@ -534,6 +573,13 @@
 		white-space: nowrap;
 	}
 
+	.results-empty-pill {
+		margin-left: 0.35rem;
+		font-size: 0.8rem;
+		font-weight: 500;
+		color: #8e2f21;
+	}
+
 	.select-all-btn {
 		width: 28px;
 		height: 28px;
@@ -567,6 +613,10 @@
 	.muted {
 		color: #5f665f;
 		margin: 0.45rem 0 0.85rem;
+	}
+
+	.empty-search-results {
+		margin-top: -0.45rem;
 	}
 
 	.warning {

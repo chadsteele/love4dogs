@@ -25,6 +25,7 @@
 	})
 
 	$effect(() => {
+		draft
 		if (typeof window === "undefined") return
 		try {
 			const counts = JSON.parse(
