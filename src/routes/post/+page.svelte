@@ -28,6 +28,10 @@
 
 	const LOCAL_TAG_KEY = "love4dogs.tag-counts"
 	const MAX_CHARS = 300
+	const MAX_ATTACHMENTS = 4
+	const MAX_IMAGE_SIZE_BYTES = 2 * 1024 * 1024
+	const MAX_VIDEO_SIZE_BYTES = 100 * 1024 * 1024
+	const MAX_MEDIA_DIMENSION = 4000
 	const ps = "" //"❤️4🐶s"
 
 	let draft = $state("")
@@ -95,32 +99,173 @@
 
 		previews = selectedFiles.map((file) => ({
 			name: file.name,
+			kind: file.type.startsWith("video/") ? "video" : "image",
 			url: URL.createObjectURL(file),
 		}))
 	}
 
-	function addImages(files) {
-		const nextFiles = files.filter(
-			(file) => file instanceof File && file.type.startsWith("image/"),
+	function replaceFileExt(fileName = "", nextExt = ".png") {
+		if (!fileName) return `upload${nextExt}`
+		const withoutExt = fileName.replace(/\.[^/.]+$/, "")
+		return `${withoutExt}${nextExt}`
+	}
+
+	function canvasToPngBlob(canvas) {
+		return new Promise((resolve) => {
+			canvas.toBlob((blob) => resolve(blob), "image/png")
+		})
+	}
+
+	function loadImageFile(file) {
+		return new Promise((resolve, reject) => {
+			const objectUrl = URL.createObjectURL(file)
+			const image = new Image()
+			image.onload = () => {
+				URL.revokeObjectURL(objectUrl)
+				resolve(image)
+			}
+			image.onerror = () => {
+				URL.revokeObjectURL(objectUrl)
+				reject(new Error(`Unable to read image: ${file.name}`))
+			}
+			image.src = objectUrl
+		})
+	}
+
+	function loadVideoMetadata(file) {
+		return new Promise((resolve, reject) => {
+			const objectUrl = URL.createObjectURL(file)
+			const video = document.createElement("video")
+			video.preload = "metadata"
+			video.onloadedmetadata = () => {
+				const width = video.videoWidth || 0
+				const height = video.videoHeight || 0
+				URL.revokeObjectURL(objectUrl)
+				resolve({width, height})
+			}
+			video.onerror = () => {
+				URL.revokeObjectURL(objectUrl)
+				reject(new Error(`Unable to read video metadata: ${file.name}`))
+			}
+			video.src = objectUrl
+		})
+	}
+
+	async function normalizeImageFile(file) {
+		const image = await loadImageFile(file)
+		const scaleToBounds = Math.min(
+			1,
+			MAX_MEDIA_DIMENSION / Math.max(image.naturalWidth, image.naturalHeight),
 		)
-		if (!nextFiles.length) return
+		const baseWidth = Math.max(1, Math.round(image.naturalWidth * scaleToBounds))
+		const baseHeight = Math.max(1, Math.round(image.naturalHeight * scaleToBounds))
+
+		const canvas = document.createElement("canvas")
+		const context = canvas.getContext("2d")
+		if (!context) throw new Error("Unable to process image on this browser.")
+
+		let attemptScale = 1
+		let lastBlob = null
+
+		for (let i = 0; i < 9; i += 1) {
+			const width = Math.max(1, Math.round(baseWidth * attemptScale))
+			const height = Math.max(1, Math.round(baseHeight * attemptScale))
+			canvas.width = width
+			canvas.height = height
+			context.clearRect(0, 0, width, height)
+			context.drawImage(image, 0, 0, width, height)
+
+			const blob = await canvasToPngBlob(canvas)
+			if (!blob) throw new Error(`Unable to convert image: ${file.name}`)
+			lastBlob = blob
+
+			if (blob.size <= MAX_IMAGE_SIZE_BYTES) {
+				return new File([blob], replaceFileExt(file.name, ".png"), {
+					type: "image/png",
+					lastModified: Date.now(),
+				})
+			}
+
+			attemptScale *= 0.86
+		}
+
+		throw new Error(
+			`Image ${file.name} is too large after conversion. Keep it under 2 MB and 4000x4000.`,
+		)
+	}
+
+	async function validateVideoFile(file) {
+		if (file.size > MAX_VIDEO_SIZE_BYTES) {
+			throw new Error(`Video ${file.name} exceeds 100 MB.`)
+		}
+		const {width, height} = await loadVideoMetadata(file)
+		if (width > MAX_MEDIA_DIMENSION || height > MAX_MEDIA_DIMENSION) {
+			throw new Error(`Video ${file.name} exceeds 4000x4000 dimensions.`)
+		}
+		return file
+	}
+
+	async function addMedia(files) {
+		const pickedFiles = files.filter((file) => file instanceof File && file.size > 0)
+		if (!pickedFiles.length) return
+
+		const normalized = []
+		for (const file of pickedFiles) {
+			if (file.type.startsWith("image/")) {
+				normalized.push(await normalizeImageFile(file))
+				continue
+			}
+			if (file.type.startsWith("video/")) {
+				normalized.push(await validateVideoFile(file))
+				continue
+			}
+		}
+
+		if (!normalized.length) {
+			postError = "Only images and videos are supported."
+			return
+		}
 
 		const dedupe = new Map()
-		for (const file of [...selectedFiles, ...nextFiles]) {
+		for (const file of [...selectedFiles, ...normalized]) {
 			const key = `${file.name}-${file.size}-${file.lastModified}`
 			if (!dedupe.has(key)) dedupe.set(key, file)
 		}
 
-		const merged = [...dedupe.values()]
-		if (merged.length > 4) postError = "Only 4 photos are allowed."
+		let merged = [...dedupe.values()]
+		const imageCount = merged.filter((file) => file.type.startsWith("image/")).length
+		const videoCount = merged.filter((file) => file.type.startsWith("video/")).length
 
-		selectedFiles = merged.slice(0, 4)
+		if (imageCount > 0 && videoCount > 0) {
+			postError = "Choose either photos or one video per post."
+			return
+		}
+
+		if (videoCount > 1) {
+			postError = "Only one video is allowed per post."
+			return
+		}
+
+		if (imageCount > MAX_ATTACHMENTS) {
+			postError = "Only 4 photos are allowed."
+			merged = merged.filter((file) => file.type.startsWith("image/")).slice(0, MAX_ATTACHMENTS)
+		}
+
+		if (merged.length > MAX_ATTACHMENTS) {
+			merged = merged.slice(0, MAX_ATTACHMENTS)
+		}
+
+		selectedFiles = merged
 		updatePreviews()
 	}
 
-	function handleFiles(event) {
+	async function handleFiles(event) {
 		postError = ""
-		addImages([...(event.currentTarget.files || [])])
+		try {
+			await addMedia([...(event.currentTarget.files || [])])
+		} catch (error) {
+			postError = error.message || "Unable to add selected files."
+		}
 		event.currentTarget.value = ""
 	}
 
@@ -150,13 +295,17 @@
 		isDraggingFiles = dragDepth > 0
 	}
 
-	function onDropFiles(event) {
+	async function onDropFiles(event) {
 		if (!isFileDrag(event)) return
 		event.preventDefault()
 		dragDepth = 0
 		isDraggingFiles = false
 		postError = ""
-		addImages([...(event.dataTransfer?.files || [])])
+		try {
+			await addMedia([...(event.dataTransfer?.files || [])])
+		} catch (error) {
+			postError = error.message || "Unable to add dropped files."
+		}
 	}
 
 	function clearFiles() {
@@ -261,8 +410,21 @@
 			return
 		}
 
-		if (selectedFiles.length > 4) {
+		const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/"))
+		const videoFiles = selectedFiles.filter((file) => file.type.startsWith("video/"))
+
+		if (imageFiles.length > 0 && videoFiles.length > 0) {
+			postError = "Choose either photos or one video per post."
+			return
+		}
+
+		if (imageFiles.length > MAX_ATTACHMENTS) {
 			postError = "Only 4 photos are allowed."
+			return
+		}
+
+		if (videoFiles.length > 1) {
+			postError = "Only one video is allowed per post."
 			return
 		}
 
@@ -270,7 +432,8 @@
 		try {
 			const formData = new FormData()
 			formData.append("text", finalText)
-			for (const file of selectedFiles) formData.append("images", file)
+			for (const file of imageFiles) formData.append("images", file)
+			for (const file of videoFiles) formData.append("videos", file)
 
 			const res = await fetch("/api/post", {
 				method: "POST",
@@ -313,8 +476,11 @@
 			)
 		}
 
+		const imageFiles = selectedFiles.filter((file) => file.type.startsWith("image/"))
+		const videoFiles = selectedFiles.filter((file) => file.type.startsWith("video/"))
+
 		const imgTags = await Promise.all(
-			selectedFiles.map(
+			imageFiles.map(
 				(file) =>
 					new Promise((resolve) => {
 						const reader = new FileReader()
@@ -343,6 +509,10 @@
 		if (imgTags.length)
 			parts.push(
 				`<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;">${imgTags.join("")}</div>`,
+			)
+		if (videoFiles.length)
+			parts.push(
+				`<p style="margin:8px 0 0 0;"><strong>Video attached:</strong> ${escHtml(videoFiles[0].name)}</p>`,
 			)
 
 		const html = `<div style="font-family:sans-serif;line-height:1.5;">${parts.join("")}</div>`
@@ -591,7 +761,12 @@
 			<div class="preview-grid">
 				{#each previews as item, i}
 					<div class="preview-item">
-						<img src={item.url} alt={item.name} />
+						{#if item.kind === "video"}
+							<!-- svelte-ignore a11y_media_has_caption (local upload preview) -->
+							<video src={item.url} controls preload="metadata"></video>
+						{:else}
+							<img src={item.url} alt={item.name} />
+						{/if}
 						<button
 							class="remove-photo"
 							type="button"
@@ -612,12 +787,12 @@
 				<input
 					id="images"
 					type="file"
-					accept="image/*"
+					accept="image/*,video/*"
 					multiple
 					onchange={handleFiles}
 				/>
 				<p class="drop-hint">
-					Or drag'n drop up to 4 photos onto the text box.
+					Drag and drop up to 4 photos or one video (images are converted to PNG).
 				</p>
 			</div>
 			<div class="toolbar-right">
@@ -968,6 +1143,13 @@
 		object-fit: cover;
 		border-radius: 10px;
 		display: block;
+	}
+	.preview-item video {
+		width: auto;
+		height: 100px;
+		border-radius: 10px;
+		display: block;
+		background: #000;
 	}
 	.remove-photo {
 		position: absolute;

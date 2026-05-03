@@ -74,11 +74,23 @@ function mapPost(postWrapper) {
 	const post = postWrapper.post;
 	const record = post.record || {};
 	const images = [];
+	let video = null;
 
-	if (post.embed?.$type === 'app.bsky.embed.images#view') {
-		for (const image of post.embed.images || []) {
+	const embedView = post.embed;
+	const mediaView = embedView?.$type === 'app.bsky.embed.recordWithMedia#view' ? embedView.media : embedView;
+
+	if (mediaView?.$type === 'app.bsky.embed.images#view') {
+		for (const image of mediaView.images || []) {
 			if (image.fullsize) images.push(image.fullsize);
 		}
+	}
+
+	if (mediaView?.$type === 'app.bsky.embed.video#view') {
+		video = {
+			playlist: mediaView.playlist || '',
+			thumbnail: mediaView.thumbnail || '',
+			alt: mediaView.alt || ''
+		};
 	}
 
 	return {
@@ -88,6 +100,7 @@ function mapPost(postWrapper) {
 		facets: Array.isArray(record.facets) ? record.facets : [],
 		createdAt: record.createdAt || null,
 		images,
+		video,
 		replyCount: post.replyCount || 0,
 		repostCount: post.repostCount || 0,
 		likeCount: post.likeCount || 0,

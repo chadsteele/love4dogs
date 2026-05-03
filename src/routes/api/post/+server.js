@@ -1,6 +1,8 @@
 import { env } from '$env/dynamic/private';
 
 const BSKY_XRPC = 'https://bsky.social/xrpc';
+const MAX_IMAGE_SIZE_BYTES = 2 * 1024 * 1024;
+const MAX_VIDEO_SIZE_BYTES = 100 * 1024 * 1024;
 
 let cachedSession = null;
 
@@ -87,6 +89,16 @@ function buildImageEmbed(uploadedImages) {
 	};
 }
 
+function buildVideoEmbed(uploadedVideo) {
+	if (!uploadedVideo) return null;
+
+	return {
+		$type: 'app.bsky.embed.video',
+		video: uploadedVideo.blob,
+		alt: uploadedVideo.alt
+	};
+}
+
 async function createSession() {
 	const { identifier, secret } = getCredentials();
 
@@ -116,7 +128,7 @@ async function getSession() {
 	return createSession();
 }
 
-async function uploadBlob(accessJwt, file) {
+async function uploadBlob(accessJwt, file, kindLabel = 'Media') {
 	const res = await fetch(`${BSKY_XRPC}/com.atproto.repo.uploadBlob`, {
 		method: 'POST',
 		headers: {
@@ -127,7 +139,7 @@ async function uploadBlob(accessJwt, file) {
 	});
 
 	if (!res.ok) {
-		throw new Error('Image upload failed.');
+		throw new Error(`${kindLabel} upload failed.`);
 	}
 
 	const json = await res.json();
@@ -150,6 +162,9 @@ export async function POST({ request }) {
 		const rawText = String(formData.get('text') || '').trim();
 		const images = formData
 			.getAll('images')
+			.filter((entry) => entry instanceof File && entry.size > 0);
+		const videos = formData
+			.getAll('videos')
 			.filter((entry) => entry instanceof File && entry.size > 0);
 
 		if (!rawText) {
@@ -174,12 +189,63 @@ export async function POST({ request }) {
 			});
 		}
 
-		const session = await getSession();
-		const uploaded = [];
+		if (images.length > 0 && videos.length > 0) {
+			return new Response(JSON.stringify({ error: 'Choose either photos or one video per post.' }), {
+				status: 400,
+				headers: { 'content-type': 'application/json' }
+			});
+		}
+
+		if (videos.length > 1) {
+			return new Response(JSON.stringify({ error: 'Only one video is allowed per post.' }), {
+				status: 400,
+				headers: { 'content-type': 'application/json' }
+			});
+		}
 
 		for (const image of images) {
-			const blob = await uploadBlob(session.accessJwt, image);
+			if (!String(image.type || '').startsWith('image/')) {
+				return new Response(JSON.stringify({ error: 'Unsupported image format.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+			if (image.size > MAX_IMAGE_SIZE_BYTES) {
+				return new Response(JSON.stringify({ error: 'Each image must be 2 MB or smaller.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+		}
+
+		for (const video of videos) {
+			if (!String(video.type || '').startsWith('video/')) {
+				return new Response(JSON.stringify({ error: 'Unsupported video format.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+			if (video.size > MAX_VIDEO_SIZE_BYTES) {
+				return new Response(JSON.stringify({ error: 'Video must be 100 MB or smaller.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+		}
+
+		const session = await getSession();
+		const uploaded = [];
+		let uploadedVideo = null;
+
+		for (const image of images) {
+			const blob = await uploadBlob(session.accessJwt, image, 'Image');
 			uploaded.push({ blob, alt: image.name || 'Photo' });
+		}
+
+		if (videos.length === 1) {
+			const video = videos[0];
+			const blob = await uploadBlob(session.accessJwt, video, 'Video');
+			uploadedVideo = { blob, alt: video.name || 'Video' };
 		}
 
 		const tags = getHashtags(rawText).slice(0, 20);
@@ -194,7 +260,12 @@ export async function POST({ request }) {
 		if (facets.length) record.facets = facets;
 
 		const embed = buildImageEmbed(uploaded);
-		if (embed) record.embed = embed;
+		if (embed) {
+			record.embed = embed;
+		} else {
+			const videoEmbed = buildVideoEmbed(uploadedVideo);
+			if (videoEmbed) record.embed = videoEmbed;
+		}
 
 		const createRecordRes = await fetch(`${BSKY_XRPC}/com.atproto.repo.createRecord`, {
 			method: 'POST',

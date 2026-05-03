@@ -344,6 +344,7 @@
 	)
 
 	const comments = $derived(post.comments || [])
+	const postVideo = $derived(post.video || null)
 	const sortedImages = $derived(
 		sortImagesBySize(post.images || [], imageDimensions),
 	)
@@ -471,6 +472,19 @@
 					<img src={image} alt="Dog post" loading="lazy" />
 				</button>
 			{/each}
+		</div>
+	{/if}
+
+	{#if postVideo?.playlist}
+		<div class="post-video">
+			<!-- svelte-ignore a11y_media_has_caption (source does not provide caption tracks) -->
+			<video
+				controls
+				playsinline
+				preload="metadata"
+				poster={postVideo.thumbnail || undefined}
+				src={postVideo.playlist}
+			></video>
 		</div>
 	{/if}
 
@@ -774,6 +788,19 @@
 		max-height: 460px;
 	}
 
+	.post-video {
+		margin-top: 0.65rem;
+	}
+
+	.post-video video {
+		width: 100%;
+		max-height: 460px;
+		display: block;
+		border-radius: 9px;
+		background: #000;
+		box-shadow: 0 2px 7px rgba(39, 23, 10, 0.12);
+	}
+
 	.image-modal-backdrop {
 		position: fixed;
 		inset: 0;
@@ -949,26 +976,6 @@
 	.comment-text {
 		color: #374151;
 		word-break: break-word;
-	}
-
-	.comments-more {
-		display: flex;
-		align-items: center;
-		gap: 0.35rem;
-		margin: 0 -0.75rem;
-		padding: 0.35rem 0.75rem;
-		width: calc(100% + 1.5rem);
-		background: #f3ede6;
-		border-top: 1px solid #ede5d8;
-		font-size: 0.78rem;
-		color: #2d5f9a;
-		text-align: left;
-		text-decoration: none;
-	}
-
-	.post-footer:hover .comments-more {
-		color: #1a4a7a;
-		text-decoration: none;
 	}
 
 	.comment-compose-disabled {
