@@ -172,12 +172,10 @@
 		if (!context)
 			throw new Error("Unable to process image on this browser.")
 
-		let attemptScale = 1
-		let lastBlob = null
+		let width = baseWidth
+		let height = baseHeight
 
-		for (let i = 0; i < 9; i += 1) {
-			const width = Math.max(1, Math.round(baseWidth * attemptScale))
-			const height = Math.max(1, Math.round(baseHeight * attemptScale))
+		while (true) {
 			canvas.width = width
 			canvas.height = height
 			context.clearRect(0, 0, width, height)
@@ -185,7 +183,6 @@
 
 			const blob = await canvasToPngBlob(canvas)
 			if (!blob) throw new Error(`Unable to convert image: ${file.name}`)
-			lastBlob = blob
 
 			if (blob.size <= MAX_IMAGE_SIZE_BYTES) {
 				return new File([blob], replaceFileExt(file.name, ".png"), {
@@ -194,12 +191,37 @@
 				})
 			}
 
-			attemptScale *= 0.86
-		}
+			if (width === 1 && height === 1) {
+				throw new Error(
+					`Image ${file.name} could not be reduced under 2 MB.`,
+				)
+			}
 
-		throw new Error(
-			`Image ${file.name} is too large after conversion. Keep it under 2 MB and 4000x4000.`,
-		)
+			const sizeRatio = MAX_IMAGE_SIZE_BYTES / blob.size
+			const proportionalScale = Math.sqrt(Math.max(0.0001, sizeRatio))
+			const safeScale = Math.min(0.98, proportionalScale)
+
+			const nextWidth =
+				width > 1
+					? Math.max(
+							1,
+							Math.min(width - 1, Math.floor(width * safeScale)),
+						)
+					: 1
+			const nextHeight =
+				height > 1
+					? Math.max(
+							1,
+							Math.min(
+								height - 1,
+								Math.floor(height * safeScale),
+							),
+						)
+					: 1
+
+			width = nextWidth
+			height = nextHeight
+		}
 	}
 
 	async function validateVideoFile(file) {
