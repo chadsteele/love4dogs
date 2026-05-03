@@ -1,10 +1,10 @@
 <main class="container">
 	<h1>Map Decoder</h1>
-	<p>Open a decoded map at <strong>/map/[slug]</strong>.</p>
+	<p>Open a decoded map at <strong>/map/[approximate]/[exact]</strong>.</p>
 	<p>Examples:</p>
 	<ul>
-		<li><a href="/map/-20.17849,57.77235">/map/-20.17849,57.77235</a></li>
-		<li><a href="/map/mkw9x3">/map/mkw9x3</a></li>
+		<li><a href="/map/mkw9x/mkw9x3zzk">/map/mkw9x/mkw9x3zzk</a></li>
+		<li><a href="/map/mk3j4/mk3j4wsec">/map/mk3j4/mk3j4wsec</a></li>
 	</ul>
 </main>
 
