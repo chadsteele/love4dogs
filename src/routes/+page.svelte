@@ -647,6 +647,8 @@
 	.about-modal {
 		position: relative;
 		width: min(580px, 100%);
+		max-height: min(80vh, 100%);
+		overflow-y: auto;
 		background: rgba(255, 250, 241, 0.97);
 		border: 1px solid rgba(58, 91, 65, 0.24);
 		border-radius: 16px;
@@ -680,6 +682,10 @@
 
 		.post-list {
 			column-count: 1;
+		}
+
+		.about-modal-backdrop {
+			padding: 0.5rem;
 		}
 	}
 </style>
