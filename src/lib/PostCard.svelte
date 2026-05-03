@@ -631,13 +631,13 @@
 	}
 
 	.comment-avatar {
-		width: 18px;
-		height: 18px;
+		width: 32px;
+		height: 32px;
 		border-radius: 999px;
 		object-fit: cover;
 		border: 1px solid #d9ccb9;
 		background: #fff;
-		flex: 0 0 18px;
+		flex: 0 0 32px;
 		margin-top: 1px;
 	}
 
