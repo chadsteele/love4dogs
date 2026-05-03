@@ -227,7 +227,9 @@
 	</form>
 
 	<div class="topbar-links">
-		<a class="post-route-btn" href="/post">Create Post</a>
+		<a class="post-route-btn" href="/post" aria-label="Create Post"
+			>Create Post</a
+		>
 	</div>
 	{#if searchFocused || cloudPinnedBySignal}
 		<div class="topnav-cloud" transition:slide={{duration: 170, axis: "y"}}>
@@ -282,15 +284,17 @@
 	.selection-menu-btn {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.35rem;
+		justify-content: center;
 		height: 40px;
-		padding: 0 0.85rem;
-		border-radius: 999px;
+		width: 40px;
+		padding: 0;
+		border-radius: 50%;
 		border: 1px solid #305741;
 		background: #3b6e4f;
 		color: #fff;
 		font-weight: 600;
 		cursor: pointer;
+		position: relative;
 	}
 
 	.selection-menu {
@@ -345,6 +349,9 @@
 		border-radius: 999px;
 		background: rgba(255, 255, 255, 0.24);
 		font-size: 0.8rem;
+		position: absolute;
+		top: -5px;
+		right: -6px;
 	}
 
 	.logo-wrap {
@@ -400,10 +407,13 @@
 	}
 
 	.topnav-cloud {
+		order: 4;
 		flex-basis: 100%;
 		width: 100%;
 		margin-top: -0.45rem;
 		padding: 0.55rem 0.65rem 0.65rem;
+		max-height: 33vh;
+		overflow-y: auto;
 		/* border-radius: 12px;
 		border: 1px solid rgba(151, 120, 71, 0.25);
 		background: linear-gradient(180deg, #fffdf9 0%, #f7f0e5 100%);
@@ -454,20 +464,37 @@
 	}
 
 	@media (max-width: 900px) {
+		.topbar-left {
+			order: 1;
+		}
+
+		.topbar-links {
+			order: 2;
+			width: auto;
+			margin-left: auto;
+			align-items: center;
+			gap: 0.85rem;
+		}
+
 		.search {
+			order: 3;
 			width: 100%;
 			min-width: min(375px, 100%);
 			flex-basis: 100%;
 		}
 
-		.topbar-links {
-			width: 100%;
-			align-items: center;
-			gap: 0.85rem;
+		.post-route-btn {
+			width: 40px;
+			height: 40px;
+			padding: 0;
+			font-size: 0;
 		}
 
-		.post-route-btn {
-			width: 100%;
+		.post-route-btn::before {
+			content: "+";
+			font-size: 1.45rem;
+			line-height: 1;
+			font-weight: 700;
 		}
 	}
 </style>

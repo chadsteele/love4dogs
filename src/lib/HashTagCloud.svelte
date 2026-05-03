@@ -371,6 +371,8 @@
 <style>
 	.tag-cloud {
 		display: block;
+		max-height: 33dvh;
+		overflow-y: auto;
 	}
 
 	.tag-cloud-inner {
