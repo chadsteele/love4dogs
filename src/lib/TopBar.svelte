@@ -23,6 +23,7 @@
 		onToggleMenu = () => {},
 		onSetView = () => {},
 		onSelectionAction = () => {},
+		onOpenAbout = () => {},
 		onSearchSubmit = () => {},
 		onSearchInput = () => {},
 	} = $props()
@@ -137,8 +138,14 @@
 					{/if}
 
 					<div class="menu-sep"></div>
-					<button type="button" onclick={() => goto("/about")}
-						><Users size={16} />About Us</button
+					<button
+						type="button"
+						onclick={() => {
+							onOpenAbout()
+							onToggleMenu()
+						}}
+					>
+						<Users size={16} />About Us</button
 					>
 					<button type="button" onclick={() => goto("/settings")}
 						><Settings size={16} />Settings</button

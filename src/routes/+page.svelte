@@ -1,6 +1,7 @@
 <script>
 	import {onMount} from "svelte"
 	import {CircleAlert} from "lucide-svelte"
+	import About from "$lib/About.svelte"
 	import PostCard from "$lib/PostCard.svelte"
 	import TopBar from "$lib/TopBar.svelte"
 
@@ -8,6 +9,9 @@
 	const LOCAL_TAG_KEY = "love4dogs.tag-counts"
 	const BOOKMARK_KEY = "love4dogs.bookmarks"
 	const TRASH_KEY = "love4dogs.trash"
+	const ABOUT_MODAL_SEEN_KEY = "love4dogs.about-modal-seen-at"
+	const ABOUT_PAGE_VISIT_KEY = "love4dogs.about-page-visited-at"
+	const ABOUT_MODAL_WINDOW_MS = 36 * 60 * 60 * 1000
 	const MAX_SAVED_ITEMS = 100
 
 	let posts = $state([])
@@ -22,6 +26,7 @@
 	let selectionMenuOpen = $state(false)
 	let currentView = $state("feed")
 	let tagCloudSignal = $state(0)
+	let showAboutModal = $state(false)
 
 	let searchDebounceTimer = null
 	let lastFeedRequestId = 0
@@ -51,6 +56,35 @@
 	function saveStoredList(key, list) {
 		if (typeof window === "undefined") return
 		localStorage.setItem(key, JSON.stringify(cappedUniqueList(list)))
+	}
+
+	function readTimestamp(key) {
+		if (typeof window === "undefined") return 0
+		const raw = localStorage.getItem(key)
+		const parsed = Number(raw)
+		return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+	}
+
+	function hasRecentTimestamp(key) {
+		const ts = readTimestamp(key)
+		if (!ts) return false
+		return Date.now() - ts < ABOUT_MODAL_WINDOW_MS
+	}
+
+	function evaluateAboutModalVisibility() {
+		const seenRecently = hasRecentTimestamp(ABOUT_MODAL_SEEN_KEY)
+		const visitedAboutRecently = hasRecentTimestamp(ABOUT_PAGE_VISIT_KEY)
+		showAboutModal = !seenRecently && !visitedAboutRecently
+	}
+
+	function closeAboutModal() {
+		showAboutModal = false
+		if (typeof window === "undefined") return
+		localStorage.setItem(ABOUT_MODAL_SEEN_KEY, String(Date.now()))
+	}
+
+	function openAboutModal() {
+		showAboutModal = true
 	}
 
 	function loadLocalTagCounts() {
@@ -205,6 +239,7 @@
 		loadLocalTagCounts()
 		bookmarkedUris = readStoredList(BOOKMARK_KEY)
 		trashedUris = readStoredList(TRASH_KEY)
+		evaluateAboutModalVisibility()
 		loadFeed()
 
 		return () => {
@@ -218,6 +253,45 @@
 </svelte:head>
 
 <main class="page">
+	{#if showAboutModal}
+		<div
+			class="about-modal-backdrop"
+			role="button"
+			tabindex="0"
+			aria-label="Close about modal"
+			onclick={closeAboutModal}
+			onkeydown={(event) => {
+				if (event.key === "Enter" || event.key === " ")
+					closeAboutModal()
+			}}
+		>
+			<div
+				class="about-modal"
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby="about-modal-title"
+				tabindex="-1"
+				onclick={(event) => event.stopPropagation()}
+				onkeydown={(event) => {
+					if (event.key === "Enter" || event.key === " ") {
+						event.stopPropagation()
+					}
+				}}
+			>
+				<button
+					class="about-modal-close"
+					onclick={closeAboutModal}
+					aria-label="Close about modal"
+				>
+					×
+				</button>
+				<div id="about-modal-title">
+					<About mode="modal" />
+				</div>
+			</div>
+		</div>
+	{/if}
+
 	<TopBar
 		bind:searchTerm
 		{recentTags}
@@ -230,6 +304,7 @@
 		onToggleMenu={() => (selectionMenuOpen = !selectionMenuOpen)}
 		onSetView={setView}
 		onSelectionAction={applySelectionAction}
+		onOpenAbout={openAboutModal}
 		onSearchSubmit={() => {
 			if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
 			loadFeed()
@@ -384,6 +459,46 @@
 	.post-list {
 		columns: 2;
 		column-gap: 0.8rem;
+	}
+
+	.about-modal-backdrop {
+		position: fixed;
+		inset: 0;
+		background: rgba(16, 20, 15, 0.58);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 1rem;
+		z-index: 60;
+	}
+
+	.about-modal {
+		position: relative;
+		width: min(580px, 100%);
+		background: rgba(255, 250, 241, 0.97);
+		border: 1px solid rgba(58, 91, 65, 0.24);
+		border-radius: 16px;
+		box-shadow: 0 18px 45px rgba(65, 42, 20, 0.28);
+		padding: 1rem 1rem 0.9rem;
+	}
+
+	.about-modal-close {
+		position: absolute;
+		top: 0.4rem;
+		right: 0.4rem;
+		width: 32px;
+		height: 32px;
+		border-radius: 50%;
+		border: 1px solid rgba(58, 91, 65, 0.24);
+		background: rgba(255, 255, 255, 0.9);
+		cursor: pointer;
+		font-size: 1.2rem;
+		line-height: 1;
+		color: #2f4936;
+	}
+
+	.about-modal-close:hover {
+		background: rgba(243, 250, 244, 0.95);
 	}
 
 	@media (max-width: 900px) {

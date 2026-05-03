@@ -1,4 +1,7 @@
 export const defaultHashtags = [
+    'wanted',
+    'flight buddy',
+    'NGO',
     'shelter',
     'urgent',
     'foster',
@@ -6,18 +9,16 @@ export const defaultHashtags = [
     'dogwalker',
     'petsitter',
     'volunteer',
-    'wanted',
     'found',
     'lost',
     'rescued',
     'help',
     'share',
-    'vetinary',
+    'veterinary',
     'clinic',
     'donate',
     'fundraiser',
     'event',
     'training',
     'behavior',
-
 ];
