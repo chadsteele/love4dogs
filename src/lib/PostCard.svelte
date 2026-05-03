@@ -1,5 +1,6 @@
 <script>
 	import {Bookmark, Heart, MessageCircle, Repeat2} from "lucide-svelte"
+	import {CONTACT_LOCK_PREFIX, decryptContact} from "$lib/utils"
 
 	import Bluesky from "./assets/BlueSkyLogo.svelte"
 
@@ -8,7 +9,10 @@
 		selected = false,
 		bookmarked = false,
 		onToggleSelect = () => {},
+		onToggleSearchTag = () => {},
 	} = $props()
+
+	let postTextEl = $state(null)
 
 	const BSKY_HANDLE = "mylove4dogs.bsky.social"
 
@@ -44,6 +48,29 @@
 			.replace(/>/g, "&gt;")
 	}
 
+	function hashtagButton(tag = "") {
+		return `<button type="button" class="inline-hashtag" data-tag="${escapeAttr(tag)}">#${escapeHtml(tag)}</button>`
+	}
+
+	function handlePostTextClick(event) {
+		const hashtagButton = event.target?.closest?.(".inline-hashtag")
+		if (!hashtagButton) return
+		event.preventDefault()
+		event.stopPropagation()
+		const tag = hashtagButton.getAttribute("data-tag") || ""
+		if (!tag) return
+		onToggleSearchTag(tag)
+	}
+
+	$effect(() => {
+		if (!postTextEl) return
+		const onClick = (event) => handlePostTextClick(event)
+		postTextEl.addEventListener("click", onClick)
+		return () => {
+			postTextEl?.removeEventListener("click", onClick)
+		}
+	})
+
 	function byteOffsetToJsIndex(text, byteOffset) {
 		let totalBytes = 0
 		let jsIndex = 0
@@ -60,13 +87,19 @@
 	}
 
 	function linkifyText(text = "", facets = []) {
+		const linkHashtags = (plainText = "") =>
+			plainText.replace(
+				/(^|[\s(])#([\p{L}\p{N}_-]+)/gu,
+				(_, prefix, tag) => `${prefix}${hashtagButton(tag)}`,
+			)
+
 		if (!Array.isArray(facets) || facets.length === 0) {
-			return escapeHtml(text)
-				.replace(
+			return linkHashtags(
+				escapeHtml(text).replace(
 					/(https?:\/\/[^\s<]+)/g,
 					'<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>',
-				)
-				.replace(/\n/g, "<br>")
+				),
+			)
 		}
 
 		const linkFacets = []
@@ -78,17 +111,20 @@
 					typeof feature.uri === "string" &&
 					feature.uri,
 			)
-			if (!linkFeature) continue
+			if (linkFeature) {
+				linkFacets.push({
+					byteStart: facet.index.byteStart,
+					byteEnd: facet.index.byteEnd,
+					uri: linkFeature.uri,
+				})
+				continue
+			}
 
-			linkFacets.push({
-				byteStart: facet.index.byteStart,
-				byteEnd: facet.index.byteEnd,
-				uri: linkFeature.uri,
-			})
+			continue
 		}
 
 		if (linkFacets.length === 0) {
-			return escapeHtml(text).replace(/\n/g, "<br>")
+			return linkHashtags(escapeHtml(text))
 		}
 
 		linkFacets.sort((a, b) => a.byteStart - b.byteStart)
@@ -100,13 +136,93 @@
 			const end = byteOffsetToJsIndex(text, facet.byteEnd)
 			if (start < cursor || end <= start) continue
 
-			html += escapeHtml(text.slice(cursor, start))
+			html += linkHashtags(escapeHtml(text.slice(cursor, start)))
 			html += `<a href="${escapeAttr(facet.uri)}" target="_blank" rel="noopener noreferrer">${escapeHtml(text.slice(start, end))}</a>`
 			cursor = end
 		}
 
-		html += escapeHtml(text.slice(cursor))
-		return html.replace(/\n/g, "<br>")
+		html += linkHashtags(escapeHtml(text.slice(cursor)))
+		return html
+	}
+
+	function utf8ByteLength(text = "") {
+		return utf8Encoder.encode(text).length
+	}
+
+	function isLockedLine(text = "") {
+		return text.startsWith(CONTACT_LOCK_PREFIX)
+	}
+
+	let unlockedBodyLines = $state({})
+
+	function decryptLockedLine(text = "") {
+		const payload = text.slice(CONTACT_LOCK_PREFIX.length).trim()
+		if (!payload) return text
+		try {
+			return decryptContact(payload)
+		} catch {
+			return text
+		}
+	}
+
+	function toggleLockedBodyLine(index) {
+		unlockedBodyLines = {
+			...unlockedBodyLines,
+			[index]: !unlockedBodyLines[index],
+		}
+	}
+
+	function getLineFacets(text, facets, lineByteStart, lineByteEnd) {
+		return (facets || [])
+			.map((facet) => {
+				if (!facet?.index) return null
+				const start = facet.index.byteStart
+				const end = facet.index.byteEnd
+				if (start < lineByteStart || end > lineByteEnd) return null
+				return {
+					...facet,
+					index: {
+						...facet.index,
+						byteStart: start - lineByteStart,
+						byteEnd: end - lineByteStart,
+					},
+				}
+			})
+			.filter(Boolean)
+	}
+
+	function buildBodyLines(body = "", bodyFacets = [], unlocked = {}) {
+		if (!body) return []
+		const lines = body.split("\n")
+		const output = []
+		let byteCursor = 0
+
+		for (let index = 0; index < lines.length; index += 1) {
+			const raw = lines[index]
+			const lineByteLength = utf8ByteLength(raw)
+			const lineByteStart = byteCursor
+			const lineByteEnd = lineByteStart + lineByteLength
+			const locked = isLockedLine(raw)
+			const unlockedLine = Boolean(unlocked[index])
+			const displayText =
+				locked && unlockedLine ? decryptLockedLine(raw) : raw
+			const lineFacets =
+				locked && unlockedLine
+					? []
+					: getLineFacets(raw, bodyFacets, lineByteStart, lineByteEnd)
+
+			output.push({
+				index,
+				raw,
+				locked,
+				unlocked: unlockedLine,
+				html: linkifyText(displayText, lineFacets),
+			})
+
+			byteCursor = lineByteEnd + (index < lines.length - 1 ? 1 : 0)
+		}
+
+		return output
 	}
 
 	function getPostParts(inputPost) {
@@ -122,7 +238,7 @@
 		}
 
 		const title = normalized.slice(0, newlineIndex).trim()
-		const body = normalized.slice(newlineIndex + 1).replace(/^\n+/, "")
+		const body = normalized.slice(newlineIndex + 1)
 		const bodyStartBytes = utf8Encoder.encode(
 			normalized.slice(0, newlineIndex + 1),
 		).length
@@ -151,6 +267,9 @@
 	}
 
 	const parts = $derived(getPostParts(post))
+	const bodyLines = $derived(
+		buildBodyLines(parts.body, parts.bodyFacets, unlockedBodyLines),
+	)
 
 	const comments = $derived(post.comments || [])
 </script>
@@ -176,9 +295,29 @@
 		<h3 class="post-title">{parts.title}</h3>
 	{/if}
 	{#if parts.body}
-		<p class="post-text">
-			{@html linkifyText(parts.body, parts.bodyFacets)}
-		</p>
+		<div class="post-text" bind:this={postTextEl}>
+			{#each bodyLines as line (line.index)}
+				{#if line.locked && !line.unlocked}
+					<button
+						type="button"
+						class="locked-line"
+						onclick={(event) => {
+							event.stopPropagation()
+							toggleLockedBodyLine(line.index)
+						}}
+					>
+						{line.raw}
+					</button>
+				{:else if line.html}
+					<div class="post-line">{@html line.html}</div>
+				{:else}
+					<div
+						class="post-line post-line-spacer"
+						aria-hidden="true"
+					></div>
+				{/if}
+			{/each}
+		</div>
 	{/if}
 	{#if post.images.length}
 		<div class="post-images">
@@ -240,6 +379,7 @@
 		border-radius: 12px;
 		padding: 0.75rem;
 		background: #fff;
+		box-shadow: 0 2px 8px rgba(46, 28, 12, 0.08);
 		box-sizing: border-box;
 		overflow: hidden;
 		break-inside: avoid;
@@ -308,9 +448,40 @@
 		word-break: break-word;
 	}
 
+	.post-line-spacer {
+		height: 1em;
+	}
+
+	.locked-line {
+		display: block;
+		/* width: 100%; */
+		border: none;
+		background: #f5eee3;
+		box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45),
+			0 1px 4px rgba(74, 49, 24, 0.12);
+		color: #5f4b2d;
+		text-align: left;
+		padding: 0.15rem 0.4rem;
+		margin: 0;
+		border-radius: 6px;
+		cursor: pointer;
+		font: inherit;
+	}
+
 	.post-text :global(a) {
 		color: #2d5f9a;
 		text-decoration: underline;
+	}
+
+	.post-text :global(.inline-hashtag) {
+		border: none;
+		padding: 0;
+		margin: 0;
+		background: transparent;
+		color: #2d5f9a;
+		text-decoration: underline;
+		font: inherit;
+		cursor: pointer;
 	}
 
 	.post-images {
@@ -326,6 +497,7 @@
 		height: auto;
 		object-fit: cover;
 		border-radius: 9px;
+		box-shadow: 0 2px 7px rgba(39, 23, 10, 0.12);
 	}
 
 	.post-footer {

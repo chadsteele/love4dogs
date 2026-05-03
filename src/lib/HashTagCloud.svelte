@@ -14,6 +14,14 @@
 	let myTags = $state([])
 
 	$effect(() => {
+		const sourceValue = textareaEl?.value
+		if (typeof sourceValue !== "string") return
+		if (!sourceValue.trim()) return
+		if (String(draft || "").trim()) return
+		draft = sourceValue
+	})
+
+	$effect(() => {
 		if (typeof window === "undefined") return
 		try {
 			const counts = JSON.parse(
@@ -50,11 +58,15 @@
 	}
 
 	function isActive(tag) {
+		const sourceText =
+			typeof textareaEl?.value === "string" && textareaEl.value.length
+				? textareaEl.value
+				: draft
 		const token = Boolean(textareaEl)
 			? `#${escape(tag)}`
 			: `#?${escape(tag)}`
 		return new RegExp(`(^|\\s)${token}(?![\\p{L}\\p{N}_-])`, "ui").test(
-			draft,
+			sourceText,
 		)
 	}
 

@@ -147,6 +147,20 @@ async function fetchComments(uri) {
 	}
 }
 
+async function hydratePostComments(posts = []) {
+	const postsWithReplies = posts.filter((p) => p.replyCount > 0);
+	if (postsWithReplies.length === 0) return posts;
+
+	const results = await Promise.allSettled(postsWithReplies.map((p) => fetchComments(p.uri)));
+	results.forEach((result, i) => {
+		if (result.status === 'fulfilled') {
+			postsWithReplies[i].comments = result.value;
+		}
+	});
+
+	return posts;
+}
+
 export async function GET({ url }) {
 	const query = url.searchParams.get('query')?.trim() || '';
 	const publicFetchOptions = {
@@ -178,20 +192,7 @@ export async function GET({ url }) {
 	const feedItems = (authorFeedJson.feed || []).filter((item) => !isReplyPost(item));
 	const commonRecentTags = countTopTags(feedItems, 20);
 
-	let posts = feedItems.map(mapPost);
-
-	// fetch comments for posts that have replies, in parallel
-	const postsWithReplies = posts.filter(p => p.replyCount > 0);
-	if (postsWithReplies.length > 0) {
-		const results = await Promise.allSettled(
-			postsWithReplies.map(p => fetchComments(p.uri))
-		);
-		results.forEach((result, i) => {
-			if (result.status === 'fulfilled') {
-				postsWithReplies[i].comments = result.value;
-			}
-		});
-	}
+	let posts = await hydratePostComments(feedItems.map(mapPost));
 
 	if (query) {
 		const searchPath = `app.bsky.feed.searchPosts?q=${encodeURIComponent(query)}&author=${encodeURIComponent(ACCOUNT_HANDLE)}&limit=30`;
@@ -214,6 +215,7 @@ export async function GET({ url }) {
 		posts = (searchJson.posts || [])
 			.filter((post) => !isReplyPost(post))
 			.map((post) => mapPost({ post }));
+		posts = await hydratePostComments(posts);
 	}
 
 	return new Response(

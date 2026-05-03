@@ -21,6 +21,7 @@
 	let selectedUris = $state([])
 	let selectionMenuOpen = $state(false)
 	let currentView = $state("feed")
+	let tagCloudSignal = $state(0)
 
 	let searchDebounceTimer = null
 	let lastFeedRequestId = 0
@@ -182,6 +183,24 @@
 		selectionMenuOpen = false
 	}
 
+	function toggleSearchTag(tag) {
+		const normalized = String(tag || "")
+			.trim()
+			.replace(/^#/, "")
+			.toLowerCase()
+		if (!normalized) return
+
+		const current = searchTerm.split(/\s+/).filter(Boolean)
+		const next = current.filter(
+			(token) => token.toLowerCase().replace(/^#/, "") !== normalized,
+		)
+
+		if (next.length === current.length) next.push(normalized)
+
+		searchTerm = next.join(" ")
+		tagCloudSignal += 1
+	}
+
 	onMount(() => {
 		loadLocalTagCounts()
 		bookmarkedUris = readStoredList(BOOKMARK_KEY)
@@ -202,6 +221,7 @@
 	<TopBar
 		bind:searchTerm
 		{recentTags}
+		{tagCloudSignal}
 		selectedCount={selectedUris.length}
 		{selectionMenuOpen}
 		{currentView}
@@ -265,6 +285,7 @@
 							selected={selectedUris.includes(post.uri)}
 							bookmarked={bookmarkedUris.includes(post.uri)}
 							onToggleSelect={toggleCardSelection}
+							onToggleSearchTag={toggleSearchTag}
 						/>
 					{/each}
 				</div>

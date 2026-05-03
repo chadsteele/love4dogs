@@ -17,6 +17,7 @@
 		selectionMenuOpen = false,
 		currentView = "feed",
 		recentTags = [],
+		tagCloudSignal = 0,
 		bookmarkedCount = 0,
 		trashedCount = 0,
 		onToggleMenu = () => {},
@@ -28,6 +29,13 @@
 
 	let logoLoaded = $state(true)
 	let searchFocused = $state(false)
+	let lastTagCloudSignal = 0
+
+	$effect(() => {
+		if (tagCloudSignal === lastTagCloudSignal) return
+		lastTagCloudSignal = tagCloudSignal
+		searchFocused = true
+	})
 </script>
 
 <nav class="topbar">
