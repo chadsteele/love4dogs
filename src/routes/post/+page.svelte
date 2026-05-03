@@ -782,7 +782,7 @@
 			<div class="toolbar-left">
 				<label class="icon-btn file-btn" for="images">
 					<ImagePlus size={17} />
-					<span>Add photos</span>
+					<span>Add media</span>
 				</label>
 				<input
 					id="images"
