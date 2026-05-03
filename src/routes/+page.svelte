@@ -97,13 +97,6 @@
 		}
 	}
 
-	function queueLiveSearch() {
-		if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
-		searchDebounceTimer = setTimeout(() => {
-			loadFeed()
-		}, 350)
-	}
-
 	function visiblePosts() {
 		if (currentView === "trash") {
 			return posts.filter((post) => trashedUris.includes(post.uri))
@@ -208,6 +201,7 @@
 <main class="page">
 	<TopBar
 		bind:searchTerm
+		{recentTags}
 		selectedCount={selectedUris.length}
 		{selectionMenuOpen}
 		{currentView}
@@ -220,7 +214,9 @@
 			if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
 			loadFeed()
 		}}
-		onSearchInput={queueLiveSearch}
+		onSearchInput={() => {
+			if (!searchTerm.trim()) loadFeed()
+		}}
 	/>
 
 	<section class="grid">

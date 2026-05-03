@@ -9,12 +9,14 @@
 		Settings,
 		Heart,
 	} from "lucide-svelte"
+	import HashTagCloud from "$lib/HashTagCloud.svelte"
 
 	let {
 		searchTerm = $bindable(""),
 		selectedCount = 0,
 		selectionMenuOpen = false,
 		currentView = "feed",
+		recentTags = [],
 		bookmarkedCount = 0,
 		trashedCount = 0,
 		onToggleMenu = () => {},
@@ -25,6 +27,7 @@
 	} = $props()
 
 	let logoLoaded = $state(true)
+	let searchFocused = $state(false)
 </script>
 
 <nav class="topbar">
@@ -142,12 +145,21 @@
 			event.preventDefault()
 			onSearchSubmit()
 		}}
+		onfocusin={() => {
+			searchFocused = true
+		}}
+		onfocusout={(event) => {
+			const nextTarget = event.relatedTarget
+			if (nextTarget && event.currentTarget.contains(nextTarget)) return
+			searchFocused = false
+		}}
 	>
 		<Search size={18} />
 		<input
 			type="search"
 			bind:value={searchTerm}
 			oninput={onSearchInput}
+			onsearch={onSearchInput}
 			placeholder="Search"
 		/>
 		<button type="submit">Search</button>
@@ -156,6 +168,11 @@
 	<div class="topbar-links">
 		<a class="post-route-btn" href="/post">Create Post</a>
 	</div>
+	{#if searchFocused}
+		<div class="topnav-cloud">
+			<HashTagCloud bind:draft={searchTerm} feedTags={recentTags} />
+		</div>
+	{/if}
 </nav>
 
 <style>
@@ -306,6 +323,21 @@
 		background: #fffdf8;
 		border: 1px solid rgba(48, 80, 54, 0.2);
 		min-width: min(100%, 470px);
+	}
+
+	.topnav-cloud {
+		flex-basis: 100%;
+		width: 100%;
+		margin-top: -0.45rem;
+		padding: 0.55rem 0.65rem 0.65rem;
+		/* border-radius: 12px;
+		border: 1px solid rgba(151, 120, 71, 0.25);
+		background: linear-gradient(180deg, #fffdf9 0%, #f7f0e5 100%);
+		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55); */
+	}
+
+	.topnav-cloud :global(.tag-cloud) {
+		margin-top: 0;
 	}
 
 	.search input {
