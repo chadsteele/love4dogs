@@ -646,6 +646,8 @@
 
 	.about-modal {
 		position: relative;
+		display: flex;
+		flex-direction: column;
 		width: min(580px, 100%);
 		max-height: min(80vh, 100%);
 		overflow-y: auto;
@@ -660,6 +662,7 @@
 		position: sticky;
 		top: 0.4rem;
 		right: 0.4rem;
+		align-self: flex-end;
 		width: 32px;
 		height: 32px;
 		border-radius: 50%;
@@ -669,8 +672,6 @@
 		font-size: 1.2rem;
 		line-height: 1;
 		color: #2f4936;
-		align-self: flex-start;
-		margin-left: auto;
 		z-index: 10;
 	}
 
