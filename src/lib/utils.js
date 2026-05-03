@@ -1,3 +1,8 @@
+import {
+	PUBLIC_CONTACT_ALPHABET,
+	PUBLIC_CONTACT_OUTPUT_ALPHABET
+} from '$env/static/public';
+
 const BASE32 = '0123456789bcdefghjkmnpqrstuvwxyz';
 const BASE32_INDEX = Object.fromEntries([...BASE32].map((char, index) => [char, index]));
 const DEFAULT_MAP_BASE_URL = 'https://love4dogs.club/map';
@@ -6,9 +11,10 @@ const DEFAULT_LOCATION_CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_REVERSE_GEO_CACHE_KEY = 'love4dogs.reverse-geo-cache';
 const DEFAULT_REVERSE_GEO_MAX_ENTRIES = 100;
 export const CONTACT_LOCK_PREFIX = '🔒';
-const CONTACT_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz+-_@. ';
+const CONTACT_ALPHABET = PUBLIC_CONTACT_ALPHABET;
+const CONTACT_OUTPUT_ALPHABET =
+	PUBLIC_CONTACT_OUTPUT_ALPHABET ;
 const CONTACT_BASE = BigInt(CONTACT_ALPHABET.length);
-const CONTACT_OUTPUT_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-._~';
 const CONTACT_OUTPUT_BASE = BigInt(CONTACT_OUTPUT_ALPHABET.length);
 
 export function isContactEncrypted(value = '') {

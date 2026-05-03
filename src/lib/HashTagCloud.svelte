@@ -15,6 +15,9 @@
 
 	let myTags = $state([])
 	let locationTags = $state([])
+	let cloudEl = $state(null)
+	let dragState = $state(null)
+	let suppressToggleTag = $state("")
 
 	$effect(() => {
 		const sourceValue = textareaEl?.value
@@ -24,9 +27,12 @@
 		draft = sourceValue
 	})
 
-	$effect(() => {
-		draft
-		if (typeof window === "undefined") return
+	function refreshMyTags() {
+		if (typeof window === "undefined") {
+			myTags = []
+			return
+		}
+
 		try {
 			const counts = JSON.parse(
 				localStorage.getItem(LOCAL_TAG_KEY) || "{}",
@@ -38,6 +44,133 @@
 				.map(([tag]) => tag)
 		} catch {
 			myTags = []
+		}
+	}
+
+	$effect(() => {
+		draft
+		refreshMyTags()
+	})
+
+	function isRemovableTag(tag) {
+		return myTags.includes(tag)
+	}
+
+	function isPointOutsideCloud(clientX, clientY) {
+		const rect = cloudEl?.getBoundingClientRect?.()
+		if (!rect) return false
+		return (
+			clientX < rect.left ||
+			clientX > rect.right ||
+			clientY < rect.top ||
+			clientY > rect.bottom
+		)
+	}
+
+	function removeTagFromRecent(tag) {
+		if (typeof window === "undefined") return
+		const normalized = normalizeTagToken(tag)
+		if (!normalized) return
+
+		try {
+			const counts = JSON.parse(
+				localStorage.getItem(LOCAL_TAG_KEY) || "{}",
+			)
+			if (Object.prototype.hasOwnProperty.call(counts, normalized)) {
+				delete counts[normalized]
+				localStorage.setItem(LOCAL_TAG_KEY, JSON.stringify(counts))
+				refreshMyTags()
+			}
+		} catch {
+			// Ignore storage write failures.
+		}
+	}
+
+	function addTagToDraft(tag) {
+		const normalized = normalizeTagToken(tag)
+		if (!normalized) return
+		if (isActive(normalized)) return
+
+		const token = Boolean(textareaEl) ? `#${normalized}` : normalized
+		const pos = textareaEl
+			? (textareaEl.selectionStart ?? draft.length)
+			: draft.length
+		const before = draft.slice(0, pos)
+		const after = draft.slice(pos)
+		const pre = before.length && !/[\s\n]$/.test(before) ? " " : ""
+		const post = after.length && !/^[\s\n]/.test(after) ? " " : ""
+		draft = `${before}${pre}${token}${post}${after}`
+
+		const newPos = pos + pre.length + token.length
+		setTimeout(() => {
+			textareaEl?.focus()
+			textareaEl?.setSelectionRange(newPos, newPos)
+		}, 0)
+
+		onTagToggle(normalized, draft)
+	}
+
+	function onPillPointerDown(event, tag) {
+		if (!isRemovableTag(tag)) return
+		event.preventDefault()
+		dragState = {
+			tag,
+			startX: event.clientX,
+			startY: event.clientY,
+			dx: 0,
+			dy: 0,
+			outside: false,
+			moved: false,
+		}
+	}
+
+	$effect(() => {
+		if (!dragState) return
+
+		const handleMove = (event) => {
+			if (!dragState) return
+			const dx = event.clientX - dragState.startX
+			const dy = event.clientY - dragState.startY
+			const movedDistance = Math.abs(dx) + Math.abs(dy)
+			dragState = {
+				...dragState,
+				dx,
+				dy,
+				moved: dragState.moved || movedDistance > 8,
+				outside: isPointOutsideCloud(event.clientX, event.clientY),
+			}
+		}
+
+		const handleUp = () => {
+			if (dragState?.tag && dragState.moved) {
+				suppressToggleTag = dragState.tag
+				setTimeout(() => {
+					suppressToggleTag = ""
+				}, 0)
+			}
+
+			if (dragState?.tag && dragState.moved) {
+				if (dragState.dy <= -12) {
+					addTagToDraft(dragState.tag)
+				} else if (
+					dragState.dy >= 12 &&
+					dragState.outside &&
+					isRemovableTag(dragState.tag)
+				) {
+					removeTagFromRecent(dragState.tag)
+				}
+			}
+			dragState = null
+		}
+
+		window.addEventListener("pointermove", handleMove)
+		window.addEventListener("pointerup", handleUp, {once: true})
+		window.addEventListener("pointercancel", handleUp, {once: true})
+
+		return () => {
+			window.removeEventListener("pointermove", handleMove)
+			window.removeEventListener("pointerup", handleUp)
+			window.removeEventListener("pointercancel", handleUp)
 		}
 	})
 
@@ -127,11 +260,14 @@
 	const tags = $derived(() => {
 		const seen = new Set()
 		const result = []
-		const draftTerms = extractDraftTerms(
-			typeof textareaEl?.value === "string" && textareaEl.value.length
-				? textareaEl.value
-				: draft,
-		)
+		const draftTerms = textareaEl
+			? extractDraftTerms(
+					typeof textareaEl?.value === "string" &&
+						textareaEl.value.length
+						? textareaEl.value
+						: draft,
+				)
+			: []
 		for (const tag of [
 			...locationTags,
 			...defaultHashtags,
@@ -204,19 +340,40 @@
 </script>
 
 <div class="tag-cloud">
-	{#each tags() as tag (tag)}
-		<button
-			type="button"
-			class="pill"
-			class:active={isActive(tag)}
-			onmousedown={(event) => event.preventDefault()}
-			onclick={() => toggle(tag)}>{tag}</button
-		>
-	{/each}
+	Click to toggle the tags. Drag up to add to the text or drag outside and
+	down to remove from recent tags.
+	<div class="tag-cloud-inner" bind:this={cloudEl}>
+		{#each tags() as tag (tag)}
+			<button
+				type="button"
+				class="pill"
+				class:removable={isRemovableTag(tag)}
+				class:dragging={dragState?.tag === tag && dragState?.moved}
+				class:drag-out={dragState?.tag === tag && dragState?.outside}
+				class:active={isActive(tag)}
+				style={dragState?.tag === tag && dragState?.moved
+					? `transform: translate(${dragState.dx}px, ${dragState.dy}px);`
+					: ""}
+				onmousedown={(event) => event.preventDefault()}
+				onpointerdown={(event) => onPillPointerDown(event, tag)}
+				onclick={() => {
+					if (suppressToggleTag === tag) {
+						suppressToggleTag = ""
+						return
+					}
+					toggle(tag)
+				}}>{tag}</button
+			>
+		{/each}
+	</div>
 </div>
 
 <style>
 	.tag-cloud {
+		display: block;
+	}
+
+	.tag-cloud-inner {
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0.35rem;
@@ -251,5 +408,19 @@
 		border-color: #305741;
 		color: #fff;
 		box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+	}
+
+	.pill.removable {
+		position: relative;
+	}
+
+	.pill.dragging {
+		z-index: 3;
+		box-shadow: 0 7px 18px rgba(59, 110, 79, 0.24);
+	}
+
+	.pill.drag-out {
+		opacity: 0.45;
+		filter: saturate(0.6);
 	}
 </style>

@@ -578,7 +578,17 @@
 					</li>
 				{/each}
 			</ul>
-			<div class="comments-more"><Bluesky size={13} />more...</div>
+			<div class="comment-compose-disabled" aria-hidden="true">
+				<div class="comment-input-disabled">Add your comments</div>
+				<div class="comment-submit-disabled">Submit</div>
+			</div>
+		{:else}
+			<div class="comment-compose-disabled" aria-hidden="true">
+				<div class="comment-input-disabled">
+					Be the first to comment
+				</div>
+				<div class="comment-submit-disabled">Submit</div>
+			</div>
 		{/if}
 	</a>
 </article>
@@ -959,5 +969,42 @@
 	.post-footer:hover .comments-more {
 		color: #1a4a7a;
 		text-decoration: none;
+	}
+
+	.comment-compose-disabled {
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
+		margin: 0 -0.75rem;
+		padding: 0.5rem 0.75rem 0.2rem;
+		width: calc(100% + 1.5rem);
+		box-sizing: border-box;
+	}
+
+	.comment-input-disabled {
+		flex: 1;
+		height: 34px;
+		display: flex;
+		align-items: center;
+		padding: 0 0.7rem;
+		border-radius: 999px;
+		border: 1px solid #d8d3ca;
+		background: #f5f2ed;
+		color: #9a9388;
+		font-size: 0.82rem;
+	}
+
+	.comment-submit-disabled {
+		height: 34px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0 0.9rem;
+		border-radius: 999px;
+		border: 1px solid #cfd7cf;
+		background: #e7ece7;
+		color: #8f998f;
+		font-size: 0.78rem;
+		font-weight: 600;
 	}
 </style>
