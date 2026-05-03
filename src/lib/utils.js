@@ -5,6 +5,63 @@ const DEFAULT_LOCATION_CACHE_KEY = 'love4dogs.location-cache';
 const DEFAULT_LOCATION_CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_REVERSE_GEO_CACHE_KEY = 'love4dogs.reverse-geo-cache';
 const DEFAULT_REVERSE_GEO_MAX_ENTRIES = 100;
+export const CONTACT_LOCK_PREFIX = '🔒';
+const CONTACT_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz+-_@. ';
+const CONTACT_BASE = BigInt(CONTACT_ALPHABET.length);
+const CONTACT_OUTPUT_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-._~';
+const CONTACT_OUTPUT_BASE = BigInt(CONTACT_OUTPUT_ALPHABET.length);
+
+export function isContactEncrypted(value = '') {
+	return String(value).startsWith(CONTACT_LOCK_PREFIX);
+}
+
+export function normalizeContactInput(text = '') {
+	return [...String(text).toLowerCase()]
+		.filter((char) => CONTACT_ALPHABET.includes(char))
+		.join('');
+}
+
+export function encryptContact(input = '') {
+	if (!input) return '';
+	let value = 0n;
+	for (const char of input) {
+		const idx = CONTACT_ALPHABET.indexOf(char);
+		if (idx < 0) throw new Error('Contact contains unsupported characters');
+		value = value * CONTACT_BASE + BigInt(idx);
+	}
+	if (value === 0n) return CONTACT_OUTPUT_ALPHABET[0];
+	let output = '';
+	while (value > 0n) {
+		const idx = Number(value % CONTACT_OUTPUT_BASE);
+		output = CONTACT_OUTPUT_ALPHABET[idx] + output;
+		value = value / CONTACT_OUTPUT_BASE;
+	}
+	return output;
+}
+
+function fromOutputBase(encoded) {
+	let value = 0n;
+	for (const char of String(encoded)) {
+		const idx = CONTACT_OUTPUT_ALPHABET.indexOf(char);
+		if (idx < 0) throw new Error('Invalid compressed contact value');
+		value = value * CONTACT_OUTPUT_BASE + BigInt(idx);
+	}
+	return value;
+}
+
+export function decryptContact(encoded = '') {
+	if (!encoded) return '';
+	let value = fromOutputBase(encoded);
+	if (value === 0n) return CONTACT_ALPHABET[0];
+	let output = '';
+	while (value > 0n) {
+		const idx = Number(value % CONTACT_BASE);
+		output = CONTACT_ALPHABET[idx] + output;
+		value = value / CONTACT_BASE;
+	}
+	return output;
+}
+
 function isValidCoordinate(lat, lon) {
 	return Number.isFinite(lat) && Number.isFinite(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180;
 }

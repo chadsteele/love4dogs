@@ -6,12 +6,13 @@
 	<h1>About Love4Dogs</h1>
 	<p>
 		Love4Dogs is a small Bluesky-powered space for sharing adoptable dogs,
-		rescue updates, and location-aware posts that help people find animals in
-		need.
+		rescue updates, and location-aware posts that help people find animals
+		in need.
 	</p>
 	<p>
-		Use the feed to browse recent posts, bookmarks, and trash-managed items, or
-		open the composer to publish posts with photos and map-linked locations.
+		Use the feed to browse recent posts, bookmarks, and trash-managed items,
+		or open the composer to publish posts with photos and map-linked
+		locations.
 	</p>
 </main>
 

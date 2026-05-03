@@ -2,10 +2,23 @@
 	import {onMount} from "svelte"
 	import {
 		buildLocationBlock,
+		CONTACT_LOCK_PREFIX,
+		decryptContact,
+		encryptContact,
+		isContactEncrypted,
 		lookupLocationDetails,
 		lookupLocationWithCache,
+		normalizeContactInput,
 	} from "$lib/utils"
-	import {CircleAlert, ClipboardCopy, ImagePlus, Send} from "lucide-svelte"
+	import {
+		CircleAlert,
+		ClipboardCopy,
+		Eye,
+		EyeOff,
+		ImagePlus,
+		Send,
+		ShieldCheck,
+	} from "lucide-svelte"
 	import {goto} from "$app/navigation"
 	import HashTagCloud from "$lib/HashTagCloud.svelte"
 	import LocationPicker from "$lib/LocationPicker.svelte"
@@ -30,6 +43,28 @@
 	let textareaEl = $state(null)
 	let feedTags = $state([])
 	let lastLocationUpdateId = 0
+
+	const LOCAL_CONTACT_KEY = "love4dogs.contact"
+	function loadContactState() {
+		if (typeof localStorage === "undefined") return ""
+		try {
+			const raw = localStorage.getItem(LOCAL_CONTACT_KEY)
+			if (!raw) return ""
+			const parsed = JSON.parse(raw)
+			if (typeof parsed === "string") return parsed
+			if (parsed && typeof parsed.contactinfo === "string")
+				return parsed.contactinfo
+			return ""
+		} catch {
+			return localStorage.getItem(LOCAL_CONTACT_KEY) || ""
+		}
+	}
+	let contactinfo = $state(loadContactState())
+
+	$effect(() => {
+		if (typeof localStorage === "undefined") return
+		localStorage.setItem(LOCAL_CONTACT_KEY, contactinfo)
+	})
 
 	function extractHashtags(text = "") {
 		const matches = text.match(/(^|\s)#([\p{L}\p{N}_-]+)/gu) || []
@@ -155,7 +190,8 @@
 		const trimmedTitle = title.trim()
 		const body = draft.trim()
 		const location = locationText.trim()
-		const parts = [trimmedTitle, body, location].filter(Boolean)
+		const contact = contactinfo.trim()
+		const parts = [trimmedTitle, body, location, contact].filter(Boolean)
 		let text = parts.join("\n\n")
 
 		if (!text.includes(ps)) {
@@ -368,6 +404,74 @@
 			placeholder="Location details (auto-updates when map pin moves)"
 			rows="3"
 		></textarea>
+		<div class="contact-row">
+			<input
+				class="contact-input"
+				type="text"
+				bind:value={contactinfo}
+				placeholder="Optional: you@email.com, +phone, @username.bsky.social, or other contact info"
+				maxlength="200"
+				readonly={isContactEncrypted(contactinfo)}
+				oninput={() => {
+					if (isContactEncrypted(contactinfo)) return
+					contactinfo = normalizeContactInput(contactinfo)
+				}}
+			/>
+
+			<button
+				class="lock-btn"
+				type="button"
+				disabled={!contactinfo.trim()}
+				title={isContactEncrypted(contactinfo)
+					? "Decrypt contact info"
+					: "Encrypt contact info"}
+				onclick={() => {
+					if (!isContactEncrypted(contactinfo)) {
+						const normalized = normalizeContactInput(
+							contactinfo.trim(),
+						)
+						contactinfo =
+							CONTACT_LOCK_PREFIX + encryptContact(normalized)
+					} else {
+						contactinfo = decryptContact(
+							contactinfo.slice(CONTACT_LOCK_PREFIX.length),
+						)
+					}
+				}}
+			>
+				{#if isContactEncrypted(contactinfo)}
+					<EyeOff size={16} />
+				{:else}
+					<Eye size={16} />
+				{/if}
+			</button>
+		</div>
+		{#if contactinfo.trim().length > 0}
+			<div
+				class="contact-notice"
+				class:contact-notice--encrypted={isContactEncrypted(
+					contactinfo,
+				)}
+			>
+				{#if isContactEncrypted(contactinfo)}
+					<ShieldCheck size={14} />
+					<span
+						>Contact info is encrypted/compressed and only visible
+						on our platform, but security is not guaranteed. <br
+						/>We do not spam, but we can't guarantee complete
+						privacy.</span
+					>
+				{:else}
+					<CircleAlert size={14} />
+					<span
+						>Contact info will be <strong>public</strong> on all
+						platforms.
+						<br />We do not spam, but we can't guarantee complete
+						privacy.</span
+					>
+				{/if}
+			</div>
+		{/if}
 
 		<p class="counter" class:danger={remainingChars() < 0}>
 			{remainingChars()} chars left
@@ -431,7 +535,7 @@
 					title="Copy as rich HTML for email"
 				>
 					<ClipboardCopy size={16} />
-					<span>{copySuccess ? "Copied!" : "Copy"}</span>
+					<span>{copySuccess ? "Copied!" : "Share"}</span>
 				</button>
 				<button
 					class="post-btn"
@@ -440,7 +544,7 @@
 					disabled={posting}
 				>
 					<Send size={16} />
-					<span>{posting ? "Sharing..." : "Share"}</span>
+					<span>{posting ? "Sending..." : "Submit"}</span>
 				</button>
 			</div>
 		</div>
@@ -546,6 +650,80 @@
 	.location-input {
 		min-height: 88px;
 		margin-top: 0.45rem;
+	}
+	.contact-row {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-top: 0.45rem;
+		padding: 0.45rem 0.6rem 0.45rem 0.75rem;
+		border: 1px solid #d7c8b6;
+		border-radius: 12px;
+		background: #fffdf8;
+	}
+	.contact-input {
+		flex: 1;
+		border: none;
+		outline: none;
+		background: transparent;
+		font: inherit;
+		font-size: 0.95rem;
+		color: inherit;
+	}
+	.contact-input[readonly] {
+		color: #5a4f42;
+		font-family: monospace;
+		font-size: 0.85rem;
+	}
+	.lock-btn {
+		flex-shrink: 0;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 30px;
+		height: 30px;
+		border-radius: 50%;
+		border: 0px solid #d0c3b0;
+		background: transparent;
+		color: #7a6d5e;
+		cursor: pointer;
+		transition:
+			background 0.15s,
+			color 0.15s,
+			border-color 0.15s;
+	}
+	.lock-btn:disabled {
+		opacity: 0.3;
+		cursor: default;
+		pointer-events: none;
+	}
+	.lock-btn:hover {
+		background: #f0e9df;
+		border-color: #b09880;
+		color: #4a3f34;
+	}
+
+	.contact-notice {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.4rem;
+		margin-top: 0.35rem;
+		padding: 0.45rem 0.65rem;
+		border-radius: 8px;
+		font-size: 0.82rem;
+		line-height: 1.4;
+		background: #fff4e5;
+		color: #7a4a1a;
+		border: 1px solid #f0d5a8;
+	}
+	.contact-notice--encrypted {
+		background: #eaf4ee;
+		color: #2a5c3a;
+		border-color: #b5d9c0;
+	}
+	.contact-notice :global(svg) {
+		flex-shrink: 0;
+		margin-top: 1px;
 	}
 	.drop-hint {
 		font-size: 0.85rem;
