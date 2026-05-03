@@ -27,6 +27,7 @@
 	let currentView = $state("feed")
 	let tagCloudSignal = $state(0)
 	let showAboutModal = $state(false)
+	let searchSort = $state("latest")
 
 	let searchDebounceTimer = null
 	let lastFeedRequestId = 0
@@ -111,9 +112,11 @@
 
 		try {
 			const query = searchTerm.trim()
-			const res = await fetch(
-				`/api/feed?query=${encodeURIComponent(query)}`,
-			)
+			const params = new URLSearchParams({
+				query,
+				sort: searchSort,
+			})
+			const res = await fetch(`/api/feed?${params.toString()}`)
 			const json = await res.json()
 
 			if (!res.ok) {
@@ -343,6 +346,21 @@
 							Recent Posts
 						{/if}
 					</h2>
+					<label class="sort-toggle" aria-label="Sort search results">
+						<span class="sort-label">Most recent</span>
+						<input
+							type="checkbox"
+							checked={searchSort === "top"}
+							onchange={(event) => {
+								searchSort = event.currentTarget.checked
+									? "top"
+									: "latest"
+								loadFeed()
+							}}
+						/>
+						<span class="sort-slider" aria-hidden="true"></span>
+						<span class="sort-label">Most popular</span>
+					</label>
 				</div>
 			</div>
 
@@ -410,6 +428,57 @@
 		align-items: center;
 		gap: 0.55rem;
 		margin-bottom: 10px;
+		flex-wrap: wrap;
+	}
+
+	.sort-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-left: 0.35rem;
+		font-size: 0.8rem;
+		color: #5f665f;
+		user-select: none;
+	}
+
+	.sort-toggle input {
+		position: absolute;
+		opacity: 0;
+		pointer-events: none;
+	}
+
+	.sort-slider {
+		position: relative;
+		width: 38px;
+		height: 21px;
+		border-radius: 999px;
+		background: rgba(129, 129, 129, 0.36);
+		transition: background 0.16s ease;
+	}
+
+	.sort-slider::after {
+		content: "";
+		position: absolute;
+		top: 2px;
+		left: 2px;
+		width: 17px;
+		height: 17px;
+		border-radius: 50%;
+		background: #fff;
+		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
+		transition: transform 0.16s ease;
+	}
+
+	.sort-toggle input:checked + .sort-slider {
+		background: #3b6e4f;
+	}
+
+	.sort-toggle input:checked + .sort-slider::after {
+		transform: translateX(17px);
+	}
+
+	.sort-label {
+		white-space: nowrap;
 	}
 
 	.select-all-btn {

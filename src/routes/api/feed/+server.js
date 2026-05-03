@@ -163,6 +163,7 @@ async function hydratePostComments(posts = []) {
 
 export async function GET({ url }) {
 	const query = url.searchParams.get('query')?.trim() || '';
+	const sort = url.searchParams.get('sort') === 'top' ? 'top' : 'latest';
 	const publicFetchOptions = {
 		method: 'GET',
 		mode: 'cors',
@@ -195,7 +196,7 @@ export async function GET({ url }) {
 	let posts = await hydratePostComments(feedItems.map(mapPost));
 
 	if (query) {
-		const searchPath = `app.bsky.feed.searchPosts?q=${encodeURIComponent(query)}&author=${encodeURIComponent(ACCOUNT_HANDLE)}&limit=30`;
+		const searchPath = `app.bsky.feed.searchPosts?q=${encodeURIComponent(query)}&author=${encodeURIComponent(ACCOUNT_HANDLE)}&limit=30${sort === 'top' ? '&sort=top' : ''}`;
 		const { response: searchRes, failures: searchFailures } = await xrpcGet(
 			searchPath,
 			publicFetchOptions
