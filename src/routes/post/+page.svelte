@@ -46,6 +46,7 @@
 	let textareaEl = $state(null)
 	let feedTags = $state([])
 	let lastLocationUpdateId = 0
+	let dragDepth = 0
 	let hideLocation = $state(false)
 	let tagsDrawerOpen = $state(true)
 
@@ -123,18 +124,36 @@
 		event.currentTarget.value = ""
 	}
 
+	function isFileDrag(event) {
+		const types = event.dataTransfer?.types
+		if (!types) return false
+		return [...types].includes("Files")
+	}
+
+	function onDragEnter(event) {
+		if (!isFileDrag(event)) return
+		event.preventDefault()
+		dragDepth += 1
+		isDraggingFiles = true
+	}
+
 	function onDragOver(event) {
+		if (!isFileDrag(event)) return
 		event.preventDefault()
 		isDraggingFiles = true
 	}
 
 	function onDragLeave(event) {
+		if (!isFileDrag(event)) return
 		event.preventDefault()
-		isDraggingFiles = false
+		dragDepth = Math.max(0, dragDepth - 1)
+		isDraggingFiles = dragDepth > 0
 	}
 
 	function onDropFiles(event) {
+		if (!isFileDrag(event)) return
 		event.preventDefault()
+		dragDepth = 0
 		isDraggingFiles = false
 		postError = ""
 		addImages([...(event.dataTransfer?.files || [])])
@@ -375,7 +394,14 @@
 		<h1>Create a post</h1>
 	</nav>
 
-	<article class="panel compose">
+	<article
+		class="panel compose"
+		class:drag-active={isDraggingFiles}
+		ondragenter={onDragEnter}
+		ondragover={onDragOver}
+		ondragleave={onDragLeave}
+		ondrop={onDropFiles}
+	>
 		<div class="title-row">
 			<input
 				class="title-input"
@@ -403,6 +429,9 @@
 			ondragleave={onDragLeave}
 			ondrop={onDropFiles}
 		></textarea>
+		{#if isDraggingFiles}
+			<p class="drop-target-hint">Drop photos anywhere in this panel.</p>
+		{/if}
 		<div class="tags-drawer">
 			<div>
 				<label>
@@ -644,6 +673,18 @@
 		padding: 1rem;
 		box-shadow: 0 10px 26px rgba(65, 42, 20, 0.12);
 	}
+	.compose {
+		position: relative;
+		transition:
+			border-color 0.15s ease,
+			background 0.15s ease,
+			box-shadow 0.15s ease;
+	}
+	.compose.drag-active {
+		border-color: #55724d;
+		background: #ece8d7;
+		box-shadow: 0 0 0 2px rgba(85, 114, 77, 0.22);
+	}
 	.location-status {
 		margin: 0.4rem 0 0;
 		font-size: 0.85rem;
@@ -690,6 +731,12 @@
 	textarea.is-dragging {
 		background: #ece8d7;
 		border-color: #55724d;
+	}
+	.drop-target-hint {
+		margin: 0.45rem 0 0;
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: #3b6e4f;
 	}
 	.location-input {
 		min-height: 88px;
