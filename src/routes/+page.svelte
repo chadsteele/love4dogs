@@ -28,6 +28,7 @@
 	let tagCloudSignal = $state(0)
 	let showAboutModal = $state(false)
 	let searchSort = $state("latest")
+	let isLocalhost = $state(false)
 
 	let searchDebounceTimer = null
 	let lastFeedRequestId = 0
@@ -186,8 +187,53 @@
 		selectionMenuOpen = false
 	}
 
-	function applySelectionAction(action) {
+	async function applySelectionAction(action) {
 		if (!selectedUris.length) return
+
+		if (action === "deleteRemote") {
+			const urisToDelete = [...selectedUris]
+			const confirmed = window.confirm(
+				`Delete ${urisToDelete.length} selected post(s) from Bluesky? This cannot be undone.`,
+			)
+			if (!confirmed) return
+
+			try {
+				const res = await fetch("/api/post", {
+					method: "DELETE",
+					headers: {"content-type": "application/json"},
+					body: JSON.stringify({uris: urisToDelete}),
+				})
+				const json = await res.json().catch(() => ({}))
+
+				if (!res.ok || !json.ok) {
+					throw new Error(
+						json.error ||
+							"Failed to delete selected posts from Bluesky.",
+					)
+				}
+
+				const deletedUris = Array.isArray(json.deleted)
+					? json.deleted
+					: urisToDelete
+
+				posts = posts.filter((post) => !deletedUris.includes(post.uri))
+				bookmarkedUris = bookmarkedUris.filter(
+					(uri) => !deletedUris.includes(uri),
+				)
+				trashedUris = trashedUris.filter(
+					(uri) => !deletedUris.includes(uri),
+				)
+				saveStoredList(BOOKMARK_KEY, bookmarkedUris)
+				saveStoredList(TRASH_KEY, trashedUris)
+			} catch (error) {
+				feedError =
+					error.message || "Failed deleting posts from Bluesky."
+			}
+
+			selectedUris = []
+			selectionMenuOpen = false
+			return
+		}
 
 		if (action === "bookmark") {
 			bookmarkedUris = cappedUniqueList([
@@ -239,6 +285,12 @@
 	}
 
 	onMount(() => {
+		if (typeof window !== "undefined") {
+			const host = window.location.hostname
+			isLocalhost =
+				host === "localhost" || host === "127.0.0.1" || host === "::1"
+		}
+
 		loadLocalTagCounts()
 		bookmarkedUris = readStoredList(BOOKMARK_KEY)
 		trashedUris = readStoredList(TRASH_KEY)
@@ -304,6 +356,7 @@
 		{currentView}
 		bookmarkedCount={bookmarkedUris.length}
 		trashedCount={trashedUris.length}
+		showLocalDelete={isLocalhost}
 		onToggleMenu={() => (selectionMenuOpen = !selectionMenuOpen)}
 		onSetView={setView}
 		onSelectionAction={applySelectionAction}

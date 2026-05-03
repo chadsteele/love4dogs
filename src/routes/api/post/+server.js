@@ -134,6 +134,16 @@ async function uploadBlob(accessJwt, file) {
 	return json.blob;
 }
 
+function parsePostAtUri(uri) {
+	const match = String(uri || '').match(/^at:\/\/([^/]+)\/app\.bsky\.feed\.post\/([^/?#]+)$/);
+	if (!match) return null;
+	return {
+		repo: match[1],
+		rkey: match[2],
+		uri: match[0]
+	};
+}
+
 export async function POST({ request }) {
 	try {
 		const formData = await request.formData();
@@ -207,6 +217,88 @@ export async function POST({ request }) {
 
 		const result = await createRecordRes.json();
 		return new Response(JSON.stringify({ ok: true, result, tags }), {
+			headers: { 'content-type': 'application/json' }
+		});
+	} catch (error) {
+		return new Response(JSON.stringify({ error: error.message || 'Unexpected error.' }), {
+			status: 500,
+			headers: { 'content-type': 'application/json' }
+		});
+	}
+}
+
+export async function DELETE({ request, url }) {
+	try {
+		const host = url.hostname;
+		const isLocalRequest = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+		if (!isLocalRequest) {
+			return new Response(JSON.stringify({ error: 'Bulk delete is only enabled on localhost.' }), {
+				status: 403,
+				headers: { 'content-type': 'application/json' }
+			});
+		}
+
+		const body = await request.json().catch(() => ({}));
+		const uris = Array.isArray(body.uris) ? body.uris : [];
+		if (!uris.length) {
+			return new Response(JSON.stringify({ error: 'No post URIs were provided.' }), {
+				status: 400,
+				headers: { 'content-type': 'application/json' }
+			});
+		}
+
+		const session = await getSession();
+		const parsedTargets = uris
+			.map((uri) => parsePostAtUri(uri))
+			.filter(Boolean)
+			.filter((target, index, arr) => arr.findIndex((item) => item.uri === target.uri) === index);
+
+		const deleted = [];
+		const failed = [];
+
+		for (const target of parsedTargets) {
+			if (session.did && target.repo !== session.did) {
+				failed.push({ uri: target.uri, error: 'URI does not belong to authenticated repo.' });
+				continue;
+			}
+
+			const response = await fetch(`${BSKY_XRPC}/com.atproto.repo.deleteRecord`, {
+				method: 'POST',
+				headers: {
+					authorization: `Bearer ${session.accessJwt}`,
+					'content-type': 'application/json'
+				},
+				body: JSON.stringify({
+					repo: session.did,
+					collection: 'app.bsky.feed.post',
+					rkey: target.rkey
+				})
+			});
+
+			if (response.ok) {
+				deleted.push(target.uri);
+				continue;
+			}
+
+			const errBody = await response.json().catch(() => ({}));
+			failed.push({
+				uri: target.uri,
+				error: errBody.message || errBody.error || `Bluesky error ${response.status}`
+			});
+
+			if (response.status === 401 || response.status === 403) {
+				cachedSession = null;
+			}
+		}
+
+		if (deleted.length === 0 && failed.length > 0) {
+			return new Response(JSON.stringify({ ok: false, error: 'No posts were deleted.', failed }), {
+				status: 502,
+				headers: { 'content-type': 'application/json' }
+			});
+		}
+
+		return new Response(JSON.stringify({ ok: true, deleted, failed }), {
 			headers: { 'content-type': 'application/json' }
 		});
 	} catch (error) {

@@ -7,6 +7,7 @@
 		Trash2,
 		Settings,
 		Users,
+		AlertOctagon,
 	} from "lucide-svelte"
 	import {slide} from "svelte/transition"
 	import HashTagCloud from "$lib/HashTagCloud.svelte"
@@ -24,6 +25,7 @@
 		onSetView = () => {},
 		onSelectionAction = () => {},
 		onOpenAbout = () => {},
+		showLocalDelete = false,
 		onSearchSubmit = () => {},
 		onSearchInput = () => {},
 	} = $props()
@@ -137,6 +139,15 @@
 						</button>
 					{/if}
 
+					{#if showLocalDelete && selectedCount > 0}
+						<button
+							type="button"
+							onclick={() => onSelectionAction("deleteRemote")}
+						>
+							<AlertOctagon size={16} /> Remove permanently
+						</button>
+					{/if}
+
 					<div class="menu-sep"></div>
 					<button
 						type="button"
@@ -228,19 +239,28 @@
 <style>
 	.topbar {
 		position: sticky;
-		top: 0.75rem;
+		top: 0;
 		display: flex;
 		flex-wrap: wrap;
 		gap: 1rem;
 		justify-content: space-between;
 		align-items: center;
 		padding: 0.8rem 1rem;
-		margin-bottom: 1rem;
+		margin: -1rem 0 1rem;
+		width: 100vw;
+		width: 100dvw;
+		margin-left: calc(50% - 50vw);
+		margin-left: calc(50% - 50dvw);
+		margin-right: calc(50% - 50vw);
+		margin-right: calc(50% - 50dvw);
 		background: rgba(246, 240, 230, 0.84);
 		backdrop-filter: blur(8px);
 		border: 1px solid rgba(96, 71, 49, 0.18);
-		border-radius: 16px;
+		border-radius: 0;
+		border-left: none;
+		border-right: none;
 		z-index: 10;
+		box-sizing: border-box;
 	}
 
 	.brand {
@@ -372,7 +392,11 @@
 		border-radius: 999px;
 		background: #fffdf8;
 		border: 1px solid rgba(48, 80, 54, 0.2);
-		min-width: min(100%, 470px);
+		width: min(100%, 470px);
+		min-width: min(375px, 100%);
+		flex: 1 1 375px;
+		max-width: 100%;
+		box-sizing: border-box;
 	}
 
 	.topnav-cloud {
@@ -431,7 +455,9 @@
 
 	@media (max-width: 900px) {
 		.search {
-			min-width: 100%;
+			width: 100%;
+			min-width: min(375px, 100%);
+			flex-basis: 100%;
 		}
 
 		.topbar-links {
