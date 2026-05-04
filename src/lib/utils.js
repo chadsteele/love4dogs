@@ -156,7 +156,7 @@ export function buildLocationBlock(location, mapBaseUrl = DEFAULT_MAP_BASE_URL) 
 	const hash = gpsToHash(Number(location.lat), Number(location.lon));
 	if (!hash) return '';
 
-	const details = `${location.city || 'Unknown city'}, ${location.country || 'Unknown country'}, ${location.zip || 'Unknown zip'}`;
+	const details = [location.city, location.country, location.zip].filter(Boolean).join(', ');
 	return `\n\n📍 ${mapBaseUrl}/${hash.path}\n${details}`;
 }
 

@@ -1,5 +1,12 @@
 <script>
-	import {Heart, MessageCircle, PawPrint, Repeat2} from "lucide-svelte"
+	import {
+		Heart,
+		MessageCircle,
+		PawPrint,
+		Pencil,
+		Repeat2,
+	} from "lucide-svelte"
+	import {onMount} from "svelte"
 	import {CONTACT_LOCK_PREFIX, decryptContact} from "$lib/utils"
 	import PostImageViewer from "$lib/PostImageViewer.svelte"
 	import Share from "$lib/Share.svelte"
@@ -16,6 +23,18 @@
 
 	let postTextEl = $state(null)
 	let postTitleEl = $state(null)
+	let isMyPost = $state(false)
+
+	const MY_POSTS_KEY = "love4dogs.my-post-uris"
+
+	onMount(() => {
+		try {
+			const uris = JSON.parse(localStorage.getItem(MY_POSTS_KEY) || "[]")
+			isMyPost = Array.isArray(uris) && uris.includes(post.uri)
+		} catch {
+			// ignore
+		}
+	})
 	let imageDimensions = $state({})
 	let showImageModal = $state(false)
 	let activeImageIndex = $state(0)
@@ -403,9 +422,24 @@
 		<span class="select-dot">{selected ? "✓" : ""}</span>
 	</button>
 
-	{#if bookmarked}
-		<div class="bookmark-badge" title="Favorited">
-			<PawPrint size={16} />
+	{#if bookmarked || isMyPost}
+		<div class="post-card-right-badges">
+			{#if bookmarked}
+				<div class="bookmark-badge" title="Favorited">
+					<PawPrint size={16} />
+				</div>
+			{/if}
+			{#if isMyPost}
+				<a
+					href={`/post?uri=${encodeURIComponent(post.uri)}`}
+					class="edit-badge"
+					title="Edit this post"
+					aria-label="Edit this post"
+					onclick={(e) => e.stopPropagation()}
+				>
+					<Pencil size={14} />
+				</a>
+			{/if}
 		</div>
 	{/if}
 
@@ -586,10 +620,17 @@
 		font-weight: 700;
 	}
 
-	.bookmark-badge {
+	.post-card-right-badges {
 		position: absolute;
 		top: 0.5rem;
 		right: 0.5rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+		z-index: 2;
+	}
+
+	.bookmark-badge {
 		width: 28px;
 		height: 28px;
 		border-radius: 50%;
@@ -599,7 +640,24 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		z-index: 2;
+	}
+
+	.edit-badge {
+		width: 28px;
+		height: 28px;
+		border-radius: 50%;
+		background: rgba(235, 245, 255, 0.95);
+		border: 1px solid #93b8e0;
+		color: #2d5f9a;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		text-decoration: none;
+	}
+
+	.edit-badge:hover {
+		background: #dbeafe;
+		border-color: #2d5f9a;
 	}
 
 	.post-title {

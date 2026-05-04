@@ -5,6 +5,7 @@
 		CONTACT_LOCK_PREFIX,
 		decryptContact,
 		encryptContact,
+		hashToGps,
 		isContactEncrypted,
 		lookupLocationDetails,
 		normalizeContactInput,
@@ -13,19 +14,21 @@
 		ChevronDown,
 		ChevronRight,
 		CircleAlert,
-		ClipboardCopy,
 		Eye,
 		EyeOff,
 		ImagePlus,
 		Send,
 		ShieldCheck,
+		Trash2,
 	} from "lucide-svelte"
 	import {goto} from "$app/navigation"
 	import HashTagCloud from "$lib/HashTagCloud.svelte"
 	import LocationPicker from "$lib/LocationPicker.svelte"
-	import TopBar from "$lib/TopBar.svelte"
 
 	const LOCAL_TAG_KEY = "love4dogs.tag-counts"
+	const LOCAL_OLD_POSTS_KEY = "love4dogs.my-post-uris"
+	const TRASH_KEY = "love4dogs.trash"
+	const MAX_OLD_POSTS = 100
 	const MAX_CHARS = 300
 	const MAX_ATTACHMENTS = 4
 	const MAX_IMAGE_SIZE_BYTES = 2 * 1024 * 1024
@@ -46,10 +49,14 @@
 	let posting = $state(false)
 	let postError = $state("")
 	let postSuccess = $state("")
-	let copySuccess = $state(false)
 	let isDraggingFiles = $state(false)
 	let textareaEl = $state(null)
 	let feedTags = $state([])
+	let oldPostUris = $state([])
+	let oldPostDetailsByUri = $state({})
+	let showAllOldPosts = $state(false)
+	let editingPostUri = $state("")
+	let loadingEditPost = $state(false)
 	let dragDepth = 0
 	let tagsDrawerOpen = $state(true)
 
@@ -91,6 +98,136 @@
 		localStorage.setItem(LOCAL_TAG_KEY, JSON.stringify(counts))
 	}
 
+	function isValidAtUri(value = "") {
+		return /^at:\/\/[^/]+\/app\.bsky\.feed\.post\/[^/?#]+$/i.test(
+			String(value || "").trim(),
+		)
+	}
+
+	function loadOldPostUris() {
+		if (typeof localStorage === "undefined") return []
+		try {
+			const parsed = JSON.parse(
+				localStorage.getItem(LOCAL_OLD_POSTS_KEY) || "[]",
+			)
+			if (!Array.isArray(parsed)) return []
+			return [
+				...new Set(parsed.map((uri) => String(uri || "").trim())),
+			].filter((uri) => isValidAtUri(uri))
+		} catch {
+			return []
+		}
+	}
+
+	function saveOldPostUris(nextUris = []) {
+		const cleaned = [
+			...new Set(nextUris.map((uri) => String(uri || "").trim())),
+		]
+			.filter((uri) => isValidAtUri(uri))
+			.slice(0, MAX_OLD_POSTS)
+		oldPostUris = cleaned
+		if (typeof localStorage !== "undefined") {
+			localStorage.setItem(LOCAL_OLD_POSTS_KEY, JSON.stringify(cleaned))
+		}
+	}
+
+	function addOldPostUri(uri = "") {
+		if (!isValidAtUri(uri)) return
+		saveOldPostUris([uri, ...oldPostUris.filter((item) => item !== uri)])
+	}
+
+	function removeOldPostUri(uri = "") {
+		saveOldPostUris(oldPostUris.filter((item) => item !== uri))
+	}
+
+	function addToTrash(uri = "") {
+		if (!uri || typeof window === "undefined") return
+		try {
+			const existing = JSON.parse(localStorage.getItem(TRASH_KEY) || "[]")
+			const next = [uri, ...existing.filter((u) => u !== uri)].slice(0, 100)
+			localStorage.setItem(TRASH_KEY, JSON.stringify(next))
+		} catch {
+			// ignore
+		}
+	}
+
+	async function deletePost() {
+		if (!editingPostUri) return
+		const confirmed = window.confirm(
+			"Permanently delete this post from Bluesky? This cannot be undone.",
+		)
+		if (!confirmed) return
+
+		posting = true
+		postError = ""
+		try {
+			const res = await fetch("/api/post", {
+				method: "DELETE",
+				headers: {"content-type": "application/json"},
+				body: JSON.stringify({uris: [editingPostUri]}),
+			})
+			const json = await res.json().catch(() => ({}))
+			if (!res.ok) throw new Error(json.error || "Delete failed.")
+			addToTrash(editingPostUri)
+			removeOldPostUri(editingPostUri)
+			goto("/")
+		} catch (error) {
+			postError = error.message || "Unable to delete post."
+		} finally {
+			posting = false
+		}
+	}
+
+	function oldPostPreviewTitle(uri = "") {
+		const post = oldPostDetailsByUri[uri]
+		if (post?.text) {
+			const firstLine = String(post.text).split("\n")[0].trim()
+			if (firstLine) return firstLine
+		}
+		return uri.split("/").pop() || uri
+	}
+
+	function oldPostPreviewDate(uri = "") {
+		const post = oldPostDetailsByUri[uri]
+		if (!post?.createdAt) return ""
+		try {
+			return new Date(post.createdAt).toLocaleDateString(undefined, {
+				month: "short",
+				day: "numeric",
+				year: "numeric",
+			})
+		} catch {
+			return ""
+		}
+	}
+
+	async function fetchPostByUri(uri = "") {
+		const response = await fetch(`/api/post?uri=${encodeURIComponent(uri)}`)
+		const json = await response.json().catch(() => ({}))
+		if (!response.ok) {
+			throw new Error(json.error || "Unable to load post.")
+		}
+		return json.post
+	}
+
+	async function hydrateOldPostDetails(uris = []) {
+		const missing = uris.filter((uri) => uri && !oldPostDetailsByUri[uri])
+		if (!missing.length) return
+
+		const updates = {}
+		for (const uri of missing) {
+			try {
+				updates[uri] = await fetchPostByUri(uri)
+			} catch {
+				// Keep rendering even if a saved post is unavailable.
+			}
+		}
+
+		if (Object.keys(updates).length) {
+			oldPostDetailsByUri = {...oldPostDetailsByUri, ...updates}
+		}
+	}
+
 	function updatePreviews() {
 		for (const old of previews) {
 			URL.revokeObjectURL(old.url)
@@ -107,6 +244,135 @@
 		if (!fileName) return `upload${nextExt}`
 		const withoutExt = fileName.replace(/\.[^/.]+$/, "")
 		return `${withoutExt}${nextExt}`
+	}
+
+	function fileNameFromUrl(url, fallback = "image.jpg") {
+		try {
+			const parsed = new URL(url)
+			const name = parsed.pathname.split("/").pop() || fallback
+			return name.split("?")[0] || fallback
+		} catch {
+			return fallback
+		}
+	}
+
+	function extractLocationFromText(text = "") {
+		const match = text.match(/\n\n📍\s+([^\n]+)\n([^\n]+)/)
+		if (!match) {
+			return {textWithoutLocation: text, address: "", location: null}
+		}
+
+		const fullMatch = match[0]
+		const mapUrl = String(match[1] || "").trim()
+		const detailsLine = String(match[2] || "").trim()
+		const textWithoutLocation = text.replace(fullMatch, "")
+
+		const [city = "", country = "", zip = ""] = detailsLine
+			.split(",")
+			.map((part) => part.trim())
+
+		let location = null
+		try {
+			const parsed = new URL(mapUrl)
+			const parts = parsed.pathname.split("/").filter(Boolean)
+			const hashPath = parts.slice(-2).join("/")
+			const gps = hashToGps(hashPath)
+			if (gps) {
+				location = {
+					lat: gps.lat,
+					lon: gps.lon,
+					city,
+					country,
+					zip,
+				}
+			}
+		} catch {
+			location = null
+		}
+
+		return {
+			textWithoutLocation,
+			address: detailsLine,
+			location,
+		}
+	}
+
+	function splitPostTextForEditor(text = "") {
+		const normalized = String(text || "").replace(/\r\n/g, "\n")
+		const {textWithoutLocation, address, location} =
+			extractLocationFromText(normalized)
+		const blocks = textWithoutLocation
+			.split(/\n{2,}/)
+			.map((block) => block.trim())
+			.filter(Boolean)
+
+		const nextTitle = blocks.shift() || ""
+		let nextContact = ""
+		if (blocks.length) {
+			const candidate = blocks[blocks.length - 1]
+			if (
+				isContactEncrypted(candidate) ||
+				/(^@)|(@)|(^\+?[\d\s().-]{7,}$)|(\.[a-z]{2,}$)/i.test(candidate)
+			) {
+				nextContact = candidate
+				blocks.pop()
+			}
+		}
+
+		return {
+			title: nextTitle,
+			body: blocks.join("\n\n"),
+			address,
+			location,
+			contact: nextContact,
+		}
+	}
+
+	async function loadImagesForEdit(imageUrls = []) {
+		if (!Array.isArray(imageUrls) || imageUrls.length === 0) {
+			clearFiles()
+			return
+		}
+
+		clearFiles()
+		const files = []
+		for (let index = 0; index < imageUrls.length; index += 1) {
+			const imageUrl = imageUrls[index]
+			try {
+				const response = await fetch(
+					`/api/download-image?url=${encodeURIComponent(imageUrl)}`,
+				)
+				if (!response.ok) continue
+				const blob = await response.blob()
+				const name = fileNameFromUrl(imageUrl, `image-${index + 1}.jpg`)
+				const file = new File([blob], name, {
+					type: blob.type || "image/jpeg",
+					lastModified: Date.now(),
+				})
+				files.push(file)
+			} catch {
+				// Keep loading remaining files.
+			}
+		}
+
+		if (files.length) {
+			await addMedia(files)
+		}
+	}
+
+	async function loadPostIntoEditor(post) {
+		const next = splitPostTextForEditor(post?.text || "")
+		title = next.title
+		draft = next.body
+		addressText = next.address
+		confirmedAddress = next.address
+		locationConfirmed = Boolean(next.address)
+		modalLocation = next.location
+		pinMovedInModal = false
+		if (next.contact) {
+			contactinfo = next.contact
+		}
+		await loadImagesForEdit(post?.images || [])
 	}
 
 	function canvasToPngBlob(canvas) {
@@ -495,6 +761,36 @@
 			if (!res.ok)
 				throw new Error(json.error || "Failed to publish post.")
 
+			const createdUri = String(json?.result?.uri || "")
+			if (isValidAtUri(createdUri)) {
+				addOldPostUri(createdUri)
+			}
+
+			const replacingUri =
+				editingPostUri && oldPostUris.includes(editingPostUri)
+					? editingPostUri
+					: ""
+
+			if (replacingUri) {
+				const deleteRes = await fetch("/api/post", {
+					method: "DELETE",
+					headers: {"content-type": "application/json"},
+					body: JSON.stringify({uris: [replacingUri]}),
+				})
+				if (deleteRes.ok) {
+					addToTrash(replacingUri)
+					removeOldPostUri(replacingUri)
+					const nextDetails = {...oldPostDetailsByUri}
+					delete nextDetails[replacingUri]
+					oldPostDetailsByUri = nextDetails
+				} else {
+					const deleteJson = await deleteRes.json().catch(() => ({}))
+					postError =
+						deleteJson.error ||
+						"New post saved, but deleting the old post failed."
+				}
+			}
+
 			incrementLocalTags(extractHashtags(finalText))
 			draft = ""
 			addressText = ""
@@ -502,6 +798,10 @@
 			confirmedAddress = ""
 			modalLocation = null
 			clearFiles()
+			editingPostUri = ""
+			if (typeof window !== "undefined") {
+				window.history.replaceState({}, "", "/post")
+			}
 			postSuccess = "Post published successfully."
 			goto("/")
 		} catch (error) {
@@ -511,95 +811,51 @@
 		}
 	}
 
-	async function copyAsHtml() {
-		const trimmedTitle = title.trim()
-		const bodyText = draft.trim()
-		let locationInfo = ""
-		if (locationConfirmed && modalLocation) {
-			locationInfo = buildLocationBlock(modalLocation).replace(/^\n+/, "")
-		}
-
-		function escHtml(str) {
-			return str
-				.replace(/&/g, "&amp;")
-				.replace(/</g, "&lt;")
-				.replace(/>/g, "&gt;")
-		}
-
-		function linkify(str) {
-			return escHtml(str).replace(
-				/(https?:\/\/[^\s<]+)/g,
-				'<a href="$1">$1</a>',
-			)
-		}
-
-		const imageFiles = selectedFiles.filter((file) =>
-			file.type.startsWith("image/"),
-		)
-		const videoFiles = selectedFiles.filter((file) =>
-			file.type.startsWith("video/"),
-		)
-
-		const imgTags = await Promise.all(
-			imageFiles.map(
-				(file) =>
-					new Promise((resolve) => {
-						const reader = new FileReader()
-						reader.onload = (e) =>
-							resolve(
-								`<img src="${e.target.result}" alt="${escHtml(file.name)}" style="max-width:100%;max-height:400px;display:block;margin:4px 0;">`,
-							)
-						reader.readAsDataURL(file)
-					}),
-			),
-		)
-
-		const parts = []
-		if (trimmedTitle)
-			parts.push(
-				`<h2 style="font-weight:700;font-size:1.2em;margin:0 0 10px 0;">${escHtml(trimmedTitle)}</h2>`,
-			)
-		if (bodyText)
-			parts.push(
-				`<p style="margin:0 0 10px 0;white-space:pre-wrap;">${linkify(bodyText).replace(/\n/g, "<br>")}</p>`,
-			)
-		if (locationInfo)
-			parts.push(
-				`<p style="margin:0 0 10px 0;white-space:pre-wrap;">${linkify(locationInfo).replace(/\n/g, "<br>")}</p>`,
-			)
-		if (imgTags.length)
-			parts.push(
-				`<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;">${imgTags.join("")}</div>`,
-			)
-		if (videoFiles.length)
-			parts.push(
-				`<p style="margin:8px 0 0 0;"><strong>Video attached:</strong> ${escHtml(videoFiles[0].name)}</p>`,
-			)
-
-		const html = `<div style="font-family:sans-serif;line-height:1.5;">${parts.join("")}</div>`
-
-		try {
-			await navigator.clipboard.write([
-				new ClipboardItem({
-					"text/html": new Blob([html], {type: "text/html"}),
-					"text/plain": new Blob([composeFinalText()], {
-						type: "text/plain",
-					}),
-				}),
-			])
-		} catch {
-			await navigator.clipboard.writeText(composeFinalText())
-		}
-
-		copySuccess = true
-		setTimeout(() => (copySuccess = false), 2000)
-	}
-
 	function remainingChars() {
 		return MAX_CHARS - [...composeFinalText()].length
 	}
 
+	function currentEditUriFromQuery() {
+		if (typeof window === "undefined") return ""
+		const params = new URLSearchParams(window.location.search)
+		const uri = String(params.get("id") || params.get("uri") || "").trim()
+		return isValidAtUri(uri) ? uri : ""
+	}
+
+	async function beginEditFromUri(uri = "") {
+		if (!uri || !oldPostUris.includes(uri)) return
+		loadingEditPost = true
+		postError = ""
+		try {
+			const post = await fetchPostByUri(uri)
+			oldPostDetailsByUri = {...oldPostDetailsByUri, [uri]: post}
+			await loadPostIntoEditor(post)
+			editingPostUri = uri
+		} catch (error) {
+			postError = error.message || "Unable to load post for editing."
+		} finally {
+			loadingEditPost = false
+		}
+	}
+
+	const oldPostUrisForDisplay = $derived(
+		oldPostUris.filter((uri) => uri !== editingPostUri),
+	)
+
+	const visibleOldPostUris = $derived(
+		showAllOldPosts
+			? oldPostUrisForDisplay
+			: oldPostUrisForDisplay.slice(0, 4),
+	)
+
 	onMount(() => {
+		oldPostUris = loadOldPostUris()
+		hydrateOldPostDetails(oldPostUris)
+		const editUri = currentEditUriFromQuery()
+		if (editUri && oldPostUris.includes(editUri)) {
+			beginEditFromUri(editUri)
+		}
+
 		fetch("/api/feed")
 			.then((r) => r.json())
 			.then((j) => {
@@ -632,6 +888,14 @@
 		ondragleave={onDragLeave}
 		ondrop={onDropFiles}
 	>
+		{#if loadingEditPost}
+			<p class="edit-loading">Loading selected post...</p>
+		{:else if editingPostUri}
+			<p class="edit-loading">
+				Editing a previous post. Saving will replace it.
+			</p>
+		{/if}
+
 		<div class="title-row">
 			<input
 				class="title-input"
@@ -821,15 +1085,17 @@
 				</p>
 			</div>
 			<div class="toolbar-right">
-				<button
-					class="icon-btn copy-btn"
-					type="button"
-					onclick={copyAsHtml}
-					title="Copy as rich HTML for email"
-				>
-					<ClipboardCopy size={16} />
-					<span>{copySuccess ? "Copied!" : "Share"}</span>
-				</button>
+				{#if editingPostUri}
+					<button
+						class="delete-btn"
+						type="button"
+						onclick={deletePost}
+						disabled={posting}
+					>
+						<Trash2 size={16} />
+						<span>Delete</span>
+					</button>
+				{/if}
 				<button
 					class="post-btn"
 					type="button"
@@ -837,11 +1103,66 @@
 					disabled={posting}
 				>
 					<Send size={16} />
-					<span>{posting ? "Sending..." : "Submit"}</span>
+					<span
+						>{posting
+							? "Sending..."
+							: editingPostUri
+								? "Save"
+								: "Submit"}</span
+					>
 				</button>
 			</div>
 		</div>
 	</article>
+
+	{#if oldPostUrisForDisplay.length > 0}
+		<section class="panel old-posts">
+			<div class="old-posts-head">
+				<h2>My old posts</h2>
+                <p class="old-posts-note">You can only edit/delete posts that were created on this device and browser</p>
+				{#if oldPostUrisForDisplay.length > 4}
+					<button
+						type="button"
+						class="old-posts-more"
+						onclick={() => (showAllOldPosts = !showAllOldPosts)}
+					>
+						{showAllOldPosts ? "Show less" : "More"}
+					</button>
+				{/if}
+			</div>
+
+			<ul class="old-posts-list">
+				{#each visibleOldPostUris as uri}
+					<li class="old-post-item">
+						<div class="old-post-meta">
+							<strong>{oldPostPreviewTitle(uri)}</strong>
+							{#if oldPostPreviewDate(uri)}
+								<span>{oldPostPreviewDate(uri)}</span>
+							{/if}
+						</div>
+						<a
+							class="old-post-edit"
+							href={`/post?id=${encodeURIComponent(uri)}`}
+							onclick={async (event) => {
+								event.preventDefault()
+								await goto(
+									`/post?id=${encodeURIComponent(uri)}`,
+									{
+										replaceState: true,
+										noScroll: true,
+										keepFocus: true,
+									},
+								)
+								await beginEditFromUri(uri)
+							}}
+						>
+							Edit
+						</a>
+					</li>
+				{/each}
+			</ul>
+		</section>
+	{/if}
 </main>
 
 {#if showLocationModal}
@@ -921,6 +1242,12 @@
 			border-color 0.15s ease,
 			background 0.15s ease,
 			box-shadow 0.15s ease;
+	}
+	.edit-loading {
+		margin: 0 0 0.55rem;
+		font-size: 0.88rem;
+		font-weight: 600;
+		color: #2f5f3f;
 	}
 	.compose.drag-active {
 		border-color: #55724d;
@@ -1103,11 +1430,31 @@
 		font: inherit;
 		cursor: pointer;
 	}
-	.post-btn {
+	.toolbar-right {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
 		margin-left: auto;
+	}
+	.post-btn {
 		background: #3b6e4f;
 		border-color: #305741;
 		color: #fff;
+	}
+	.delete-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		border: 1px solid #b04030;
+		background: #fff;
+		color: #b04030;
+		border-radius: 999px;
+		padding: 0.45rem 0.8rem;
+		font: inherit;
+		cursor: pointer;
+	}
+	.delete-btn:hover {
+		background: #fdf0ee;
 	}
 	input[type="file"] {
 		display: none;
@@ -1259,5 +1606,68 @@
 	}
 	.modal-confirm-btn:hover {
 		background: #305741;
+	}
+	.old-posts {
+		margin-top: 0.9rem;
+	}
+	.old-posts-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+	}
+	.old-posts-head h2 {
+		margin: 0;
+		font-size: 1.05rem;
+	}
+	.old-posts-more {
+		border: 1px solid #bdad9e;
+		background: #fff;
+		border-radius: 999px;
+		padding: 0.32rem 0.8rem;
+		font: inherit;
+		font-size: 0.85rem;
+		cursor: pointer;
+	}
+	.old-posts-list {
+		list-style: none;
+		margin: 0.75rem 0 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+	}
+	.old-post-item {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
+		padding: 0.5rem 0.65rem;
+		border-radius: 10px;
+		background: #fffdf8;
+		border: 1px solid #e7ddcf;
+	}
+	.old-post-meta {
+		display: flex;
+		flex-direction: column;
+		gap: 0.12rem;
+		min-width: 0;
+	}
+	.old-post-meta strong {
+		font-size: 0.9rem;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.old-post-meta span {
+		font-size: 0.78rem;
+		color: #7b7b7b;
+	}
+	.old-post-edit {
+		text-decoration: none;
+		color: #1f5135;
+		font-size: 0.85rem;
+		font-weight: 600;
+		flex-shrink: 0;
 	}
 </style>

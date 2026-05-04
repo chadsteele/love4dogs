@@ -156,6 +156,103 @@ function parsePostAtUri(uri) {
 	};
 }
 
+function mapSinglePostFromThread(threadPost) {
+	const post = threadPost?.post;
+	if (!post) return null;
+
+	const record = post.record || {};
+	const images = [];
+	let video = null;
+
+	const embedView = post.embed;
+	const mediaView =
+		embedView?.$type === 'app.bsky.embed.recordWithMedia#view' ? embedView.media : embedView;
+
+	if (mediaView?.$type === 'app.bsky.embed.images#view') {
+		for (const image of mediaView.images || []) {
+			if (image.fullsize) images.push(image.fullsize);
+		}
+	}
+
+	if (mediaView?.$type === 'app.bsky.embed.video#view') {
+		video = {
+			playlist: mediaView.playlist || '',
+			thumbnail: mediaView.thumbnail || '',
+			alt: mediaView.alt || ''
+		};
+	}
+
+	return {
+		uri: post.uri,
+		cid: post.cid,
+		text: record.text || '',
+		facets: Array.isArray(record.facets) ? record.facets : [],
+		createdAt: record.createdAt || null,
+		images,
+		video
+	};
+}
+
+export async function GET({ url }) {
+	try {
+		const uri = String(url.searchParams.get('uri') || '').trim();
+		if (!uri) {
+			return new Response(JSON.stringify({ error: 'Post URI is required.' }), {
+				status: 400,
+				headers: { 'content-type': 'application/json' }
+			});
+		}
+
+		if (!parsePostAtUri(uri)) {
+			return new Response(JSON.stringify({ error: 'Invalid post URI.' }), {
+				status: 400,
+				headers: { 'content-type': 'application/json' }
+			});
+		}
+
+		const session = await getSession();
+		const res = await fetch(
+			`${BSKY_XRPC}/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}&depth=0`,
+			{
+				headers: {
+					authorization: `Bearer ${session.accessJwt}`,
+					accept: 'application/json'
+				}
+			}
+		);
+
+		if (!res.ok) {
+			if (res.status === 401 || res.status === 403) cachedSession = null;
+			const errBody = await res.json().catch(() => ({}));
+			return new Response(
+				JSON.stringify({ error: errBody.message || errBody.error || 'Unable to load post.' }),
+				{
+					status: res.status,
+					headers: { 'content-type': 'application/json' }
+				}
+			);
+		}
+
+		const json = await res.json();
+		const post = mapSinglePostFromThread(json?.thread);
+		if (!post) {
+			return new Response(JSON.stringify({ error: 'Post not found.' }), {
+				status: 404,
+				headers: { 'content-type': 'application/json' }
+			});
+		}
+
+		return new Response(JSON.stringify({ ok: true, post }), {
+			headers: { 'content-type': 'application/json' }
+		});
+	} catch (error) {
+		return new Response(JSON.stringify({ error: error.message || 'Unexpected error.' }), {
+			status: 500,
+			headers: { 'content-type': 'application/json' }
+		});
+	}
+}
+
 export async function POST({ request }) {
 	try {
 		const formData = await request.formData();
