@@ -40,12 +40,20 @@
 	const MAX_GRID_SAMPLES = 16
 	const TARGET_HASH_STEP_DEGREES = 0.05
 	const FETCH_CONCURRENCY = 3
+	const SLOW_WHILE_MOVING_REQUEST_SPACING_MS = 700
 	const BASE_REQUEST_SPACING_MS = 140
 	const THROTTLED_REQUEST_SPACING_MS = 700
 	const THROTTLE_BACKOFF_MS = 60_000
-	const VIEWPORT_REFRESH_DEBOUNCE_MS = 220
+	const API_DOWN_BACKOFF_MS = 15_000
+	const VIEWPORT_REFRESH_DEBOUNCE_MS = 260
+	const MAP_IDLE_BEFORE_SPEEDUP_MS = 1_000
 	let nextApproxRequestAt = 0
 	let throttleBackoffUntil = 0
+	let lastMapActivityAt = 0
+	let apiUnavailableUntil = 0
+	let apiHealthProbeRequired = false
+	let refreshInFlight = false
+	let refreshQueued = false
 
 	async function searchLocation(event) {
 		event?.preventDefault?.()
@@ -112,7 +120,18 @@
 		throttleBackoffUntil = Date.now() + THROTTLE_BACKOFF_MS
 	}
 
+	function markMapActivity() {
+		lastMapActivityAt = Date.now()
+	}
+
+	function isMapIdleLongEnough() {
+		return Date.now() - lastMapActivityAt >= MAP_IDLE_BEFORE_SPEEDUP_MS
+	}
+
 	function currentRequestSpacingMs() {
+		if (!isMapIdleLongEnough()) {
+			return SLOW_WHILE_MOVING_REQUEST_SPACING_MS
+		}
 		return isThrottleBackoffActive()
 			? THROTTLED_REQUEST_SPACING_MS
 			: BASE_REQUEST_SPACING_MS
@@ -120,6 +139,20 @@
 
 	function currentFetchConcurrency() {
 		return isThrottleBackoffActive() ? 1 : FETCH_CONCURRENCY
+	}
+
+	function isApiUnavailable() {
+		return Date.now() < apiUnavailableUntil
+	}
+
+	function markApiUnavailableNow() {
+		apiUnavailableUntil = Date.now() + API_DOWN_BACKOFF_MS
+		apiHealthProbeRequired = true
+	}
+
+	function markApiHealthyNow() {
+		apiUnavailableUntil = 0
+		apiHealthProbeRequired = false
 	}
 
 	async function waitForApproxRequestSlot() {
@@ -247,6 +280,8 @@
 		const results = []
 		const workers = []
 		let cursor = 0
+		let stopAfterThrottle = false
+		let stopAfterApiUnavailable = false
 		const workerCount = Math.min(
 			currentFetchConcurrency(),
 			approximates.length,
@@ -258,17 +293,60 @@
 				cursor += 1
 				if (index >= approximates.length) return
 				const approximate = approximates[index]
+				if (stopAfterApiUnavailable || isApiUnavailable()) {
+					results[index] = {
+						status: "fulfilled",
+						value: {
+							approximate,
+							posts: [],
+							throttled: true,
+							skipped: true,
+							apiUnavailable: true,
+						},
+					}
+					onSettled(approximate)
+					continue
+				}
+				if (stopAfterThrottle) {
+					results[index] = {
+						status: "fulfilled",
+						value: {
+							approximate,
+							posts: [],
+							throttled: true,
+							skipped: true,
+						},
+					}
+					onSettled(approximate)
+					continue
+				}
 				try {
 					await waitForApproxRequestSlot()
+					if (stopAfterApiUnavailable || isApiUnavailable()) {
+						results[index] = {
+							status: "fulfilled",
+							value: {
+								approximate,
+								posts: [],
+								throttled: true,
+								skipped: true,
+								apiUnavailable: true,
+							},
+						}
+						onSettled(approximate)
+						continue
+					}
 					const params = new URLSearchParams({approximate})
 					const res = await fetch(
 						`/api/map-posts?${params.toString()}`,
 					)
+					markApiHealthyNow()
 					const json = await res.json().catch(() => ({}))
 					if (!res.ok) {
 						// Don't permanently block throttled hashes; let them retry
 						if (json.throttled) {
 							markThrottleBackoffNow()
+							stopAfterThrottle = true
 							results[index] = {
 								status: "fulfilled",
 								value: {
@@ -288,6 +366,7 @@
 					// If upstream is throttled, don't poison the cache with empty results
 					if (json.throttled) {
 						markThrottleBackoffNow()
+						stopAfterThrottle = true
 						results[index] = {
 							status: "fulfilled",
 							value: {approximate, posts: [], throttled: true},
@@ -302,6 +381,15 @@
 						value: {approximate, posts, throttled: false},
 					}
 				} catch (error) {
+					const message = String(error?.message || "").toLowerCase()
+					const isConnectionFailure =
+						message.includes("failed to fetch") ||
+						message.includes("network") ||
+						message.includes("connection")
+					if (isConnectionFailure) {
+						markApiUnavailableNow()
+						stopAfterApiUnavailable = true
+					}
 					approxErrorCache.set(
 						approximate,
 						Date.now() + APPROX_ERROR_TTL_MS,
@@ -328,6 +416,12 @@
 		hashLoadTotal = 0
 		hashLoadDone = 0
 		try {
+			if (isApiUnavailable()) {
+				console.log("[map] api unavailable backoff active", {
+					remainingMs: apiUnavailableUntil - Date.now(),
+				})
+				return
+			}
 			const cleanApproximates = approximates
 				.map((value) =>
 					String(value || "")
@@ -367,20 +461,24 @@
 
 			hashLoadTotal = cleanApproximates.length
 			hashLoadDone = cleanApproximates.length - missingApproximates.length
+			const fetchApproximates = apiHealthProbeRequired
+				? missingApproximates.slice(0, 1)
+				: missingApproximates
 			cacheHashesCached =
 				cleanApproximates.length - missingApproximates.length
-			cacheHashesFetching = missingApproximates.length
+			cacheHashesFetching = fetchApproximates.length
 			console.log("[map] approx cache status", {
 				total: cleanApproximates.length,
 				cached: cleanApproximates.length - missingApproximates.length,
-				fetching: missingApproximates.length,
+				fetching: fetchApproximates.length,
+				probeOnly: apiHealthProbeRequired,
 				concurrency: currentFetchConcurrency(),
 				spacingMs: currentRequestSpacingMs(),
 				throttleBackoffActive: isThrottleBackoffActive(),
 			})
 
 			const responses = await fetchApproximatesBatched(
-				missingApproximates,
+				fetchApproximates,
 				() => {
 					if (requestId !== mapLoadRequestId) return
 					hashLoadDone += 1
@@ -397,7 +495,7 @@
 			for (let i = 0; i < responses.length; i += 1) {
 				const result = responses[i]
 				if (result.status !== "fulfilled") {
-					const approximate = missingApproximates[i]
+					const approximate = fetchApproximates[i]
 					if (approximate) {
 						approxErrorCache.set(
 							approximate,
@@ -417,6 +515,16 @@
 					seenUris.add(post.uri)
 					merged.push(post)
 				}
+			}
+			const throttledResponses = responses.filter(
+				(result) =>
+					result?.status === "fulfilled" && result?.value?.throttled,
+			).length
+			if (throttledResponses > 0) {
+				console.log("[map] throttled; stopped remaining hash fetches", {
+					throttledResponses,
+					requested: fetchApproximates.length,
+				})
 			}
 			mapPosts = merged
 
@@ -439,20 +547,39 @@
 
 	async function refreshViewportPosts() {
 		if (!mapInstance) return
-		const approximates = collectViewportApproximates()
-		const key = [...approximates].sort().join(",")
-		if (key === lastViewportKey) return
-		lastViewportKey = key
-		viewportApproximates = approximates
-		await loadMapPosts(approximates)
-		console.log(
-			`Found ${validMapPosts().length} post(s) from ${viewportApproximates.length} approx hash cell(s) in this view. `,
-		)
+		if (refreshInFlight) {
+			refreshQueued = true
+			return
+		}
+		refreshInFlight = true
+		refreshQueued = false
+		try {
+			const approximates = collectViewportApproximates()
+			const key = [...approximates].sort().join(",")
+			if (key === lastViewportKey) return
+			lastViewportKey = key
+			viewportApproximates = approximates
+			await loadMapPosts(approximates)
+			console.log(
+				`Found ${validMapPosts().length} post(s) from ${viewportApproximates.length} approx hash cell(s) in this view. `,
+			)
+		} finally {
+			refreshInFlight = false
+			if (refreshQueued) {
+				refreshQueued = false
+				refreshViewportPosts()
+			}
+		}
 	}
 
 	function scheduleViewportRefresh() {
+		markMapActivity()
+		if (!viewportRefreshTimer) {
+			refreshViewportPosts()
+		}
 		if (viewportRefreshTimer) clearTimeout(viewportRefreshTimer)
 		viewportRefreshTimer = setTimeout(() => {
+			viewportRefreshTimer = null
 			refreshViewportPosts()
 		}, VIEWPORT_REFRESH_DEBOUNCE_MS)
 	}
@@ -577,6 +704,7 @@
 			if (!data?.valid || typeof window === "undefined") return
 			const module = await import("leaflet")
 			if (destroyed) return
+			markMapActivity()
 
 			leaflet = module.default ?? module
 			mapInstance = leaflet
@@ -601,7 +729,10 @@
 				.addTo(mapInstance)
 
 			markerLayer = leaflet.layerGroup().addTo(mapInstance)
-			mapInstance.on("moveend", () => {
+			mapInstance.on("move", () => {
+				scheduleViewportRefresh()
+			})
+			mapInstance.on("zoom", () => {
 				scheduleViewportRefresh()
 			})
 			await refreshViewportPosts()
@@ -633,7 +764,7 @@
 <main class="map-page">
 	<nav class="topline">
 		<a class="nav-btn" href="/">＜ Go Back</a>
-		<h1 class="map-title">Map</h1>
+		<h1 class="map-title">Love4Dogs</h1>
 		{#if data.valid}
 			<button
 				class="nav-btn"
@@ -758,7 +889,7 @@
 
 	.map-title {
 		margin: 0;
-		font-size: 1rem;
+		font-size: 1.5rem;
 		flex: 1;
 		text-align: center;
 	}
