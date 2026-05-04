@@ -1,6 +1,7 @@
 <script>
 	import {Heart, MessageCircle, PawPrint, Repeat2} from "lucide-svelte"
 	import {CONTACT_LOCK_PREFIX, decryptContact} from "$lib/utils"
+	import PostImageViewer from "$lib/PostImageViewer.svelte"
 	import Share from "$lib/Share.svelte"
 
 	import Bluesky from "./assets/BlueSkyLogo.svelte"
@@ -349,7 +350,6 @@
 	const sortedImages = $derived(
 		sortImagesBySize(post.images || [], imageDimensions),
 	)
-	const modalImage = $derived(sortedImages[activeImageIndex] || "")
 
 	$effect(() => {
 		if (typeof window === "undefined") return
@@ -388,21 +388,6 @@
 
 		return () => {
 			cancelled = true
-		}
-	})
-
-	$effect(() => {
-		if (!showImageModal || typeof window === "undefined") return
-
-		const onKeyDown = (event) => {
-			if (event.key === "Escape") {
-				closeImageModal()
-			}
-		}
-
-		window.addEventListener("keydown", onKeyDown)
-		return () => {
-			window.removeEventListener("keydown", onKeyDown)
 		}
 	})
 </script>
@@ -489,69 +474,13 @@
 		</div>
 	{/if}
 
-	{#if showImageModal && modalImage}
-		<div
-			class="image-modal-backdrop"
-			role="button"
-			tabindex="0"
-			aria-label="Close image viewer"
-			onclick={closeImageModal}
-			onkeydown={(event) => {
-				if (event.key === "Enter" || event.key === " ") {
-					closeImageModal()
-				}
-			}}
-		>
-			<div
-				class="image-modal"
-				role="dialog"
-				aria-modal="true"
-				aria-label="Post image viewer"
-				tabindex="-1"
-				onclick={(event) => event.stopPropagation()}
-				onkeydown={(event) => {
-					if (event.key === "Enter" || event.key === " ") {
-						event.stopPropagation()
-					}
-				}}
-			>
-				<button
-					type="button"
-					class="image-modal-close"
-					onclick={closeImageModal}
-					aria-label="Close image viewer"
-				>
-					×
-				</button>
-				<div class="image-modal-main">
-					<img
-						src={modalImage}
-						alt="Expanded dog post"
-						loading="eager"
-					/>
-				</div>
-				{#if sortedImages.length > 1}
-					<div class="image-modal-thumbs">
-						{#each sortedImages as image, index}
-							<button
-								type="button"
-								class="image-modal-thumb"
-								class:is-active={index === activeImageIndex}
-								onclick={() => (activeImageIndex = index)}
-								aria-label={`Show image ${index + 1}`}
-							>
-								<img
-									src={image}
-									alt="Post thumbnail"
-									loading="lazy"
-								/>
-							</button>
-						{/each}
-					</div>
-				{/if}
-			</div>
-		</div>
-	{/if}
+	<PostImageViewer
+		open={showImageModal}
+		images={sortedImages}
+		activeIndex={activeImageIndex}
+		onClose={closeImageModal}
+		onChangeIndex={(index) => (activeImageIndex = index)}
+	/>
 
 	<a
 		class="post-footer"
@@ -802,93 +731,6 @@
 		border-radius: 9px;
 		background: #000;
 		box-shadow: 0 2px 7px rgba(39, 23, 10, 0.12);
-	}
-
-	.image-modal-backdrop {
-		position: fixed;
-		inset: 0;
-		background: rgba(16, 20, 15, 0.76);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: 1rem;
-		z-index: 70;
-	}
-
-	.image-modal {
-		position: relative;
-		width: min(980px, 100%);
-		max-height: calc(100vh - 2rem);
-		padding: 1rem 1rem 0.9rem;
-		background: rgba(255, 250, 241, 0.98);
-		border: 1px solid rgba(58, 91, 65, 0.24);
-		border-radius: 16px;
-		box-shadow: 0 18px 45px rgba(65, 42, 20, 0.28);
-		box-sizing: border-box;
-	}
-
-	.image-modal-main {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		min-height: 220px;
-		max-height: calc(100vh - 9rem);
-	}
-
-	.image-modal-main img {
-		display: block;
-		max-width: 100%;
-		max-height: calc(100vh - 9rem);
-		width: auto;
-		height: auto;
-		object-fit: contain;
-		border-radius: 12px;
-	}
-
-	.image-modal-thumbs {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
-		gap: 0.5rem;
-		margin-top: 0.85rem;
-	}
-
-	.image-modal-thumb {
-		padding: 0;
-		border: 2px solid transparent;
-		border-radius: 10px;
-		background: transparent;
-		cursor: pointer;
-		overflow: hidden;
-	}
-
-	.image-modal-thumb.is-active {
-		border-color: #3b6e4f;
-	}
-
-	.image-modal-thumb img {
-		display: block;
-		width: 100%;
-		aspect-ratio: 1 / 1;
-		object-fit: cover;
-	}
-
-	.image-modal-close {
-		position: absolute;
-		top: 0.5rem;
-		right: 0.5rem;
-		width: 34px;
-		height: 34px;
-		border-radius: 50%;
-		border: 1px solid rgba(58, 91, 65, 0.24);
-		background: rgba(255, 255, 255, 0.92);
-		cursor: pointer;
-		font-size: 1.25rem;
-		line-height: 1;
-		color: #2f4936;
-	}
-
-	.image-modal-close:hover {
-		background: rgba(243, 250, 244, 0.95);
 	}
 
 	.post-footer {

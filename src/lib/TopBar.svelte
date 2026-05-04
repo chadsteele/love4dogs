@@ -228,7 +228,7 @@
 
 	<div class="topbar-links">
 		<a class="post-route-btn" href="/post" aria-label="Create Post"
-			>Create Post</a
+			>+ Create</a
 		>
 	</div>
 	{#if searchFocused || cloudPinnedBySignal}
