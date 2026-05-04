@@ -19,6 +19,11 @@
 	let locationQuery = $state("")
 	let searchingLocation = $state(false)
 	let searchError = $state("")
+	let hashLoadTotal = $state(0)
+	let hashLoadDone = $state(0)
+	let cacheHashesCached = $state(0)
+	let cacheHashesFetching = $state(0)
+	let showLocalCacheDebug = $state(false)
 
 	let leaflet = null
 	let mapInstance = null
@@ -34,8 +39,13 @@
 	const MIN_GRID_SAMPLES = 5
 	const MAX_GRID_SAMPLES = 16
 	const TARGET_HASH_STEP_DEGREES = 0.05
-	const FETCH_CONCURRENCY = 8
+	const FETCH_CONCURRENCY = 3
+	const BASE_REQUEST_SPACING_MS = 140
+	const THROTTLED_REQUEST_SPACING_MS = 700
+	const THROTTLE_BACKOFF_MS = 60_000
 	const VIEWPORT_REFRESH_DEBOUNCE_MS = 220
+	let nextApproxRequestAt = 0
+	let throttleBackoffUntil = 0
 
 	async function searchLocation(event) {
 		event?.preventDefault?.()
@@ -88,6 +98,38 @@
 
 	function clamp(value, min, max) {
 		return Math.max(min, Math.min(max, value))
+	}
+
+	function sleep(ms = 0) {
+		return new Promise((resolve) => setTimeout(resolve, ms))
+	}
+
+	function isThrottleBackoffActive() {
+		return Date.now() < throttleBackoffUntil
+	}
+
+	function markThrottleBackoffNow() {
+		throttleBackoffUntil = Date.now() + THROTTLE_BACKOFF_MS
+	}
+
+	function currentRequestSpacingMs() {
+		return isThrottleBackoffActive()
+			? THROTTLED_REQUEST_SPACING_MS
+			: BASE_REQUEST_SPACING_MS
+	}
+
+	function currentFetchConcurrency() {
+		return isThrottleBackoffActive() ? 1 : FETCH_CONCURRENCY
+	}
+
+	async function waitForApproxRequestSlot() {
+		const now = Date.now()
+		const slotAt = Math.max(now, nextApproxRequestAt)
+		nextApproxRequestAt = slotAt + currentRequestSpacingMs()
+		const waitMs = slotAt - now
+		if (waitMs > 0) {
+			await sleep(waitMs)
+		}
 	}
 
 	function gridSamplesForViewport({south, north, west, east}) {
@@ -157,8 +199,9 @@
 		const north = bounds.getNorth()
 		const west = bounds.getWest()
 		const east = bounds.getEast()
-		const hashes = new Set()
+		const approxOrderScore = new Map()
 		const gridSamples = gridSamplesForViewport({south, north, west, east})
+		const centerIndex = (gridSamples - 1) / 2
 
 		for (let row = 0; row < gridSamples; row += 1) {
 			const latRatio = gridSamples === 1 ? 0.5 : row / (gridSamples - 1)
@@ -168,19 +211,46 @@
 					gridSamples === 1 ? 0.5 : col / (gridSamples - 1)
 				const lon = west + (east - west) * lonRatio
 				const hash = gpsToHash(lat, lon)
-				if (hash?.approx) hashes.add(hash.approx)
+				if (!hash?.approx) continue
+				const approx = String(hash.approx).toLowerCase()
+				const distanceFromCenter = Math.hypot(
+					row - centerIndex,
+					col - centerIndex,
+				)
+				const prevScore = approxOrderScore.get(approx)
+				if (
+					typeof prevScore !== "number" ||
+					distanceFromCenter < prevScore
+				) {
+					approxOrderScore.set(approx, distanceFromCenter)
+				}
 			}
 		}
 
-		if (data?.approximate)
-			hashes.add(String(data.approximate).toLowerCase())
-		return [...hashes]
+		if (data?.approximate) {
+			const currentApprox = String(data.approximate).toLowerCase()
+			const prevScore = approxOrderScore.get(currentApprox)
+			if (typeof prevScore !== "number" || prevScore > 0) {
+				approxOrderScore.set(currentApprox, 0)
+			}
+		}
+
+		return [...approxOrderScore.entries()]
+			.sort((left, right) => left[1] - right[1])
+			.map(([approx]) => approx)
 	}
 
-	async function fetchApproximatesBatched(approximates = []) {
+	async function fetchApproximatesBatched(
+		approximates = [],
+		onSettled = () => {},
+	) {
 		const results = []
 		const workers = []
 		let cursor = 0
+		const workerCount = Math.min(
+			currentFetchConcurrency(),
+			approximates.length,
+		)
 
 		const runWorker = async () => {
 			while (cursor < approximates.length) {
@@ -189,6 +259,7 @@
 				if (index >= approximates.length) return
 				const approximate = approximates[index]
 				try {
+					await waitForApproxRequestSlot()
 					const params = new URLSearchParams({approximate})
 					const res = await fetch(
 						`/api/map-posts?${params.toString()}`,
@@ -197,9 +268,14 @@
 					if (!res.ok) {
 						// Don't permanently block throttled hashes; let them retry
 						if (json.throttled) {
+							markThrottleBackoffNow()
 							results[index] = {
 								status: "fulfilled",
-								value: {approximate, posts: []},
+								value: {
+									approximate,
+									posts: [],
+									throttled: true,
+								},
 							}
 						} else {
 							throw new Error(
@@ -211,19 +287,19 @@
 					}
 					// If upstream is throttled, don't poison the cache with empty results
 					if (json.throttled) {
+						markThrottleBackoffNow()
 						results[index] = {
 							status: "fulfilled",
-							value: {approximate, posts: []},
+							value: {approximate, posts: [], throttled: true},
 						}
 						continue
 					}
 					const posts = Array.isArray(json.posts) ? json.posts : []
 					approxPostsCache.set(approximate, posts)
-					setApproxPostsInCache(approximate, posts)
 					approxErrorCache.delete(approximate)
 					results[index] = {
 						status: "fulfilled",
-						value: {approximate, posts},
+						value: {approximate, posts, throttled: false},
 					}
 				} catch (error) {
 					approxErrorCache.set(
@@ -231,15 +307,13 @@
 						Date.now() + APPROX_ERROR_TTL_MS,
 					)
 					results[index] = {status: "rejected", reason: error}
+				} finally {
+					onSettled(approximate)
 				}
 			}
 		}
 
-		for (
-			let worker = 0;
-			worker < Math.min(FETCH_CONCURRENCY, approximates.length);
-			worker += 1
-		) {
+		for (let worker = 0; worker < workerCount; worker += 1) {
 			workers.push(runWorker())
 		}
 
@@ -251,6 +325,8 @@
 		const requestId = ++mapLoadRequestId
 		loadingPins = true
 		mapError = ""
+		hashLoadTotal = 0
+		hashLoadDone = 0
 		try {
 			const cleanApproximates = approximates
 				.map((value) =>
@@ -261,6 +337,8 @@
 				.filter(Boolean)
 			if (!cleanApproximates.length) {
 				mapPosts = []
+				cacheHashesCached = 0
+				cacheHashesFetching = 0
 				return
 			}
 
@@ -287,8 +365,27 @@
 				missingApproximates.push(approximate)
 			}
 
-			const responses =
-				await fetchApproximatesBatched(missingApproximates)
+			hashLoadTotal = cleanApproximates.length
+			hashLoadDone = cleanApproximates.length - missingApproximates.length
+			cacheHashesCached =
+				cleanApproximates.length - missingApproximates.length
+			cacheHashesFetching = missingApproximates.length
+			console.log("[map] approx cache status", {
+				total: cleanApproximates.length,
+				cached: cleanApproximates.length - missingApproximates.length,
+				fetching: missingApproximates.length,
+				concurrency: currentFetchConcurrency(),
+				spacingMs: currentRequestSpacingMs(),
+				throttleBackoffActive: isThrottleBackoffActive(),
+			})
+
+			const responses = await fetchApproximatesBatched(
+				missingApproximates,
+				() => {
+					if (requestId !== mapLoadRequestId) return
+					hashLoadDone += 1
+				},
+			)
 
 			if (requestId !== mapLoadRequestId) return
 
@@ -301,8 +398,19 @@
 				const result = responses[i]
 				if (result.status !== "fulfilled") {
 					const approximate = missingApproximates[i]
-					if (approximate) approxErrorCache.add(approximate)
+					if (approximate) {
+						approxErrorCache.set(
+							approximate,
+							Date.now() + APPROX_ERROR_TTL_MS,
+						)
+					}
 					continue
+				}
+				if (!result.value.throttled) {
+					setApproxPostsInCache(
+						result.value.approximate,
+						result.value.posts,
+					)
 				}
 				for (const post of result.value.posts) {
 					if (!post?.uri || seenUris.has(post.uri)) continue
@@ -325,6 +433,7 @@
 		} finally {
 			if (requestId !== mapLoadRequestId) return
 			loadingPins = false
+			hashLoadDone = hashLoadTotal
 		}
 	}
 
@@ -364,6 +473,11 @@
 		return mapPosts.filter(
 			(post) => Number.isFinite(post?.lat) && Number.isFinite(post?.lon),
 		)
+	}
+
+	function loadingProgressPercent() {
+		if (!hashLoadTotal) return 0
+		return Math.max(0, Math.min(100, (hashLoadDone / hashLoadTotal) * 100))
 	}
 
 	function renderMarkers() {
@@ -453,6 +567,11 @@
 
 	onMount(() => {
 		let destroyed = false
+		if (typeof window !== "undefined") {
+			const host = String(window.location.hostname || "")
+			showLocalCacheDebug =
+				host === "localhost" || host === "127.0.0.1" || host === "::1"
+		}
 
 		async function initMap() {
 			if (!data?.valid || typeof window === "undefined") return
@@ -550,16 +669,36 @@
 				class="loading-bar"
 				role="progressbar"
 				aria-label="Loading map posts"
+				aria-valuemin="0"
+				aria-valuemax={hashLoadTotal || 0}
+				aria-valuenow={Math.min(hashLoadDone, hashLoadTotal || 0)}
 			>
-				<span class="loading-bar__fill"></span>
+				<span
+					class="loading-bar__fill"
+					style={`width: ${loadingProgressPercent()}%`}
+				></span>
 			</div>
-			<p class="muted">Loading nearby posts...</p>
+			<p class="muted">
+				Loading nearby posts... {Math.min(hashLoadDone, hashLoadTotal)} /
+				{hashLoadTotal} parcels
+			</p>
+			{#if showLocalCacheDebug}
+				<p class="muted cache-debug">
+					cache: {cacheHashesCached} hit, {cacheHashesFetching} fetch
+				</p>
+			{/if}
 		{:else if mapError}
 			<p class="error">{mapError}</p>
 		{:else}
 			<p class="muted">
 				Found {validMapPosts().length} post(s)
 			</p>
+			{#if showLocalCacheDebug}
+				<p class="muted cache-debug">
+					last load cache: {cacheHashesCached} hit, {cacheHashesFetching}
+					fetch
+				</p>
+			{/if}
 		{/if}
 	{:else}
 		<p class="error">{data.error}</p>
@@ -587,12 +726,13 @@
 				<button
 					type="button"
 					class="close-btn"
+					aria-label="Close post details"
 					onclick={() => (selectedPost = null)}
 				>
-					Close
+					&times;
 				</button>
 			</div>
-			<PostCard post={selectedPost} />
+			<PostCard post={selectedPost} selectable={false} />
 		</div>
 	</div>
 {/if}
@@ -648,6 +788,12 @@
 	.muted {
 		color: #5f665f;
 		margin: 0.45rem 0;
+	}
+
+	.cache-debug {
+		font-size: 0.78rem;
+		opacity: 0.85;
+		margin-top: -0.15rem;
 	}
 
 	.error {
@@ -721,21 +867,12 @@
 	.loading-bar__fill {
 		position: absolute;
 		top: 0;
-		left: -35%;
-		width: 35%;
+		left: 0;
+		width: 0%;
 		height: 100%;
 		background: linear-gradient(90deg, #3b6e4f, #6aa77f);
 		border-radius: 999px;
-		animation: map-loading-slide 1.1s ease-in-out infinite;
-	}
-
-	@keyframes map-loading-slide {
-		0% {
-			left: -35%;
-		}
-		100% {
-			left: 100%;
-		}
+		transition: width 0.15s ease-out;
 	}
 
 	:global(.leaflet-container) {
@@ -858,12 +995,21 @@
 	.close-btn {
 		display: inline-flex;
 		align-items: center;
-		padding: 0.4rem 0.8rem;
+		justify-content: center;
+		width: 2rem;
+		height: 2rem;
+		padding: 0;
 		background: #fff;
 		border: 1px solid #bdad9e;
-		border-radius: 8px;
+		border-radius: 999px;
 		font: inherit;
+		font-size: 1.1rem;
+		line-height: 1;
 		cursor: pointer;
+	}
+
+	.close-btn:hover {
+		background: #f4ece1;
 	}
 
 	@media (max-width: 640px) {
