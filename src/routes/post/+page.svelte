@@ -7,7 +7,6 @@
 		encryptContact,
 		isContactEncrypted,
 		lookupLocationDetails,
-		lookupLocationWithCache,
 		normalizeContactInput,
 	} from "$lib/utils"
 	import {
@@ -36,12 +35,14 @@
 
 	let draft = $state("")
 	let title = $state("")
-	let locationText = $state("")
+	let addressText = $state("")
+	let locationConfirmed = $state(false)
+	let confirmedAddress = $state("")
+	let showLocationModal = $state(false)
+	let pinMovedInModal = $state(false)
+	let modalLocation = $state(null)
 	let selectedFiles = $state([])
 	let previews = $state([])
-	let selectedLocation = $state(null)
-	let locationError = $state("")
-	let locationLoading = $state(true)
 	let posting = $state(false)
 	let postError = $state("")
 	let postSuccess = $state("")
@@ -49,9 +50,7 @@
 	let isDraggingFiles = $state(false)
 	let textareaEl = $state(null)
 	let feedTags = $state([])
-	let lastLocationUpdateId = 0
 	let dragDepth = 0
-	let hideLocation = $state(false)
 	let tagsDrawerOpen = $state(true)
 
 	const LOCAL_CONTACT_KEY = "love4dogs.contact"
@@ -361,46 +360,45 @@
 		postError = ""
 	}
 
-	function syncLocationText(location) {
-		const nextBlock = buildLocationBlock(location)
-		locationText = nextBlock ? nextBlock.replace(/^\n+/, "") : ""
-	}
-
-	async function updateLocationFromPin(lat, lon) {
-		const requestId = ++lastLocationUpdateId
-		locationError = ""
-		locationLoading = true
-
-		const {location, error} = await lookupLocationDetails(lat, lon)
-		if (requestId !== lastLocationUpdateId) return
-
-		selectedLocation = location || {
-			lat,
-			lon,
-			city: "",
-			country: "",
-			zip: "",
+	$effect(() => {
+		if (locationConfirmed && addressText.trim() !== confirmedAddress) {
+			locationConfirmed = false
 		}
-		locationError = error
-		syncLocationText(selectedLocation)
-		locationLoading = false
+	})
+
+	async function handleModalConfirm() {
+		if (pinMovedInModal && modalLocation) {
+			const {location} = await lookupLocationDetails(
+				modalLocation.lat,
+				modalLocation.lon,
+			)
+			if (location) {
+				const parts = [
+					location.city,
+					location.country,
+					location.zip,
+				].filter(Boolean)
+				if (parts.length) addressText = parts.join(", ")
+				modalLocation = {...modalLocation, ...location}
+			}
+		}
+		confirmedAddress = addressText.trim()
+		locationConfirmed = true
+		showLocationModal = false
 	}
 
-	async function lookupLocation() {
-		locationError = ""
-		locationLoading = true
-
-		const {location, error} = await lookupLocationWithCache()
-		selectedLocation = location
-		locationError = error
-		if (location) syncLocationText(location)
-		locationLoading = false
+	function handleModalCancel() {
+		showLocationModal = false
+		pinMovedInModal = false
 	}
 
 	function composeFinalText() {
 		const trimmedTitle = title.trim()
 		const body = draft.trim()
-		const location = locationText.trim()
+		let location = ""
+		if (locationConfirmed && modalLocation) {
+			location = buildLocationBlock(modalLocation).replace(/^\n+/, "")
+		}
 		const contact = contactinfo.trim()
 		const parts = [trimmedTitle, body, location, contact].filter(Boolean)
 		let text = parts.join("\n\n")
@@ -438,6 +436,18 @@
 		const body = draft.trim()
 		if (!body) {
 			postError = "Write something before posting."
+			return
+		}
+
+		const trimmedAddress = addressText.trim()
+		if (!trimmedAddress) {
+			postError = "An address is required."
+			return
+		}
+
+		if (!locationConfirmed || trimmedAddress !== confirmedAddress) {
+			pinMovedInModal = false
+			showLocationModal = true
 			return
 		}
 
@@ -487,8 +497,10 @@
 
 			incrementLocalTags(extractHashtags(finalText))
 			draft = ""
-			locationText = ""
-			selectedLocation = null
+			addressText = ""
+			locationConfirmed = false
+			confirmedAddress = ""
+			modalLocation = null
 			clearFiles()
 			postSuccess = "Post published successfully."
 			goto("/")
@@ -502,7 +514,10 @@
 	async function copyAsHtml() {
 		const trimmedTitle = title.trim()
 		const bodyText = draft.trim()
-		const locationInfo = locationText.trim()
+		let locationInfo = ""
+		if (locationConfirmed && modalLocation) {
+			locationInfo = buildLocationBlock(modalLocation).replace(/^\n+/, "")
+		}
 
 		function escHtml(str) {
 			return str
@@ -585,7 +600,6 @@
 	}
 
 	onMount(() => {
-		lookupLocation()
 		fetch("/api/feed")
 			.then((r) => r.json())
 			.then((j) => {
@@ -673,48 +687,16 @@
 			{/if}
 		</div>
 
-		<div class="location-panel">
-			<label class="hide-location-label">
-				<button
-					type="button"
-					class="location-check-btn"
-					class:is-active={hideLocation}
-					onclick={() => (hideLocation = !hideLocation)}
-					aria-label={hideLocation ? "Show map" : "Hide map"}
-					><span class="location-check-dot"
-						>{hideLocation ? "✓" : ""}</span
-					></button
-				>
-				<h2>
-					{hideLocation ? "Location Confirmed" : "Confirm Location"}
-				</h2>
-			</label>
-			{#if !hideLocation}
-				<div>
-					Please ensure the location is accurate before sharing!
-				</div>
-				<LocationPicker
-					location={selectedLocation}
-					onChange={({lat, lon}) => updateLocationFromPin(lat, lon)}
-				/>
-
-				{#if selectedLocation}
-					<p class="location-coords">
-						{selectedLocation.lat.toFixed(5)}, {selectedLocation.lon.toFixed(
-							5,
-						)}
-						{#if selectedLocation.city || selectedLocation.country}
-							· {selectedLocation.city || "Unknown city"}, {selectedLocation.country ||
-								"Unknown country"}
-						{/if}
-					</p>
-				{/if}
-				<textarea
-					class="location-input"
-					bind:value={locationText}
-					placeholder="Location details (auto-updates when map pin moves)"
-					rows="3"
-				></textarea>
+		<div class="address-row">
+			<input
+				class="address-input"
+				type="text"
+				bind:value={addressText}
+				placeholder="Address (required)"
+				required
+			/>
+			{#if locationConfirmed}
+				<span class="address-confirmed-badge">✓ Confirmed</span>
 			{/if}
 		</div>
 
@@ -791,11 +773,6 @@
 			{remainingChars()} chars left
 		</p>
 
-		{#if locationLoading}
-			<p class="location-status muted">Detecting location…</p>
-		{:else if locationError}
-			<p class="warning"><CircleAlert size={15} /> {locationError}</p>
-		{/if}
 		{#if postError}
 			<p class="warning"><CircleAlert size={15} /> {postError}</p>
 		{/if}
@@ -867,6 +844,48 @@
 	</article>
 </main>
 
+{#if showLocationModal}
+	<div
+		class="modal-overlay"
+		role="dialog"
+		aria-modal="true"
+		aria-label="Confirm location"
+	>
+		<div class="modal-panel">
+			<h2 class="modal-title">Confirm Location</h2>
+			<p class="modal-hint">
+				Search for your address or move the pin to the exact spot, then
+				confirm.
+			</p>
+			<LocationPicker
+				location={modalLocation}
+				height={300}
+				searchTerms={addressText}
+				showConfirmToggle={false}
+				autoSearch={true}
+				onChange={(loc) => {
+					modalLocation = loc
+				}}
+				onPinMoved={() => {
+					pinMovedInModal = true
+				}}
+			/>
+			<div class="modal-actions">
+				<button
+					class="modal-cancel-btn"
+					type="button"
+					onclick={handleModalCancel}>Cancel</button
+				>
+				<button
+					class="modal-confirm-btn"
+					type="button"
+					onclick={handleModalConfirm}>Confirm Location</button
+				>
+			</div>
+		</div>
+	</div>
+{/if}
+
 <style>
 	.page {
 		max-width: 920px;
@@ -907,14 +926,6 @@
 		border-color: #55724d;
 		background: #ece8d7;
 		box-shadow: 0 0 0 2px rgba(85, 114, 77, 0.22);
-	}
-	.location-status {
-		margin: 0.4rem 0 0;
-		font-size: 0.85rem;
-		color: #3b6e4f;
-	}
-	.location-status.muted {
-		color: #8a8a8a;
 	}
 	.title-row {
 		display: flex;
@@ -961,9 +972,26 @@
 		font-weight: 600;
 		color: #3b6e4f;
 	}
-	.location-input {
-		min-height: 88px;
+	.address-row {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
 		margin-top: 0.45rem;
+	}
+	.address-input {
+		flex: 1;
+		font: inherit;
+		border: 1px solid #d7c8b6;
+		border-radius: 12px;
+		padding: 0.65rem 0.75rem;
+		box-sizing: border-box;
+	}
+	.address-confirmed-badge {
+		flex-shrink: 0;
+		font-size: 0.85rem;
+		color: #24633f;
+		font-weight: 600;
+		white-space: nowrap;
 	}
 	.contact-row {
 		display: flex;
@@ -1131,48 +1159,6 @@
 	.tags-drawer-content {
 		margin-top: 0.45rem;
 	}
-	.location-panel {
-		margin-top: 1rem;
-	}
-	.hide-location-label {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		cursor: pointer;
-		margin-bottom: 0.5rem;
-	}
-	.hide-location-label h2 {
-		margin: 0;
-		font-size: 1rem;
-	}
-	.location-check-btn {
-		width: 28px;
-		height: 28px;
-		border-radius: 50%;
-		border: 1px solid rgba(60, 60, 60, 0.35);
-		background: rgba(255, 255, 255, 0.92);
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		padding: 0;
-		flex-shrink: 0;
-	}
-	.location-check-btn.is-active {
-		background: #3b6e4f;
-		border-color: #305741;
-		color: #fff;
-	}
-	.location-check-dot {
-		font-size: 0.85rem;
-		line-height: 1;
-		font-weight: 700;
-	}
-	.location-coords {
-		margin: 0.55rem 0 0;
-		font-size: 0.9rem;
-		color: #506157;
-	}
 	.preview-grid {
 		display: flex;
 		flex-wrap: wrap;
@@ -1216,5 +1202,62 @@
 		align-items: center;
 		justify-content: center;
 		padding: 0;
+	}
+	.modal-overlay {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.55);
+		z-index: 1000;
+		display: flex;
+		align-items: flex-start;
+		justify-content: center;
+		padding: 1rem;
+		overflow-y: auto;
+	}
+	.modal-panel {
+		background: rgba(255, 250, 241, 0.98);
+		border: 1px solid rgba(58, 91, 65, 0.18);
+		border-radius: 16px;
+		padding: 1.25rem;
+		box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+		width: 100%;
+		max-width: 640px;
+		margin-top: 2rem;
+	}
+	.modal-title {
+		margin: 0 0 0.4rem;
+		font-size: 1.1rem;
+	}
+	.modal-hint {
+		margin: 0 0 0.85rem;
+		font-size: 0.9rem;
+		color: #5f665f;
+	}
+	.modal-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: 0.55rem;
+		margin-top: 0.85rem;
+	}
+	.modal-cancel-btn {
+		border: 1px solid #bdad9e;
+		background: #fff;
+		border-radius: 999px;
+		padding: 0.5rem 1rem;
+		font: inherit;
+		cursor: pointer;
+	}
+	.modal-confirm-btn {
+		border: 1px solid #305741;
+		background: #3b6e4f;
+		color: #fff;
+		border-radius: 999px;
+		padding: 0.5rem 1rem;
+		font: inherit;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.modal-confirm-btn:hover {
+		background: #305741;
 	}
 </style>
