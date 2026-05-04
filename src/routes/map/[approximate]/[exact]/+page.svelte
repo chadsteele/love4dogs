@@ -69,6 +69,13 @@
 				)
 			}
 
+			if (mapInstance) {
+				const zoom = Number(mapInstance.getZoom?.() || 13)
+				mapInstance.setView([lat, lon], zoom, {animate: true})
+				lastViewportKey = ""
+				scheduleViewportRefresh()
+			}
+
 			await goto(`/map/${hash.approx}/${hash.exact}`)
 		} catch (error) {
 			searchError = error?.message || "Unable to find that location."
@@ -302,6 +309,9 @@
 		lastViewportKey = key
 		viewportApproximates = approximates
 		await loadMapPosts(approximates)
+		console.log(
+			`Found ${validMapPosts().length} post(s) from ${viewportApproximates.length} approx hash cell(s) in this view. `,
+		)
 	}
 
 	function scheduleViewportRefresh() {
@@ -311,13 +321,16 @@
 		}, VIEWPORT_REFRESH_DEBOUNCE_MS)
 	}
 
-	function markerIcon() {
-		return leaflet.divIcon({
-			className: "post-marker",
-			html: "<span></span>",
-			iconSize: [20, 20],
-			iconAnchor: [10, 10],
-		})
+	function nudgeCoordinates(lat, lon, index = 0) {
+		if (!Number.isFinite(lat) || !Number.isFinite(lon) || index <= 0) {
+			return {lat, lon}
+		}
+		const angle = index * 2.399963229728653
+		const radius = 0.00022 * Math.ceil(index / 2)
+		return {
+			lat: lat + Math.sin(angle) * radius,
+			lon: lon + Math.cos(angle) * radius,
+		}
 	}
 
 	function validMapPosts() {
@@ -330,6 +343,16 @@
 		if (!leaflet || !mapInstance || !markerLayer) return
 
 		markerLayer.clearLayers()
+		const slotCounts = new Map()
+		const slotKey = (lat, lon) => `${lat.toFixed(5)},${lon.toFixed(5)}`
+		const reserveSlot = (lat, lon) => {
+			const key = slotKey(lat, lon)
+			const used = slotCounts.get(key) || 0
+			slotCounts.set(key, used + 1)
+			return used
+		}
+
+		reserveSlot(Number(data.lat), Number(data.lon))
 		const exactMarker = leaflet
 			.circleMarker([data.lat, data.lon], {
 				radius: 6,
@@ -349,8 +372,18 @@
 		})
 
 		for (const post of validMapPosts()) {
+			const baseLat = Number(post.lat)
+			const baseLon = Number(post.lon)
+			const slotIndex = reserveSlot(baseLat, baseLon)
+			const {lat, lon} = nudgeCoordinates(baseLat, baseLon, slotIndex)
 			const marker = leaflet
-				.marker([post.lat, post.lon], {icon: markerIcon()})
+				.circleMarker([lat, lon], {
+					radius: 7,
+					color: "#7d1f13",
+					fillColor: "#c54433",
+					fillOpacity: 0.96,
+					weight: 2,
+				})
 				.addTo(markerLayer)
 			marker.bindPopup(markerPreviewHtml(post), {maxWidth: 280})
 			marker.on("popupopen", (event) => {
@@ -369,6 +402,9 @@
 	}
 
 	$effect(() => {
+		// Read mapPosts before any early return so Svelte 5 tracks it as a
+		// dependency even when leaflet/mapInstance/markerLayer aren't ready yet.
+		const _posts = mapPosts
 		renderMarkers()
 	})
 
@@ -455,7 +491,7 @@
 				type="submit"
 				disabled={searchingLocation}
 			>
-				{searchingLocation ? "Searching..." : "Go"}
+				{searchingLocation ? "Searching..." : "Map"}
 			</button>
 		</form>
 		{#if searchError}
@@ -463,16 +499,21 @@
 		{/if}
 		<div class="map-view" bind:this={mapEl}></div>
 		{#if loadingPins}
+			<div
+				class="loading-bar"
+				role="progressbar"
+				aria-label="Loading map posts"
+			>
+				<span class="loading-bar__fill"></span>
+			</div>
 			<p class="muted">Loading nearby posts...</p>
 		{:else if mapError}
 			<p class="error">{mapError}</p>
 		{:else}
 			<p class="muted">
-				Found {validMapPosts().length} post(s) from {viewportApproximates.length}
-				approx hash cell(s) in this view. Green pin = exact hash location.
+				Found {validMapPosts().length} post(s)
 			</p>
 		{/if}
-		<p class="coords">📍 {data.lat}, {data.lon}</p>
 	{:else}
 		<p class="error">{data.error}</p>
 		<p class="muted">Try: /map/mkw9x/mkw9x3zzk</p>
@@ -533,13 +574,6 @@
 		font-size: 1rem;
 		flex: 1;
 		text-align: center;
-	}
-
-	.coords {
-		margin: 0.6rem 0 0;
-		font-size: 0.82rem;
-		color: #5f665f;
-		font-family: monospace;
 	}
 
 	.nav-btn {
@@ -627,24 +661,39 @@
 		overflow: hidden;
 	}
 
+	.loading-bar {
+		position: relative;
+		width: 100%;
+		height: 8px;
+		margin: 0.65rem 0 0.45rem;
+		border-radius: 999px;
+		background: rgba(59, 110, 79, 0.2);
+		overflow: hidden;
+	}
+
+	.loading-bar__fill {
+		position: absolute;
+		top: 0;
+		left: -35%;
+		width: 35%;
+		height: 100%;
+		background: linear-gradient(90deg, #3b6e4f, #6aa77f);
+		border-radius: 999px;
+		animation: map-loading-slide 1.1s ease-in-out infinite;
+	}
+
+	@keyframes map-loading-slide {
+		0% {
+			left: -35%;
+		}
+		100% {
+			left: 100%;
+		}
+	}
+
 	:global(.leaflet-container) {
 		width: 100%;
 		height: 100%;
-	}
-
-	:global(.post-marker) {
-		background: transparent;
-		border: none;
-	}
-
-	:global(.post-marker span) {
-		display: block;
-		width: 14px;
-		height: 14px;
-		border-radius: 50%;
-		background: #b04030;
-		border: 2px solid #fff;
-		box-shadow: 0 2px 6px rgba(0, 0, 0, 0.32);
 	}
 
 	:global(.pin-preview) {

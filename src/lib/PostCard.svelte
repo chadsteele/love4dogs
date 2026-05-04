@@ -11,12 +11,13 @@
 	import PostImageViewer from "$lib/PostImageViewer.svelte"
 	import Share from "$lib/Share.svelte"
 
-	import Bluesky from "./assets/BlueSkyLogo.svelte"
+	import {siBluesky} from "simple-icons"
 
 	let {
 		post,
 		selected = false,
 		bookmarked = false,
+		selectable = true,
 		onToggleSelect = () => {},
 		onToggleSearchTag = () => {},
 	} = $props()
@@ -29,8 +30,14 @@
 
 	onMount(() => {
 		try {
-			const uris = JSON.parse(localStorage.getItem(MY_POSTS_KEY) || "[]")
-			isMyPost = Array.isArray(uris) && uris.includes(post.uri)
+			if (window.location.hostname === "localhost") {
+				isMyPost = true
+			} else {
+				const uris = JSON.parse(
+					localStorage.getItem(MY_POSTS_KEY) || "[]",
+				)
+				isMyPost = Array.isArray(uris) && uris.includes(post.uri)
+			}
 		} catch {
 			// ignore
 		}
@@ -412,15 +419,17 @@
 </script>
 
 <article class="post-card">
-	<button
-		type="button"
-		class="select-btn"
-		class:is-selected={selected}
-		onclick={() => onToggleSelect(post.uri)}
-		aria-label={selected ? "Unselect card" : "Select card"}
-	>
-		<span class="select-dot">{selected ? "✓" : ""}</span>
-	</button>
+	{#if selectable}
+		<button
+			type="button"
+			class="select-btn"
+			class:is-selected={selected}
+			onclick={() => onToggleSelect(post.uri)}
+			aria-label={selected ? "Unselect card" : "Select card"}
+		>
+			<span class="select-dot">{selected ? "✓" : ""}</span>
+		</button>
+	{/if}
 
 	{#if bookmarked || isMyPost}
 		<div class="post-card-right-badges">
@@ -557,13 +566,15 @@
 				{/each}
 			</ul>
 			<div class="comment-compose-disabled" aria-hidden="true">
-				<div class="comment-input-disabled">Add your comments</div>
+				<div class="comment-input-disabled">
+					Add your comments on BlueSky {@html siBluesky.svg}
+				</div>
 				<div class="comment-submit-disabled">Submit</div>
 			</div>
 		{:else}
 			<div class="comment-compose-disabled" aria-hidden="true">
 				<div class="comment-input-disabled">
-					Be the first to comment
+					Be the first to comment on BlueSky {@html siBluesky.svg}
 				</div>
 				<div class="comment-submit-disabled">Submit</div>
 			</div>
@@ -902,6 +913,15 @@
 		background: #f5f2ed;
 		color: #9a9388;
 		font-size: 0.82rem;
+	}
+
+	.comment-input-disabled :global(svg) {
+		width: 1em;
+		height: 1em;
+		vertical-align: middle;
+		margin-left: 0.3em;
+		fill: currentColor;
+		flex-shrink: 0;
 	}
 
 	.comment-submit-disabled {
