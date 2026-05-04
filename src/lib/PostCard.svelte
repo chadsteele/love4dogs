@@ -625,7 +625,7 @@
 		top: 0.5rem;
 		right: 0.5rem;
 		display: flex;
-		flex-direction: column;
+		flex-direction: row;
 		gap: 0.35rem;
 		z-index: 2;
 	}

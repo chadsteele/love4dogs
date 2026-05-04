@@ -24,6 +24,7 @@
 	import {goto} from "$app/navigation"
 	import HashTagCloud from "$lib/HashTagCloud.svelte"
 	import LocationPicker from "$lib/LocationPicker.svelte"
+	import PostCard from "$lib/PostCard.svelte"
 
 	const LOCAL_TAG_KEY = "love4dogs.tag-counts"
 	const LOCAL_OLD_POSTS_KEY = "love4dogs.my-post-uris"
@@ -144,7 +145,10 @@
 		if (!uri || typeof window === "undefined") return
 		try {
 			const existing = JSON.parse(localStorage.getItem(TRASH_KEY) || "[]")
-			const next = [uri, ...existing.filter((u) => u !== uri)].slice(0, 100)
+			const next = [uri, ...existing.filter((u) => u !== uri)].slice(
+				0,
+				100,
+			)
 			localStorage.setItem(TRASH_KEY, JSON.stringify(next))
 		} catch {
 			// ignore
@@ -848,6 +852,23 @@
 			: oldPostUrisForDisplay.slice(0, 4),
 	)
 
+	const visibleOldPosts = $derived(
+		visibleOldPostUris
+			.map((uri) => {
+				const post = oldPostDetailsByUri[uri]
+				if (!post) return null
+				return {
+					...post,
+					uri,
+					likeCount: Number(post.likeCount) || 0,
+					repostCount: Number(post.repostCount) || 0,
+					replyCount: Number(post.replyCount) || 0,
+					comments: Array.isArray(post.comments) ? post.comments : [],
+				}
+			})
+			.filter(Boolean),
+	)
+
 	onMount(() => {
 		oldPostUris = loadOldPostUris()
 		hydrateOldPostDetails(oldPostUris)
@@ -1119,7 +1140,7 @@
 		<section class="panel old-posts">
 			<div class="old-posts-head">
 				<h2>My old posts</h2>
-                <p class="old-posts-note">You can only edit/delete posts that were created on this device and browser</p>
+
 				{#if oldPostUrisForDisplay.length > 4}
 					<button
 						type="button"
@@ -1130,37 +1151,19 @@
 					</button>
 				{/if}
 			</div>
+			<p class="old-posts-note">
+				You may only edit/delete posts that were created on this device
+				and browser. The original post will be replaced and any
+				comments, likes, and reposts will be lost, so we recommend
+				leaving the old and creating new posts instead, if your old post
+				has already received engagement.
+			</p>
 
-			<ul class="old-posts-list">
-				{#each visibleOldPostUris as uri}
-					<li class="old-post-item">
-						<div class="old-post-meta">
-							<strong>{oldPostPreviewTitle(uri)}</strong>
-							{#if oldPostPreviewDate(uri)}
-								<span>{oldPostPreviewDate(uri)}</span>
-							{/if}
-						</div>
-						<a
-							class="old-post-edit"
-							href={`/post?id=${encodeURIComponent(uri)}`}
-							onclick={async (event) => {
-								event.preventDefault()
-								await goto(
-									`/post?id=${encodeURIComponent(uri)}`,
-									{
-										replaceState: true,
-										noScroll: true,
-										keepFocus: true,
-									},
-								)
-								await beginEditFromUri(uri)
-							}}
-						>
-							Edit
-						</a>
-					</li>
+			<div class="old-posts-list">
+				{#each visibleOldPosts as oldPost (oldPost.uri)}
+					<PostCard post={oldPost} />
 				{/each}
-			</ul>
+			</div>
 		</section>
 	{/if}
 </main>
@@ -1630,44 +1633,10 @@
 		cursor: pointer;
 	}
 	.old-posts-list {
-		list-style: none;
 		margin: 0.75rem 0 0;
 		padding: 0;
 		display: flex;
 		flex-direction: column;
-		gap: 0.4rem;
-	}
-	.old-post-item {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0.5rem;
-		padding: 0.5rem 0.65rem;
-		border-radius: 10px;
-		background: #fffdf8;
-		border: 1px solid #e7ddcf;
-	}
-	.old-post-meta {
-		display: flex;
-		flex-direction: column;
-		gap: 0.12rem;
-		min-width: 0;
-	}
-	.old-post-meta strong {
-		font-size: 0.9rem;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-	.old-post-meta span {
-		font-size: 0.78rem;
-		color: #7b7b7b;
-	}
-	.old-post-edit {
-		text-decoration: none;
-		color: #1f5135;
-		font-size: 0.85rem;
-		font-weight: 600;
-		flex-shrink: 0;
+		gap: 0.7rem;
 	}
 </style>
