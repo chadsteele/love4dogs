@@ -58,24 +58,12 @@ function mapPath(pathAndQuery = '') {
 }
 
 function isThrottleFailure(failure) {
-	if (!failure || failure.status !== 403) return false;
-	const details = String(failure.details || '').toLowerCase();
-	return (
-		details.includes('administrative rules') ||
-		details.includes('forbidden') ||
-		details.includes('<html')
-	);
+	return failure?.status === 403;
 }
 
 function shouldOpenThrottleWindow(failures = []) {
 	if (!Array.isArray(failures) || failures.length === 0) return false;
-	const blockedHosts = new Set(
-		failures
-			.filter((failure) => isThrottleFailure(failure))
-			.map((failure) => String(failure.host || '').trim())
-			.filter(Boolean)
-	);
-	return BSKY_PUBLIC_XRPC_HOSTS.every((host) => blockedHosts.has(host));
+	return failures.some((failure) => isThrottleFailure(failure));
 }
 
 function getThrottleRemainingMs(now = Date.now()) {

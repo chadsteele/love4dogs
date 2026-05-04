@@ -1,6 +1,6 @@
 <script>
 	import {onMount} from "svelte"
-	import {CircleAlert} from "lucide-svelte"
+	import {CircleAlert, Map as MapIcon} from "lucide-svelte"
 	import About from "$lib/About.svelte"
 	import PostCard from "$lib/PostCard.svelte"
 	import TopBar from "$lib/TopBar.svelte"
@@ -524,6 +524,11 @@
 						</label>
 					{/if}
 				</div>
+				{#if currentView === "feed"}
+					<a href="/map" class="map-view-btn">
+						<MapIcon size={14} /> Map View
+					</a>
+				{/if}
 			</div>
 
 			{#if loadingPosts || (currentView === "history" && loadingHistory)}
@@ -648,6 +653,26 @@
 
 	.sort-label {
 		white-space: nowrap;
+	}
+
+	.map-view-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3em;
+		font-size: 0.8rem;
+		font-weight: 600;
+		color: #305741;
+		background: rgba(59, 110, 79, 0.1);
+		border: 1px solid rgba(59, 110, 79, 0.3);
+		border-radius: 999px;
+		padding: 0.2rem 0.65rem;
+		text-decoration: none;
+		white-space: nowrap;
+	}
+
+	.map-view-btn:hover {
+		background: rgba(59, 110, 79, 0.2);
+		border-color: #305741;
 	}
 
 	.results-empty-pill {

@@ -27,7 +27,9 @@
 	let mapLoadRequestId = 0
 	let viewportRefreshTimer = null
 	const approxPostsCache = new Map()
-	const approxErrorCache = new Set()
+	// Maps approximate hash → timestamp when it can be retried (error TTL)
+	const approxErrorCache = new Map()
+	const APPROX_ERROR_TTL_MS = 90_000
 
 	const MIN_GRID_SAMPLES = 5
 	const MAX_GRID_SAMPLES = 16
@@ -140,6 +142,7 @@
 
 		return `
 			<div class="pin-preview">
+				<button type="button" class="pin-preview-close" data-close-popup="1" aria-label="Close">&times;</button>
 				${thumb}
 				<div class="pin-preview-text">${formatted || "No text"}</div>
 				<button type="button" class="pin-preview-open" data-open-post="${escapeAttr(post?.uri || "")}">Open post</button>
@@ -192,10 +195,27 @@
 					)
 					const json = await res.json().catch(() => ({}))
 					if (!res.ok) {
-						throw new Error(
-							json.error ||
-								`Unable to load posts for ${approximate}.`,
-						)
+						// Don't permanently block throttled hashes; let them retry
+						if (json.throttled) {
+							results[index] = {
+								status: "fulfilled",
+								value: {approximate, posts: []},
+							}
+						} else {
+							throw new Error(
+								json.error ||
+									`Unable to load posts for ${approximate}.`,
+							)
+						}
+						continue
+					}
+					// If upstream is throttled, don't poison the cache with empty results
+					if (json.throttled) {
+						results[index] = {
+							status: "fulfilled",
+							value: {approximate, posts: []},
+						}
+						continue
 					}
 					const posts = Array.isArray(json.posts) ? json.posts : []
 					approxPostsCache.set(approximate, posts)
@@ -206,7 +226,10 @@
 						value: {approximate, posts},
 					}
 				} catch (error) {
-					approxErrorCache.add(approximate)
+					approxErrorCache.set(
+						approximate,
+						Date.now() + APPROX_ERROR_TTL_MS,
+					)
 					results[index] = {status: "rejected", reason: error}
 				}
 			}
@@ -256,7 +279,11 @@
 					cachedPosts.push(...persistedPosts)
 					continue
 				}
-				if (approxErrorCache.has(approximate)) continue
+				if (approxErrorCache.has(approximate)) {
+					const retryAt = approxErrorCache.get(approximate)
+					if (Date.now() < retryAt) continue
+					approxErrorCache.delete(approximate)
+				}
 				missingApproximates.push(approximate)
 			}
 
@@ -385,18 +412,34 @@
 					weight: 2,
 				})
 				.addTo(markerLayer)
-			marker.bindPopup(markerPreviewHtml(post), {maxWidth: 280})
+			marker.bindPopup(markerPreviewHtml(post), {
+				maxWidth: 280,
+				closeOnClick: false,
+				autoClose: false,
+				closeButton: false,
+			})
 			marker.on("popupopen", (event) => {
 				const el = event.popup?.getElement?.()
 				const openBtn = el?.querySelector?.("[data-open-post]")
-				if (!openBtn) return
-				openBtn.addEventListener(
-					"click",
-					() => {
-						selectedPost = post
-					},
-					{once: true},
-				)
+				if (openBtn) {
+					openBtn.addEventListener(
+						"click",
+						() => {
+							selectedPost = post
+						},
+						{once: true},
+					)
+				}
+				const closeBtn = el?.querySelector?.("[data-close-popup]")
+				if (closeBtn) {
+					closeBtn.addEventListener(
+						"click",
+						() => {
+							marker.closePopup()
+						},
+						{once: true},
+					)
+				}
 			})
 		}
 	}
@@ -421,6 +464,10 @@
 				.map(mapEl, {
 					zoomControl: true,
 					attributionControl: true,
+					dragging: false,
+					touchZoom: true,
+					scrollWheelZoom: true,
+					doubleClickZoom: true,
 				})
 				.setView([data.lat, data.lon], 13)
 
@@ -718,6 +765,33 @@
 		color: #2d2d2d;
 		max-height: 132px;
 		overflow: auto;
+	}
+
+	:global(.pin-preview) {
+		position: relative;
+	}
+
+	:global(.pin-preview-close) {
+		position: absolute;
+		top: 0.15rem;
+		right: 0.15rem;
+		width: 22px;
+		height: 22px;
+		border: none;
+		background: rgba(0, 0, 0, 0.12);
+		color: #444;
+		border-radius: 50%;
+		cursor: pointer;
+		font-size: 1rem;
+		line-height: 1;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
+	}
+
+	:global(.pin-preview-close:hover) {
+		background: rgba(0, 0, 0, 0.24);
 	}
 
 	:global(.pin-preview-open) {
