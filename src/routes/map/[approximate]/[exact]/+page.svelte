@@ -216,8 +216,8 @@
 			: ""
 
 		return `
+			<button type="button" class="pin-preview-close" data-close-popup="1" aria-label="Close">&times;</button>
 			<div class="pin-preview">
-				<button type="button" class="pin-preview-close" data-close-popup="1" aria-label="Close">&times;</button>
 				${thumb}
 				<div class="pin-preview-text">${formatted || "No text"}</div>
 				<button type="button" class="pin-preview-open" data-open-post="${escapeAttr(post?.uri || "")}">Open post</button>
@@ -1035,19 +1035,19 @@
 		overflow: auto;
 	}
 
-	:global(.pin-preview) {
-		position: relative;
+	:global(.leaflet-popup-content-wrapper) {
+		position: relative !important;
 	}
 
 	:global(.pin-preview-close) {
 		position: absolute;
-		top: 0.15rem;
-		right: 0.15rem;
-		width: 22px;
-		height: 22px;
-		border: none;
-		background: rgba(0, 0, 0, 0.12);
-		color: #444;
+		top: -10px;
+		right: -10px;
+		width: 26px;
+		height: 26px;
+		border: 2px solid #fff;
+		background: #111;
+		color: #fff;
 		border-radius: 50%;
 		cursor: pointer;
 		font-size: 1rem;
@@ -1056,10 +1056,11 @@
 		align-items: center;
 		justify-content: center;
 		padding: 0;
+		z-index: 1000;
 	}
 
 	:global(.pin-preview-close:hover) {
-		background: rgba(0, 0, 0, 0.24);
+		background: #333;
 	}
 
 	:global(.pin-preview-open) {
