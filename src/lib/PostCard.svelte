@@ -1,6 +1,7 @@
 <script>
 	import {Heart, MessageCircle, PawPrint, Repeat2} from "lucide-svelte"
 	import {CONTACT_LOCK_PREFIX, decryptContact} from "$lib/utils"
+	import Share from "$lib/Share.svelte"
 
 	import Bluesky from "./assets/BlueSkyLogo.svelte"
 
@@ -605,6 +606,8 @@
 			</div>
 		{/if}
 	</a>
+
+	<Share {post} shareUrl={bskyUrl(post.uri)} />
 </article>
 
 <style>

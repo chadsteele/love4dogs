@@ -21,6 +21,22 @@
 		background: #10140f;
 	}
 
+	:global(body),
+	:global(body *) {
+		-webkit-touch-callout: none;
+		-webkit-user-select: none;
+		user-select: none;
+	}
+
+	:global(input),
+	:global(textarea),
+	:global(.post-text),
+	:global(.post-text *) {
+		-webkit-touch-callout: default;
+		-webkit-user-select: text;
+		user-select: text;
+	}
+
 	.bg-kenburns {
 		position: fixed;
 		inset: -8%;
