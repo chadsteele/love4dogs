@@ -5,10 +5,13 @@
 		CONTACT_LOCK_PREFIX,
 		decryptContact,
 		encryptContact,
+		gpsToHash,
 		hashToGps,
 		isContactEncrypted,
 		lookupLocationDetails,
 		normalizeContactInput,
+		removeApproxPostFromCache,
+		upsertApproxPostInCache,
 	} from "$lib/utils"
 	import {
 		ChevronDown,
@@ -173,6 +176,7 @@
 			const json = await res.json().catch(() => ({}))
 			if (!res.ok) throw new Error(json.error || "Delete failed.")
 			addToTrash(editingPostUri)
+			removeApproxPostFromCache(editingPostUri)
 			removeOldPostUri(editingPostUri)
 			goto("/")
 		} catch (error) {
@@ -777,6 +781,31 @@
 			const createdUri = String(json?.result?.uri || "")
 			if (isValidAtUri(createdUri)) {
 				addOldPostUri(createdUri)
+				const hash = modalLocation
+					? gpsToHash(
+							Number(modalLocation.lat),
+							Number(modalLocation.lon),
+						)
+					: null
+				if (hash?.approx && hash?.exact && modalLocation) {
+					upsertApproxPostInCache({
+						uri: createdUri,
+						cid: String(json?.result?.cid || ""),
+						text: finalText,
+						facets: [],
+						createdAt: new Date().toISOString(),
+						images: [],
+						video: null,
+						replyCount: 0,
+						repostCount: 0,
+						likeCount: 0,
+						comments: [],
+						approximate: hash.approx,
+						exact: hash.exact,
+						lat: Number(modalLocation.lat),
+						lon: Number(modalLocation.lon),
+					})
+				}
 			}
 
 			const replacingUri =
@@ -792,6 +821,7 @@
 				})
 				if (deleteRes.ok) {
 					addToTrash(replacingUri)
+					removeApproxPostFromCache(replacingUri)
 					removeOldPostUri(replacingUri)
 					const nextDetails = {...oldPostDetailsByUri}
 					delete nextDetails[replacingUri]
@@ -1111,7 +1141,8 @@
 				/>
 				<p class="drop-hint">
 					Drag and drop up to 4 photos or one video (images are
-					converted to PNG).
+					converted to PNG). <br />If you have a logo, make sure it is
+					the first image in the list.
 				</p>
 			</div>
 			<div class="toolbar-right">

@@ -10,6 +10,9 @@ const DEFAULT_LOCATION_CACHE_KEY = 'love4dogs.location-cache';
 const DEFAULT_LOCATION_CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_REVERSE_GEO_CACHE_KEY = 'love4dogs.reverse-geo-cache';
 const DEFAULT_REVERSE_GEO_MAX_ENTRIES = 100;
+const DEFAULT_MAP_APPROX_POSTS_CACHE_KEY = 'love4dogs.map-approx-posts-cache';
+const DEFAULT_MAP_APPROX_POSTS_CACHE_TTL_MS = 60 * 60 * 1000;
+const DEFAULT_MAP_APPROX_POSTS_CACHE_MAX_ENTRIES = 400;
 export const CONTACT_LOCK_PREFIX = '🔒';
 const CONTACT_ALPHABET = PUBLIC_CONTACT_ALPHABET;
 const CONTACT_OUTPUT_ALPHABET =
@@ -253,6 +256,134 @@ export async function lookupLocationWithCache(options = {}) {
 			fromCache: false
 		};
 	}
+}
+
+function mapApproxCacheOptions(options = {}) {
+	return {
+		cacheKey: options.cacheKey || DEFAULT_MAP_APPROX_POSTS_CACHE_KEY,
+		ttlMs: options.ttlMs || DEFAULT_MAP_APPROX_POSTS_CACHE_TTL_MS,
+		maxEntries: options.maxEntries || DEFAULT_MAP_APPROX_POSTS_CACHE_MAX_ENTRIES
+	};
+}
+
+function sanitizeApproxPost(post = {}) {
+	if (!post || typeof post !== 'object') return null;
+	const uri = String(post.uri || '').trim();
+	const lat = Number(post.lat);
+	const lon = Number(post.lon);
+	if (!uri || !isValidCoordinate(lat, lon)) return null;
+
+	const computed = gpsToHash(lat, lon);
+	const approximate = String(post.approximate || computed?.approx || '').trim().toLowerCase();
+	const exact = String(post.exact || computed?.exact || '').trim().toLowerCase();
+
+	return {
+		uri,
+		cid: String(post.cid || ''),
+		text: String(post.text || ''),
+		facets: Array.isArray(post.facets) ? post.facets : [],
+		createdAt: String(post.createdAt || ''),
+		images: Array.isArray(post.images) ? post.images.filter(Boolean) : [],
+		video: post.video || null,
+		replyCount: Number(post.replyCount || 0),
+		repostCount: Number(post.repostCount || 0),
+		likeCount: Number(post.likeCount || 0),
+		comments: Array.isArray(post.comments) ? post.comments : [],
+		approximate,
+		exact,
+		lat,
+		lon
+	};
+}
+
+function pruneMapApproxCacheData(raw, { ttlMs, maxEntries }) {
+	const now = Date.now();
+	const data = raw && typeof raw === 'object' ? raw : {};
+	const entries = [];
+
+	for (const [approximate, entry] of Object.entries(data)) {
+		const savedAt = Number(entry?.savedAt || 0);
+		if (!approximate || !savedAt || now - savedAt > ttlMs) continue;
+		const posts = Array.isArray(entry?.posts)
+			? entry.posts.map((post) => sanitizeApproxPost(post)).filter(Boolean)
+			: [];
+		entries.push([approximate, { savedAt, posts }]);
+	}
+
+	entries.sort((a, b) => (b[1]?.savedAt || 0) - (a[1]?.savedAt || 0));
+	return Object.fromEntries(entries.slice(0, maxEntries));
+}
+
+function readMapApproxCache(options = {}) {
+	const { cacheKey, ttlMs, maxEntries } = mapApproxCacheOptions(options);
+	const parsed = getLocalStorageJson(cacheKey);
+	const pruned = pruneMapApproxCacheData(parsed, { ttlMs, maxEntries });
+	setLocalStorageJson(cacheKey, pruned);
+	return pruned;
+}
+
+function writeMapApproxCache(data, options = {}) {
+	const { cacheKey, ttlMs, maxEntries } = mapApproxCacheOptions(options);
+	const pruned = pruneMapApproxCacheData(data, { ttlMs, maxEntries });
+	setLocalStorageJson(cacheKey, pruned);
+	return pruned;
+}
+
+export function getApproxPostsFromCache(approximate = '', options = {}) {
+	if (typeof window === 'undefined') return null;
+	const key = String(approximate || '').trim().toLowerCase();
+	if (!key) return null;
+	const cache = readMapApproxCache(options);
+	const entry = cache[key];
+	return entry ? entry.posts : null;
+}
+
+export function setApproxPostsInCache(approximate = '', posts = [], options = {}) {
+	if (typeof window === 'undefined') return;
+	const key = String(approximate || '').trim().toLowerCase();
+	if (!key) return;
+	const cache = readMapApproxCache(options);
+	const sanitizedPosts = Array.isArray(posts)
+		? posts.map((post) => sanitizeApproxPost(post)).filter(Boolean)
+		: [];
+	cache[key] = {
+		savedAt: Date.now(),
+		posts: sanitizedPosts
+	};
+	writeMapApproxCache(cache, options);
+}
+
+export function upsertApproxPostInCache(post = {}, options = {}) {
+	if (typeof window === 'undefined') return;
+	const sanitized = sanitizeApproxPost(post);
+	if (!sanitized?.approximate) return;
+	const cache = readMapApproxCache(options);
+	const existing = Array.isArray(cache[sanitized.approximate]?.posts)
+		? cache[sanitized.approximate].posts
+		: [];
+	const withoutUri = existing.filter((entry) => entry?.uri !== sanitized.uri);
+	cache[sanitized.approximate] = {
+		savedAt: Date.now(),
+		posts: [sanitized, ...withoutUri]
+	};
+	writeMapApproxCache(cache, options);
+}
+
+export function removeApproxPostFromCache(uri = '', options = {}) {
+	if (typeof window === 'undefined') return;
+	const targetUri = String(uri || '').trim();
+	if (!targetUri) return;
+	const cache = readMapApproxCache(options);
+	for (const [approximate, entry] of Object.entries(cache)) {
+		const posts = Array.isArray(entry?.posts) ? entry.posts : [];
+		const filtered = posts.filter((post) => post?.uri !== targetUri);
+		if (filtered.length === posts.length) continue;
+		cache[approximate] = {
+			savedAt: Date.now(),
+			posts: filtered
+		};
+	}
+	writeMapApproxCache(cache, options);
 }
 
 function singleHash(lat, lon) {
