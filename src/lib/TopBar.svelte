@@ -2,6 +2,7 @@
 	import {goto} from "$app/navigation"
 	import {
 		Menu,
+		History,
 		PawPrint,
 		Search,
 		Trash2,
@@ -19,6 +20,7 @@
 		currentView = "feed",
 		recentTags = [],
 		tagCloudSignal = 0,
+		historyCount = 0,
 		bookmarkedCount = 0,
 		trashedCount = 0,
 		onToggleMenu = () => {},
@@ -83,6 +85,15 @@
 					>
 						<Search size={16} /> Show feed
 					</button>
+					{#if historyCount > 0}
+						<button
+							type="button"
+							class:is-active={currentView === "history"}
+							onclick={() => onSetView("history")}
+						>
+							<History size={16} /> Show history
+						</button>
+					{/if}
 					{#if bookmarkedCount > 0}
 						<button
 							type="button"

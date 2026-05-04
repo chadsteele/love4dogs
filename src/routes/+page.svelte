@@ -7,6 +7,7 @@
 
 	const ACCOUNT_HANDLE = "mylove4dogs.bsky.social"
 	const LOCAL_TAG_KEY = "love4dogs.tag-counts"
+	const LOCAL_MY_POSTS_KEY = "love4dogs.my-post-uris"
 	const BOOKMARK_KEY = "love4dogs.bookmarks"
 	const TRASH_KEY = "love4dogs.trash"
 	const ABOUT_MODAL_SEEN_KEY = "love4dogs.about-modal-seen-at"
@@ -26,6 +27,9 @@
 	let selectionMenuOpen = $state(false)
 	let currentView = $state("feed")
 	let tagCloudSignal = $state(0)
+	let myPostUris = $state([])
+	let myPostsByUri = $state({})
+	let loadingHistory = $state(false)
 	let showAboutModal = $state(false)
 	let searchSort = $state("latest")
 	let isLocalhost = $state(false)
@@ -157,7 +161,74 @@
 		}
 	}
 
+	function isValidAtUri(value = "") {
+		return /^at:\/\/[^/]+\/app\.bsky\.feed\.post\/[^/?#]+$/i.test(
+			String(value || "").trim(),
+		)
+	}
+
+	function loadMyPostUris() {
+		const uris = readStoredList(LOCAL_MY_POSTS_KEY)
+		return uris.filter((uri) => isValidAtUri(uri))
+	}
+
+	async function fetchPostByUri(uri = "") {
+		const res = await fetch(`/api/post?uri=${encodeURIComponent(uri)}`)
+		const json = await res.json().catch(() => ({}))
+		if (!res.ok) {
+			throw new Error(json.error || "Unable to load post.")
+		}
+		return json.post
+	}
+
+	async function hydrateMyPosts(uris = []) {
+		const missing = uris.filter((uri) => uri && !myPostsByUri[uri])
+		if (!missing.length) return
+
+		loadingHistory = true
+		const updates = {}
+		for (const uri of missing) {
+			try {
+				const post = await fetchPostByUri(uri)
+				updates[uri] = {
+					...post,
+					uri,
+					likeCount: Number(post.likeCount) || 0,
+					repostCount: Number(post.repostCount) || 0,
+					replyCount: Number(post.replyCount) || 0,
+					comments: Array.isArray(post.comments) ? post.comments : [],
+				}
+			} catch {
+				// Keep rendering even if some saved posts are unavailable.
+			}
+		}
+
+		if (Object.keys(updates).length) {
+			myPostsByUri = {...myPostsByUri, ...updates}
+		}
+		loadingHistory = false
+	}
+
 	function visiblePosts() {
+		if (currentView === "history") {
+			return myPostUris.map((uri) => {
+				return (
+					myPostsByUri[uri] || {
+						uri,
+						text: "Post unavailable. It may have been deleted from Bluesky.",
+						createdAt: null,
+						images: [],
+						video: null,
+						facets: [],
+						comments: [],
+						likeCount: 0,
+						repostCount: 0,
+						replyCount: 0,
+					}
+				)
+			})
+		}
+
 		if (currentView === "trash") {
 			return posts.filter((post) => trashedUris.includes(post.uri))
 		}
@@ -206,6 +277,9 @@
 		currentView = view
 		selectedUris = []
 		selectionMenuOpen = false
+		if (view === "history") {
+			hydrateMyPosts(myPostUris)
+		}
 	}
 
 	async function applySelectionAction(action) {
@@ -325,6 +399,8 @@
 		trashedUris = readStoredList(TRASH_KEY)
 		evaluateAboutModalVisibility()
 		loadFeed()
+		myPostUris = loadMyPostUris()
+		hydrateMyPosts(myPostUris)
 
 		return () => {
 			if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
@@ -373,6 +449,7 @@
 		bind:searchTerm
 		{recentTags}
 		{tagCloudSignal}
+		historyCount={myPostUris.length}
 		selectedCount={selectedUris.length}
 		{selectionMenuOpen}
 		{currentView}
@@ -411,7 +488,9 @@
 						>
 					</button>
 					<h2>
-						{#if currentView === "trash"}
+						{#if currentView === "history"}
+							History
+						{:else if currentView === "trash"}
 							Trash
 						{:else if currentView === "bookmarks"}
 							Favorites
@@ -424,25 +503,30 @@
 							Recent Posts
 						{/if}
 					</h2>
-					<label class="sort-toggle" aria-label="Sort search results">
-						<span class="sort-label">Most recent</span>
-						<input
-							type="checkbox"
-							checked={searchSort === "top"}
-							onchange={(event) => {
-								searchSort = event.currentTarget.checked
-									? "top"
-									: "latest"
-								loadFeed()
-							}}
-						/>
-						<span class="sort-slider" aria-hidden="true"></span>
-						<span class="sort-label">Most popular</span>
-					</label>
+					{#if currentView === "feed"}
+						<label
+							class="sort-toggle"
+							aria-label="Sort search results"
+						>
+							<span class="sort-label">Most recent</span>
+							<input
+								type="checkbox"
+								checked={searchSort === "top"}
+								onchange={(event) => {
+									searchSort = event.currentTarget.checked
+										? "top"
+										: "latest"
+									loadFeed()
+								}}
+							/>
+							<span class="sort-slider" aria-hidden="true"></span>
+							<span class="sort-label">Most popular</span>
+						</label>
+					{/if}
 				</div>
 			</div>
 
-			{#if loadingPosts}
+			{#if loadingPosts || (currentView === "history" && loadingHistory)}
 				<p class="muted">Loading posts...</p>
 			{:else if feedError}
 				<p class="warning"><CircleAlert size={15} /> {feedError}</p>

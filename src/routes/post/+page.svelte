@@ -182,6 +182,15 @@
 		}
 	}
 
+	async function cancelCompose() {
+		if (posting) return
+		if (typeof window !== "undefined" && window.history.length > 1) {
+			window.history.back()
+			return
+		}
+		await goto("/")
+	}
+
 	function oldPostPreviewTitle(uri = "") {
 		const post = oldPostDetailsByUri[uri]
 		if (post?.text) {
@@ -1106,6 +1115,14 @@
 				</p>
 			</div>
 			<div class="toolbar-right">
+				<button
+					class="cancel-btn"
+					type="button"
+					onclick={cancelCompose}
+					disabled={posting}
+				>
+					<span>Cancel</span>
+				</button>
 				{#if editingPostUri}
 					<button
 						class="delete-btn"
@@ -1443,6 +1460,21 @@
 		background: #3b6e4f;
 		border-color: #305741;
 		color: #fff;
+	}
+	.cancel-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		border: 1px solid #bdad9e;
+		background: #fff;
+		color: #5f665f;
+		border-radius: 999px;
+		padding: 0.45rem 0.8rem;
+		font: inherit;
+		cursor: pointer;
+	}
+	.cancel-btn:hover {
+		background: #f4eee4;
 	}
 	.delete-btn {
 		display: inline-flex;
