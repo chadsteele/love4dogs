@@ -1214,7 +1214,7 @@
 
 			<div class="old-posts-list">
 				{#each visibleOldPosts as oldPost (oldPost.uri)}
-					<PostCard post={oldPost} />
+					<PostCard post={oldPost} selectable={false} />
 				{/each}
 			</div>
 		</section>

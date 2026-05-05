@@ -190,10 +190,10 @@
 				{/if}
 			</div>
 			<div>
-				<p class="kicker">
-					All animals are welcome! Even you! Join us!
+				<p class="kicker wide-screen-only">
+					Join us! All animals are welcome!
 				</p>
-				<h1>Love4Dogs</h1>
+				<h1>Love4Dogs, <span class="title-rest"> Cats, etc.</span></h1>
 			</div>
 		</div>
 	</div>
@@ -476,15 +476,30 @@
 		flex-wrap: wrap;
 	}
 
+	.wide-screen-only {
+		display: revert;
+	}
+
+	@media (max-width: 600px) {
+		.wide-screen-only {
+			display: none;
+		}
+	}
+
 	@media (max-width: 900px) {
+		.title-rest {
+			display: block;
+		}
+
 		.topbar-left {
 			order: 1;
 		}
 
 		.topbar-links {
-			order: 2;
+			position: absolute;
+			top: 0.8rem;
+			right: 1rem;
 			width: auto;
-			margin-left: auto;
 			align-items: center;
 			gap: 0.85rem;
 		}

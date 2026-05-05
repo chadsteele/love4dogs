@@ -33,6 +33,8 @@
 	let showAboutModal = $state(false)
 	let searchSort = $state("latest")
 	let isLocalhost = $state(false)
+	let gridEl = $state(null)
+	let gridMounted = $state(false)
 
 	let searchDebounceTimer = null
 	let lastFeedRequestId = 0
@@ -388,6 +390,9 @@
 	)
 
 	onMount(() => {
+		let mountFrame = 0
+		let revealTimer = 0
+
 		if (typeof window !== "undefined") {
 			const host = window.location.hostname
 			isLocalhost =
@@ -402,8 +407,32 @@
 		myPostUris = loadMyPostUris()
 		hydrateMyPosts(myPostUris)
 
+		if (typeof window !== "undefined") {
+			mountFrame = window.requestAnimationFrame(() => {
+				const topbar = document.querySelector(".topbar")
+				const topbarHeight = topbar?.getBoundingClientRect().height || 0
+				const topbarRevealOffset = topbarHeight + 50
+				const gridTop =
+					window.scrollY +
+					(gridEl?.getBoundingClientRect().top || 0) -
+					topbarRevealOffset -
+					12
+
+				window.scrollTo({
+					top: Math.max(0, gridTop),
+					behavior: "smooth",
+				})
+
+				revealTimer = window.setTimeout(() => {
+					gridMounted = true
+				}, 90)
+			})
+		}
+
 		return () => {
 			if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+			if (mountFrame) cancelAnimationFrame(mountFrame)
+			if (revealTimer) clearTimeout(revealTimer)
 		}
 	})
 </script>
@@ -469,7 +498,7 @@
 		}}
 	/>
 
-	<section class="grid">
+	<section class:grid-mounted={gridMounted} class="grid" bind:this={gridEl}>
 		<article class="panel feed">
 			<div class="feed-header">
 				<div class="feed-header-left">
@@ -569,9 +598,35 @@
 	}
 
 	.grid {
+		margin-top: 90dvh;
+		margin-bottom: 90dvh;
+		vertical-align: top;
 		display: grid;
 		grid-template-columns: 1fr;
 		gap: 1rem;
+		opacity: 0;
+		transform: translateY(56px) scale(0.985);
+	}
+
+	.grid.grid-mounted {
+		animation: grid-bounce-in 560ms cubic-bezier(0.2, 0.9, 0.24, 1) forwards;
+	}
+
+	@keyframes grid-bounce-in {
+		0% {
+			opacity: 0;
+			transform: translateY(56px) scale(0.985);
+		}
+
+		72% {
+			opacity: 1;
+			transform: translateY(-10px) scale(1);
+		}
+
+		100% {
+			opacity: 1;
+			transform: translateY(0) scale(1);
+		}
 	}
 
 	.panel {

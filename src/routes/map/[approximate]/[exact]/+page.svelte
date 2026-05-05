@@ -643,25 +643,6 @@
 			return used
 		}
 
-		reserveSlot(Number(data.lat), Number(data.lon))
-		const exactMarker = leaflet
-			.circleMarker([data.lat, data.lon], {
-				radius: 6,
-				color: "#1f5135",
-				fillColor: "#3b6e4f",
-				fillOpacity: 0.95,
-				weight: 2,
-			})
-			.addTo(markerLayer)
-
-		exactMarker.on("click", () => {
-			exactMarker
-				.bindPopup(
-					`Exact hash location (${data.exact})<br/>${data.lat}, ${data.lon}`,
-				)
-				.openPopup()
-		})
-
 		for (const post of validMapPosts()) {
 			const baseLat = Number(post.lat)
 			const baseLon = Number(post.lon)

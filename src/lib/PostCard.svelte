@@ -64,13 +64,26 @@
 	}
 	const utf8Encoder = new TextEncoder()
 
-	function sortImagesBySize(images = [], dimensions = {}) {
-		return [...images].sort((left, right) => {
-			const leftArea = dimensions[left]?.area || 0
-			const rightArea = dimensions[right]?.area || 0
-			if (leftArea !== rightArea) return rightArea - leftArea
-			return images.indexOf(left) - images.indexOf(right)
+	function sortCardImages(images = [], dimensions = {}) {
+		if (!Array.isArray(images) || images.length <= 1) return [...images]
+
+		const result = [...images]
+		const sortableEnd = Math.min(4, result.length)
+		const sortable = result.slice(1, sortableEnd)
+		const originalOrder = new Map(
+			sortable.map((image, index) => [image, index]),
+		)
+
+		sortable.sort((left, right) => {
+			const leftWidth = dimensions[left]?.width || 0
+			const rightWidth = dimensions[right]?.width || 0
+			if (leftWidth !== rightWidth) return rightWidth - leftWidth
+			return (
+				(originalOrder.get(left) || 0) - (originalOrder.get(right) || 0)
+			)
 		})
+
+		return [result[0], ...sortable, ...result.slice(sortableEnd)]
 	}
 
 	function escapeHtml(text = "") {
@@ -374,8 +387,23 @@
 	const comments = $derived(post.comments || [])
 	const postVideo = $derived(post.video || null)
 	const sortedImages = $derived(
-		sortImagesBySize(post.images || [], imageDimensions),
+		sortCardImages(post.images || [], imageDimensions),
 	)
+	const threeImageFirstIsWidest = $derived.by(() => {
+		if (sortedImages.length !== 3) return false
+		const [first, second, third] = sortedImages
+		const firstWidth = imageDimensions[first]?.width
+		const secondWidth = imageDimensions[second]?.width
+		const thirdWidth = imageDimensions[third]?.width
+		if (
+			!Number.isFinite(firstWidth) ||
+			!Number.isFinite(secondWidth) ||
+			!Number.isFinite(thirdWidth)
+		) {
+			return false
+		}
+		return firstWidth >= secondWidth && firstWidth >= thirdWidth
+	})
 
 	$effect(() => {
 		if (typeof window === "undefined") return
@@ -494,7 +522,9 @@
 					class="post-image-btn"
 					class:image-wide={sortedImages.length === 1 ||
 						sortedImages.length === 2 ||
-						(sortedImages.length === 3 && index === 2)}
+						(sortedImages.length === 3 &&
+							((threeImageFirstIsWidest && index === 0) ||
+								(!threeImageFirstIsWidest && index === 2)))}
 					onclick={() => openImageModal(index)}
 					aria-label={`Open image ${index + 1} of ${sortedImages.length}`}
 				>
