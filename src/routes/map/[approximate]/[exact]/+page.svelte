@@ -734,10 +734,11 @@
 				.map(mapEl, {
 					zoomControl: true,
 					attributionControl: true,
-					dragging: false,
+					dragging: true,
 					touchZoom: true,
 					scrollWheelZoom: true,
 					doubleClickZoom: true,
+					minZoom: 11,
 				})
 				.setView([data.lat, data.lon], 13)
 
