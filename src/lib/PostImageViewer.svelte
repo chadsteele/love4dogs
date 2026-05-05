@@ -7,6 +7,15 @@
 		onChangeIndex = () => {},
 	} = $props()
 
+	function portal(node) {
+		document.body.appendChild(node)
+		return {
+			destroy() {
+				node.remove()
+			},
+		}
+	}
+
 	$effect(() => {
 		if (!open || typeof window === "undefined") return
 
