@@ -51,8 +51,8 @@ export async function POST({request}) {
 
 		if (!Array.isArray(data) || data.length === 0) {
 			return new Response(
-				JSON.stringify({error: `Could not find location: ${query}`}),
-				{status: 404, headers: {'Content-Type': 'application/json'}},
+				JSON.stringify({ok: false, error: `Could not find location: ${query}`}),
+				{status: 200, headers: {'Content-Type': 'application/json'}},
 			)
 		}
 
@@ -76,7 +76,7 @@ export async function POST({request}) {
 			)
 		}
 
-		return new Response(JSON.stringify({lat, lon, city, country, zip}), {
+		return new Response(JSON.stringify({ok: true, lat, lon, city, country, zip}), {
 			status: 200,
 			headers: {'Content-Type': 'application/json'},
 		})

@@ -598,7 +598,6 @@
 	}
 
 	.grid {
-		margin-top: 90dvh;
 		margin-bottom: 90dvh;
 		vertical-align: top;
 		display: grid;

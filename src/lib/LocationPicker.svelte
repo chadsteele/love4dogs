@@ -147,6 +147,11 @@
 				payload = null
 			}
 
+			if (payload?.ok === false) {
+				searchError = payload?.error || "Could not map that location."
+				return
+			}
+
 			if (!response.ok) {
 				searchError = payload?.error || "Could not map that location."
 				return

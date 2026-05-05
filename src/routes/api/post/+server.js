@@ -1,7 +1,7 @@
 import { env } from '$env/dynamic/private';
 
 const BSKY_XRPC = 'https://bsky.social/xrpc';
-const MAX_IMAGE_SIZE_BYTES = 2 * 1024 * 1024;
+const MAX_IMAGE_SIZE_BYTES = 2_000_000; // Bluesky's hard limit is 2,000,000 bytes (not 2 MiB)
 const MAX_VIDEO_SIZE_BYTES = 100 * 1024 * 1024;
 
 let cachedSession = null;
@@ -256,6 +256,56 @@ export async function GET({ url }) {
 export async function POST({ request }) {
 	try {
 		const formData = await request.formData();
+		const mode = String(formData.get('mode') || '').trim();
+
+		if (mode === 'upload-media') {
+			const file = formData.get('file');
+			if (!(file instanceof File) || file.size <= 0) {
+				return new Response(JSON.stringify({ error: 'Media file is required.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+
+			const isImage = String(file.type || '').startsWith('image/');
+			const isVideo = String(file.type || '').startsWith('video/');
+			if (!isImage && !isVideo) {
+				return new Response(JSON.stringify({ error: 'Only images and videos are supported.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+
+			if (isImage && file.size > MAX_IMAGE_SIZE_BYTES) {
+				return new Response(JSON.stringify({ error: 'Each image must be 2 MB or smaller.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+
+			if (isVideo && file.size > MAX_VIDEO_SIZE_BYTES) {
+				return new Response(JSON.stringify({ error: 'Video must be 100 MB or smaller.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+
+			const session = await getSession();
+			const kindLabel = isImage ? 'Image' : 'Video';
+			const blob = await uploadBlob(session.accessJwt, file, kindLabel);
+			return new Response(
+				JSON.stringify({
+					ok: true,
+					kind: isImage ? 'image' : 'video',
+					alt: file.name || (isImage ? 'Photo' : 'Video'),
+					blob
+				}),
+				{
+					headers: { 'content-type': 'application/json' }
+				}
+			);
+		}
+
 		const rawText = String(formData.get('text') || '').trim();
 		const images = formData
 			.getAll('images')
@@ -263,6 +313,18 @@ export async function POST({ request }) {
 		const videos = formData
 			.getAll('videos')
 			.filter((entry) => entry instanceof File && entry.size > 0);
+		const uploadedMediaRaw = String(formData.get('uploadedMedia') || '').trim();
+		let uploadedMedia = [];
+		if (uploadedMediaRaw) {
+			try {
+				uploadedMedia = JSON.parse(uploadedMediaRaw);
+			} catch {
+				return new Response(JSON.stringify({ error: 'Invalid uploaded media payload.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+		}
 
 		if (!rawText) {
 			return new Response(JSON.stringify({ error: 'Post text is required.' }), {
@@ -295,6 +357,13 @@ export async function POST({ request }) {
 
 		if (videos.length > 1) {
 			return new Response(JSON.stringify({ error: 'Only one video is allowed per post.' }), {
+				status: 400,
+				headers: { 'content-type': 'application/json' }
+			});
+		}
+
+		if (uploadedMedia.length > 0 && (images.length > 0 || videos.length > 0)) {
+			return new Response(JSON.stringify({ error: 'Submit with uploaded media or raw files, not both.' }), {
 				status: 400,
 				headers: { 'content-type': 'application/json' }
 			});
@@ -334,15 +403,75 @@ export async function POST({ request }) {
 		const uploaded = [];
 		let uploadedVideo = null;
 
-		for (const image of images) {
-			const blob = await uploadBlob(session.accessJwt, image, 'Image');
-			uploaded.push({ blob, alt: image.name || 'Photo' });
-		}
+		if (uploadedMedia.length > 0) {
+			if (!Array.isArray(uploadedMedia)) {
+				return new Response(JSON.stringify({ error: 'Invalid uploaded media payload.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
 
-		if (videos.length === 1) {
-			const video = videos[0];
-			const blob = await uploadBlob(session.accessJwt, video, 'Video');
-			uploadedVideo = { blob, alt: video.name || 'Video' };
+			const uploadedImages = uploadedMedia.filter((entry) => entry?.kind === 'image');
+			const uploadedVideos = uploadedMedia.filter((entry) => entry?.kind === 'video');
+
+			if (uploadedImages.length > 0 && uploadedVideos.length > 0) {
+				return new Response(JSON.stringify({ error: 'Choose either photos or one video per post.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+
+			if (uploadedImages.length > 4) {
+				return new Response(JSON.stringify({ error: 'You can upload up to 4 photos per post.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+
+			if (uploadedVideos.length > 1) {
+				return new Response(JSON.stringify({ error: 'Only one video is allowed per post.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+
+			for (const image of uploadedImages) {
+				if (!image?.blob || typeof image.blob !== 'object') {
+					return new Response(JSON.stringify({ error: 'Invalid uploaded image payload.' }), {
+						status: 400,
+						headers: { 'content-type': 'application/json' }
+					});
+				}
+				uploaded.push({
+					blob: image.blob,
+					alt: String(image.alt || 'Photo')
+				});
+			}
+
+			if (uploadedVideos.length === 1) {
+				const video = uploadedVideos[0];
+				if (!video?.blob || typeof video.blob !== 'object') {
+					return new Response(JSON.stringify({ error: 'Invalid uploaded video payload.' }), {
+						status: 400,
+						headers: { 'content-type': 'application/json' }
+					});
+				}
+				uploadedVideo = {
+					blob: video.blob,
+					alt: String(video.alt || 'Video')
+				};
+			}
+		} else {
+			for (const image of images) {
+				const blob = await uploadBlob(session.accessJwt, image, 'Image');
+				uploaded.push({ blob, alt: image.name || 'Photo' });
+			}
+
+			if (videos.length === 1) {
+				const video = videos[0];
+				const blob = await uploadBlob(session.accessJwt, video, 'Video');
+				uploadedVideo = { blob, alt: video.name || 'Video' };
+			}
 		}
 
 		const tags = getHashtags(rawText).slice(0, 20);
@@ -364,23 +493,72 @@ export async function POST({ request }) {
 			if (videoEmbed) record.embed = videoEmbed;
 		}
 
-		const createRecordRes = await fetch(`${BSKY_XRPC}/com.atproto.repo.createRecord`, {
-			method: 'POST',
-			headers: {
-				authorization: `Bearer ${session.accessJwt}`,
-				'content-type': 'application/json'
-			},
-			body: JSON.stringify({
-				repo: session.did,
-				collection: 'app.bsky.feed.post',
-				record
-			})
-		});
+		let createRecordSession = session;
+		let recordToCreate = record;
+		let createRecordRes = null;
+		let lastErrorMessage = '';
+		let retriedAfterAuth = false;
+		let retriedWithoutFacets = false;
 
-		if (!createRecordRes.ok) {
-			cachedSession = null;
+		while (true) {
+			createRecordRes = await fetch(`${BSKY_XRPC}/com.atproto.repo.createRecord`, {
+				method: 'POST',
+				headers: {
+					authorization: `Bearer ${createRecordSession.accessJwt}`,
+					'content-type': 'application/json'
+				},
+				body: JSON.stringify({
+					repo: createRecordSession.did,
+					collection: 'app.bsky.feed.post',
+					record: recordToCreate
+				})
+			});
+
+			if (createRecordRes.ok) break;
+
 			const errBody = await createRecordRes.json().catch(() => ({}));
-			throw new Error(errBody.message || errBody.error || `Bluesky error ${createRecordRes.status}`);
+			const errMessage = String(
+				errBody.message || errBody.error || `Bluesky error ${createRecordRes.status}`
+			);
+			lastErrorMessage = errMessage;
+
+			console.error('Bluesky createRecord failed:', {
+				status: createRecordRes.status,
+				errBody,
+				errMessage,
+				textLength: [...rawText].length,
+				imageCount: uploaded.length,
+				hasVideo: Boolean(uploadedVideo),
+				hadFacets: Boolean(recordToCreate.facets?.length),
+				retriedAfterAuth,
+				retriedWithoutFacets
+			});
+
+			if (!retriedAfterAuth && (createRecordRes.status === 401 || createRecordRes.status === 403)) {
+				cachedSession = null;
+				createRecordSession = await createSession();
+				retriedAfterAuth = true;
+				continue;
+			}
+
+			const looksLikeFacetIssue = /facet|richtext|bytestart|byteend|index/i.test(errMessage);
+			if (!retriedWithoutFacets && recordToCreate.facets?.length && looksLikeFacetIssue) {
+				recordToCreate = { ...recordToCreate };
+				delete recordToCreate.facets;
+				retriedWithoutFacets = true;
+				continue;
+			}
+
+			break;
+		}
+
+		if (!createRecordRes?.ok) {
+			const status = createRecordRes?.status;
+			const responseStatus = status >= 400 && status < 500 ? 400 : 502;
+			return new Response(JSON.stringify({ error: lastErrorMessage || 'Unable to publish post.' }), {
+				status: responseStatus,
+				headers: { 'content-type': 'application/json' }
+			});
 		}
 
 		const result = await createRecordRes.json();
@@ -388,6 +566,7 @@ export async function POST({ request }) {
 			headers: { 'content-type': 'application/json' }
 		});
 	} catch (error) {
+		console.error('POST /api/post failed:', error?.message || error, error?.stack || '');
 		return new Response(JSON.stringify({ error: error.message || 'Unexpected error.' }), {
 			status: 500,
 			headers: { 'content-type': 'application/json' }
