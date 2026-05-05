@@ -2,19 +2,21 @@
 	import {Share2, X} from "lucide-svelte"
 	import {onMount} from "svelte"
 	import {goto} from "$app/navigation"
+	import RandomEmojis from "$lib/RandomEmojis.svelte"
 
 	let {mode = "page", onClose} = $props()
-	const isModal = mode === "modal"
+	const isModal = $derived(mode === "modal")
 
 	const siteUrl = "https://love4dogs.club"
 	const ABOUT_PAGE_VISIT_KEY = "love4dogs.about-page-visited-at"
 	const backgroundImageUrl = `${siteUrl}/background.jpg`
 	const aboutTitle = "About Love4Dogs"
 	const aboutParagraphs = [
-		"Love4Dogs is a community-driven project built on the Bluesky social platform, dedicated to connecting dog lovers, rescuers, fosters, adopters, shelters, and NGOs. Our mission is to create a safe and supportive space where people can share information about dogs in need, rescue updates, and location-aware posts that help connect animals with loving homes.",
-		"The goal here is to consolidate dog interests and organizations locally and globally, making it easier for people to find and share information about dogs in their area and around the world. Whether you're looking to adopt, foster, volunteer, or simply connect with other dog enthusiasts, Love4Dogs is here to help you find your pack.",
+		"Love4Dogs is a community-driven project built on the Bluesky social platform, dedicated to connecting ALL ANIMAL lovers, rescuers, fosters, adopters, shelters, and NGOs. Our mission is to create a safe and supportive space where people can share information about animals in need, rescue updates, and location-aware posts that help connect animals with loving homes.",
+		"The goal here is to consolidate all animal interests and organizations locally and globally, making it easier for people to find and share information about animals in their area and around the world. Whether you're looking to adopt, foster, volunteer, or simply connect with other animal enthusiasts, Love4Dogs is here to help you find your pack.",
 		"Use the feed to browse recent posts, favorites, and hidden items in your area or open the composer to publish posts with photos and map-linked locations.",
-		"Love4Dogs is committed to creating a safe and supportive community for dog lovers, rescuers, and adopters. We believe in the power of connection and the importance of sharing information to help dogs find loving homes. This is a volunteer effort. I welcome contributions, feedback, and suggestions to make this space as helpful and welcoming as possible. If you have ideas for features, improvements, or just want to say hi, please reach out!",
+		"Love4Dogs is committed to creating a safe and supportive community for animal lovers, rescuers, and adopters. We believe in the power of connection and the importance of sharing information to help animals in distress.",
+		"This is a volunteer effort. I welcome contributions, feedback, and suggestions to make this space as helpful and welcoming as possible. If you have ideas for features, improvements, or just want to say hi, please reach out!",
 	]
 
 	let shareStatus = $state("")
@@ -79,6 +81,7 @@
 {#if isModal}
 	<section class="container container-modal">
 		<h2 class="modal-title">{aboutTitle}</h2>
+		<RandomEmojis />
 
 		{#each aboutParagraphs as paragraph}
 			<p>{paragraph}</p>
@@ -109,6 +112,7 @@
 				<span class="nav-spacer" aria-hidden="true"></span>
 			</nav>
 
+			<RandomEmojis />
 			{#each aboutParagraphs as paragraph}
 				<p>{paragraph}</p>
 			{/each}

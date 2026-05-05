@@ -79,9 +79,11 @@
 			return localStorage.getItem(LOCAL_CONTACT_KEY) || ""
 		}
 	}
-	let contactinfo = $state(loadContactState())
+	let contactinfo = $state("")
+	let hasLoadedContact = $state(false)
 
 	$effect(() => {
+		if (!hasLoadedContact) return
 		if (typeof localStorage === "undefined") return
 		localStorage.setItem(LOCAL_CONTACT_KEY, contactinfo)
 	})
@@ -909,6 +911,9 @@
 	)
 
 	onMount(() => {
+		contactinfo = loadContactState()
+		hasLoadedContact = true
+
 		oldPostUris = loadOldPostUris()
 		hydrateOldPostDetails(oldPostUris)
 		const editUri = currentEditUriFromQuery()

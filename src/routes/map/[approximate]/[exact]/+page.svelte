@@ -28,7 +28,8 @@
 	let leaflet = null
 	let mapInstance = null
 	let markerLayer = null
-	let lastViewportKey = ""
+	let lastLoadedViewportKey = ""
+	let requestedViewportKey = ""
 	let mapLoadRequestId = 0
 	let viewportRefreshTimer = null
 	const approxPostsCache = new Map()
@@ -37,7 +38,6 @@
 	const APPROX_ERROR_TTL_MS = 90_000
 
 	const MIN_GRID_SAMPLES = 5
-	const MAX_GRID_SAMPLES = 16
 	const TARGET_HASH_STEP_DEGREES = 0.05
 	const FETCH_CONCURRENCY = 3
 	const SLOW_WHILE_MOVING_REQUEST_SPACING_MS = 700
@@ -54,6 +54,7 @@
 	let apiHealthProbeRequired = false
 	let refreshInFlight = false
 	let refreshQueued = false
+	let requestedViewportApproximates = []
 
 	async function searchLocation(event) {
 		event?.preventDefault?.()
@@ -92,7 +93,8 @@
 			if (mapInstance) {
 				const zoom = Number(mapInstance.getZoom?.() || 13)
 				mapInstance.setView([lat, lon], zoom, {animate: true})
-				lastViewportKey = ""
+				lastLoadedViewportKey = ""
+				requestedViewportKey = ""
 				scheduleViewportRefresh()
 			}
 
@@ -165,6 +167,10 @@
 		}
 	}
 
+	function isRequestStale(requestId) {
+		return requestId !== mapLoadRequestId
+	}
+
 	function gridSamplesForViewport({south, north, west, east}) {
 		if (!mapInstance) return MIN_GRID_SAMPLES
 		const latSpan = Math.max(Math.abs(north - south), 0)
@@ -175,11 +181,7 @@
 		)
 		const zoom = Number(mapInstance.getZoom?.() || 0)
 		const zoomDriven = zoom <= 8 ? 12 : zoom <= 10 ? 10 : zoom <= 12 ? 8 : 6
-		return clamp(
-			Math.max(spanDriven, zoomDriven),
-			MIN_GRID_SAMPLES,
-			MAX_GRID_SAMPLES,
-		)
+		return Math.max(Math.max(spanDriven, zoomDriven), MIN_GRID_SAMPLES)
 	}
 
 	function openDirections(lat, lon) {
@@ -276,6 +278,7 @@
 	async function fetchApproximatesBatched(
 		approximates = [],
 		onSettled = () => {},
+		requestId = mapLoadRequestId,
 	) {
 		const results = []
 		const workers = []
@@ -289,6 +292,7 @@
 
 		const runWorker = async () => {
 			while (cursor < approximates.length) {
+				if (isRequestStale(requestId)) return
 				const index = cursor
 				cursor += 1
 				if (index >= approximates.length) return
@@ -322,6 +326,7 @@
 				}
 				try {
 					await waitForApproxRequestSlot()
+					if (isRequestStale(requestId)) return
 					if (stopAfterApiUnavailable || isApiUnavailable()) {
 						results[index] = {
 							status: "fulfilled",
@@ -340,6 +345,7 @@
 					const res = await fetch(
 						`/api/map-posts?${params.toString()}`,
 					)
+					if (isRequestStale(requestId)) return
 					markApiHealthyNow()
 					const json = await res.json().catch(() => ({}))
 					if (!res.ok) {
@@ -483,6 +489,7 @@
 					if (requestId !== mapLoadRequestId) return
 					hashLoadDone += 1
 				},
+				requestId,
 			)
 
 			if (requestId !== mapLoadRequestId) return
@@ -547,6 +554,23 @@
 
 	async function refreshViewportPosts() {
 		if (!mapInstance) return
+		const approximates = collectViewportApproximates()
+		const key = [...approximates].sort().join(",")
+		if (key === requestedViewportKey && refreshInFlight) return
+		if (key === lastLoadedViewportKey && !refreshInFlight) return
+
+		// Immediately reflect the new target workload in the UI, even if an
+		// older request is currently running.
+		requestedViewportApproximates = approximates
+		requestedViewportKey = key
+		viewportApproximates = approximates
+		hashLoadTotal = approximates.length
+		hashLoadDone = 0
+		cacheHashesCached = 0
+		cacheHashesFetching = approximates.length
+
+		// Invalidate any in-flight request so workers stop after their current step.
+		mapLoadRequestId += 1
 		if (refreshInFlight) {
 			refreshQueued = true
 			return
@@ -554,12 +578,11 @@
 		refreshInFlight = true
 		refreshQueued = false
 		try {
-			const approximates = collectViewportApproximates()
-			const key = [...approximates].sort().join(",")
-			if (key === lastViewportKey) return
-			lastViewportKey = key
-			viewportApproximates = approximates
-			await loadMapPosts(approximates)
+			const loadKey = requestedViewportKey
+			await loadMapPosts(requestedViewportApproximates)
+			if (loadKey === requestedViewportKey) {
+				lastLoadedViewportKey = loadKey
+			}
 			console.log(
 				`Found ${validMapPosts().length} post(s) from ${viewportApproximates.length} approx hash cell(s) in this view. `,
 			)

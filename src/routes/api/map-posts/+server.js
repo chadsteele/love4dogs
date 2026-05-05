@@ -9,10 +9,16 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 const CACHE_ERROR_TTL_MS = 60 * 1000;
 const MAX_CACHE_ENTRIES = 500;
 const THROTTLE_COOLDOWN_MS = 90 * 1000;
+const SEARCH_THROTTLE_COOLDOWN_MS = 90 * 1000;
+const AUTHOR_FEED_CACHE_TTL_MS = 5 * 60 * 1000;
 const approxResponseCache = new Map();
 const approxInFlight = new Map();
+// Per-author cache of all mapped posts fetched from the author feed
+// { posts: MappedPost[], fetchedAt: number } — used to avoid re-fetching for every hash cell
+const authorFeedCache = new Map();
 let upstreamThrottleUntil = 0;
 let upstreamThrottleReason = '';
+let searchThrottleUntil = 0;
 
 function pruneCache(now = Date.now()) {
 	for (const [key, entry] of approxResponseCache.entries()) {
@@ -215,6 +221,14 @@ function tryAddMappedPost({ postLike, approximate, posts, seen, pageStats, autho
 }
 
 async function collectFromSearch({ author, approximate, posts, seen, allFailures }) {
+	if (Date.now() < searchThrottleUntil) {
+		console.log('[map-posts] skipping search (search throttle active)', {
+			approximate,
+			remainingMs: searchThrottleUntil - Date.now()
+		});
+		return false;
+	}
+
 	let cursor = '';
 	let page = 0;
 	let hasSuccessfulResponse = false;
@@ -247,6 +261,13 @@ async function collectFromSearch({ author, approximate, posts, seen, allFailures
 				}))
 			});
 			allFailures.push(...failures.map((entry) => ({ ...entry, author })));
+			if (failures.some((f) => f.status === 403)) {
+				searchThrottleUntil = Date.now() + SEARCH_THROTTLE_COOLDOWN_MS;
+				console.log('[map-posts] search throttle opened (403 from search)', {
+					approximate,
+					remainingMs: SEARCH_THROTTLE_COOLDOWN_MS
+				});
+			}
 		}
 
 		if (!response) {
@@ -294,9 +315,28 @@ async function collectFromSearch({ author, approximate, posts, seen, allFailures
 }
 
 async function collectFromAuthorFeed({ author, approximate, posts, seen, allFailures }) {
+	// Check if we have a fresh author-level post cache to avoid re-fetching
+	const cachedFeed = authorFeedCache.get(author);
+	if (cachedFeed && Date.now() < cachedFeed.expiresAt) {
+		console.log('[map-posts] author feed cache hit', { author, approximate, totalPosts: cachedFeed.allMappedPosts.length });
+		let added = 0;
+		for (const post of cachedFeed.allMappedPosts) {
+			if (post.approximate !== approximate) continue;
+			if (!post.uri || seen.has(post.uri)) continue;
+			seen.add(post.uri);
+			posts.push(post);
+			added += 1;
+		}
+		console.log('[map-posts] author feed cache filtered', { author, approximate, added });
+		return true;
+	}
+
+	// Fetch all author posts and cache the full mapped list
 	let cursor = '';
 	let page = 0;
 	let hasSuccessfulResponse = false;
+	const allMappedPosts = [];
+	const allSeenUris = new Set();
 
 	while (page < MAX_PAGES) {
 		const params = new URLSearchParams({
@@ -338,38 +378,49 @@ async function collectFromAuthorFeed({ author, approximate, posts, seen, allFail
 		hasSuccessfulResponse = true;
 		const json = await response.json();
 		const found = Array.isArray(json.feed) ? json.feed : [];
-		const pageStats = {
-			fetched: found.length,
-			skippedNoUri: 0,
-			skippedSeen: 0,
-			skippedReply: 0,
-			skippedNoExact: 0,
-			skippedBadExact: 0,
-			added: 0
-		};
 
 		for (const item of found) {
 			const post = item?.post;
-			if (!post) {
-				pageStats.skippedNoUri += 1;
-				continue;
+			if (!post || !post.uri || allSeenUris.has(post.uri) || isReplyPost(item)) continue;
+			allSeenUris.add(post.uri);
+			// Extract all approximate hashes found in this post's text/facets
+			// We store ALL approximate hashes so any hash cell can match
+			const mapped = mapPost(post);
+			// Find approximate hash from URL in text or facets
+			const approxPattern = new RegExp(
+				`${MAP_BASE_URL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/([0-9bcdefghjkmnpqrstuvwxyz]+)/([0-9bcdefghjkmnpqrstuvwxyz]+)`,
+				'gi'
+			);
+			const textToSearch = [
+				mapped.text,
+				...mapped.facets.flatMap((f) =>
+					(f.features || [])
+						.filter((ft) => ft?.$type === 'app.bsky.richtext.facet#link')
+						.map((ft) => ft.uri || '')
+				)
+			].join(' ');
+			let match;
+			while ((match = approxPattern.exec(textToSearch)) !== null) {
+				const approx = match[1].toLowerCase();
+				const exact = match[2].toLowerCase();
+				const gps = hashToGps(exact);
+				if (!gps) continue;
+				allMappedPosts.push({
+					...mapped,
+					approximate: approx,
+					exact,
+					lat: Number(gps.lat),
+					lon: Number(gps.lon)
+				});
 			}
-
-			tryAddMappedPost({
-					postLike: post,
-				approximate,
-				posts,
-				seen,
-				pageStats,
-				author
-			});
 		}
 
 		console.log('[map-posts] author feed page summary', {
 			author,
 			page: page + 1,
 			cursorReturned: Boolean(json.cursor),
-			...pageStats
+			fetched: found.length,
+			mappedSoFar: allMappedPosts.length
 		});
 
 		cursor = String(json.cursor || '').trim();
@@ -377,8 +428,24 @@ async function collectFromAuthorFeed({ author, approximate, posts, seen, allFail
 		if (!cursor) break;
 	}
 
+	if (hasSuccessfulResponse) {
+		authorFeedCache.set(author, {
+			allMappedPosts,
+			expiresAt: Date.now() + AUTHOR_FEED_CACHE_TTL_MS
+		});
+		console.log('[map-posts] author feed cached', { author, totalMappedPosts: allMappedPosts.length });
+		// Filter for the current approximate
+		for (const post of allMappedPosts) {
+			if (post.approximate !== approximate) continue;
+			if (!post.uri || seen.has(post.uri)) continue;
+			seen.add(post.uri);
+			posts.push(post);
+		}
+	}
+
 	return hasSuccessfulResponse;
 }
+
 
 export async function GET({ url }) {
 	const approximate = String(url.searchParams.get('approximate') || '').trim().toLowerCase();

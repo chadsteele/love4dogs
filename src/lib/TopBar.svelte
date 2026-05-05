@@ -190,7 +190,9 @@
 				{/if}
 			</div>
 			<div>
-				<p class="kicker">Join us!</p>
+				<p class="kicker">
+					All animals are welcome! Even you! Join us!
+				</p>
 				<h1>Love4Dogs</h1>
 			</div>
 		</div>
