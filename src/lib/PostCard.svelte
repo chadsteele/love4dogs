@@ -46,7 +46,7 @@
 	let showImageModal = $state(false)
 	let activeImageIndex = $state(0)
 
-	const BSKY_HANDLE = "mylove4dogs.bsky.social"
+	const BSKY_HANDLE = "love4dogs.club"
 
 	function bskyUrl(uri = "") {
 		const rkey = uri.split("/").pop()

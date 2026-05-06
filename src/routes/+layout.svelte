@@ -40,7 +40,7 @@
 	.bg-kenburns {
 		position: fixed;
 		inset: -8%;
-		background-image: url("/catsdogs.jpg");
+		background-image: url("/background.jpg");
 		background-size: cover;
 		background-position: center;
 		background-repeat: no-repeat;

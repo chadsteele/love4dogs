@@ -5,7 +5,7 @@
 	import PostCard from "$lib/PostCard.svelte"
 	import TopBar from "$lib/TopBar.svelte"
 
-	const ACCOUNT_HANDLE = "mylove4dogs.bsky.social"
+	const ACCOUNT_HANDLE = "love4dogs.club"
 	const LOCAL_TAG_KEY = "love4dogs.tag-counts"
 	const LOCAL_MY_POSTS_KEY = "love4dogs.my-post-uris"
 	const BOOKMARK_KEY = "love4dogs.bookmarks"

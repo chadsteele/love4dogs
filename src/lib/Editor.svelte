@@ -1,5 +1,21 @@
 <script>
-	import {onMount} from "svelte"
+	import {mount, onMount, unmount, untrack} from "svelte"
+	import {EditorView} from "@codemirror/view"
+	import {EditorState} from "@codemirror/state"
+	import {html as htmlLang} from "@codemirror/lang-html"
+	import {oneDark} from "@codemirror/theme-one-dark"
+	import {basicSetup} from "codemirror"
+	import {
+		Bold,
+		Heading1 as H1,
+		Heading2 as H2,
+		Image as ImageIcon,
+		Italic,
+		Link as LinkIcon,
+		Strikethrough,
+		Underline,
+		Video as VideoIcon,
+	} from "lucide-svelte"
 
 	const MAX_IMAGE_SIZE_BYTES = 2_000_000
 	const THUMB_MAX_PX = 600
@@ -43,11 +59,39 @@
 	let imageFileInputEl = $state(null)
 	let videoFileInputEl = $state(null)
 	let contentDragging = $state(false)
+	let htmlMode = $state(false)
+	let htmlSource = $state("")
+	let cmContainer = $state(null)
+	let cmView = null
+	let contentProxy = null
+
+	function createElement(Component, props = {}) {
+		const host = document.createElement("span")
+		const instance = mount(Component, {
+			target: host,
+			props,
+		})
+		const element = host.firstElementChild?.cloneNode(true)
+		unmount(instance)
+		return element || document.createElement("span")
+	}
 
 	function normalizedMaxChar() {
 		const next = Number(maxChar)
 		if (!Number.isFinite(next) || next <= 0) return Number.POSITIVE_INFINITY
 		return Math.floor(next)
+	}
+
+	function enforceMaxCharString(nextValue = "") {
+		const html = String(nextValue || "")
+		const limit = normalizedMaxChar()
+		if (!Number.isFinite(limit) || html.length <= limit) {
+			htmlLength = html.length
+			lastValidHtml = html
+			return html
+		}
+		htmlLength = lastValidHtml.length
+		return lastValidHtml
 	}
 
 	function enforceMaxChars(contentEl) {
@@ -286,21 +330,253 @@
 	}
 
 	/**
-	 * Insert plain text at the current caret position inside the contenteditable.
+	 * Allow safe inline/block formatting from pasted HTML while stripping
+	 * scripts, styles, and any attributes that could carry JS or tracking.
 	 */
-	function insertAtCaret(contentEl, text) {
+	function sanitizePastedHtml(html = "") {
+		const ALLOWED_TAGS = new Set([
+			"p",
+			"br",
+			"b",
+			"strong",
+			"i",
+			"em",
+			"u",
+			"s",
+			"strike",
+			"h1",
+			"h2",
+			"h3",
+			"h4",
+			"h5",
+			"h6",
+			"ul",
+			"ol",
+			"li",
+			"a",
+			"span",
+			"div",
+			"blockquote",
+			"pre",
+			"code",
+		])
+		// Only allow href on <a>, and only http/https/mailto hrefs
+		const SAFE_HREF = /^(https?:\/\/|mailto:)/i
+
+		const template = document.createElement("div")
+		template.innerHTML = html
+
+		function clean(node) {
+			if (node.nodeType === Node.TEXT_NODE) return true
+			if (node.nodeType !== Node.ELEMENT_NODE) return false
+			const tag = node.tagName.toLowerCase()
+			if (!ALLOWED_TAGS.has(tag)) {
+				// replace with its children (unwrap)
+				const parent = node.parentNode
+				while (node.firstChild)
+					parent.insertBefore(node.firstChild, node)
+				parent.removeChild(node)
+				return false
+			}
+			// Strip all attributes except safe href on <a>
+			for (const attr of [...node.attributes]) {
+				if (
+					tag === "a" &&
+					attr.name === "href" &&
+					SAFE_HREF.test(attr.value)
+				)
+					continue
+				node.removeAttribute(attr.name)
+			}
+			// Recurse children (iterate copy since we may mutate)
+			for (const child of [...node.childNodes]) clean(child)
+			return true
+		}
+
+		for (const child of [...template.childNodes]) clean(child)
+		// Normalize excessive whitespace that comes from clipboard HTML
+		return template.innerHTML
+			.replace(/[\u00A0\u202F\u2007]/g, " ")
+			.replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, "")
+	}
+
+	function normalizePastedText(text = "") {
+		return String(text)
+			.replace(/[\u00A0\u202F\u2007]/g, " ")
+			.replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, "")
+			.replace(/\r\n?/g, "\n")
+	}
+
+	function insertPlainTextAtCaret(contentEl, text) {
 		contentEl.focus()
 		const sel = window.getSelection()
+		const safeText = normalizePastedText(text)
+
 		if (sel && sel.rangeCount > 0) {
 			const range = sel.getRangeAt(0)
 			range.deleteContents()
-			range.insertNode(document.createTextNode(text))
-			range.collapse(false)
-			sel.removeAllRanges()
-			sel.addRange(range)
+
+			const fragment = document.createDocumentFragment()
+			const lines = safeText.split("\n")
+			lines.forEach((line, index) => {
+				fragment.appendChild(document.createTextNode(line))
+				if (index < lines.length - 1) {
+					fragment.appendChild(document.createElement("br"))
+				}
+			})
+
+			const lastNode = fragment.lastChild
+			range.insertNode(fragment)
+			if (lastNode) {
+				const r2 = document.createRange()
+				r2.setStartAfter(lastNode)
+				r2.collapse(true)
+				sel.removeAllRanges()
+				sel.addRange(r2)
+			}
 		} else {
-			contentEl.innerText += text
+			contentEl.append(document.createTextNode(safeText))
 		}
+
+		dispatchEditorInput(contentEl)
+	}
+
+	function prettyPrintHtml(html = "") {
+		const INLINE = new Set([
+			"a",
+			"abbr",
+			"b",
+			"bdi",
+			"bdo",
+			"br",
+			"cite",
+			"code",
+			"data",
+			"dfn",
+			"em",
+			"i",
+			"kbd",
+			"mark",
+			"q",
+			"rp",
+			"rt",
+			"ruby",
+			"s",
+			"samp",
+			"small",
+			"span",
+			"strong",
+			"sub",
+			"sup",
+			"time",
+			"u",
+			"var",
+			"wbr",
+		])
+		const VOID = new Set([
+			"area",
+			"base",
+			"br",
+			"col",
+			"embed",
+			"hr",
+			"img",
+			"input",
+			"link",
+			"meta",
+			"param",
+			"source",
+			"track",
+			"wbr",
+		])
+		let indent = 0
+		const tab = "  "
+		const result = []
+		const tokenRe = /(<[^>]+>)|([^<]+)/g
+		let match
+		while ((match = tokenRe.exec(html)) !== null) {
+			const [, tag, text] = match
+			if (tag) {
+				const isClose = tag.startsWith("</")
+				const isSelfClose = tag.endsWith("/>")
+				const tagName = (
+					tag.match(/[a-zA-Z][a-zA-Z0-9]*/)?.[0] || ""
+				).toLowerCase()
+				const isVoid = VOID.has(tagName)
+				const isInline = INLINE.has(tagName)
+
+				if (isClose) {
+					indent = Math.max(0, indent - 1)
+					if (!isInline) {
+						result.push(tab.repeat(indent) + tag)
+					} else {
+						const last = result[result.length - 1]
+						if (last !== undefined)
+							result[result.length - 1] = last + tag
+						else result.push(tag)
+					}
+				} else if (isSelfClose || isVoid) {
+					result.push(tab.repeat(indent) + tag)
+				} else if (isInline) {
+					const last = result[result.length - 1]
+					if (last !== undefined)
+						result[result.length - 1] = last + tag
+					else result.push(tag)
+				} else {
+					result.push(tab.repeat(indent) + tag)
+					indent++
+				}
+			} else if (text) {
+				const trimmed = text.replace(/^\n[\s]*|[\s]*\n$/g, "").trim()
+				if (!trimmed) continue
+				const last = result[result.length - 1]
+				if (last !== undefined && last.match(/<[a-zA-Z][^/][^>]*>$/)) {
+					result[result.length - 1] = last + trimmed
+				} else {
+					result.push(tab.repeat(indent) + trimmed)
+				}
+			}
+		}
+		return result.join("\n")
+	}
+
+	function toggleHtmlMode() {
+		if (!htmlMode) {
+			const current = String(
+				pellEditor?.content?.innerHTML || value || "",
+			)
+			const pretty = prettyPrintHtml(current)
+			htmlSource = pretty
+			value = current
+			htmlLength = current.length
+			lastValidHtml = current
+			htmlMode = true
+			syncHtmlModeButtonState()
+			return
+		}
+
+		const next = enforceMaxCharString(htmlSource)
+		htmlSource = next
+		value = next
+		if (pellEditor?.content) {
+			suppressEffect = true
+			pellEditor.content.innerHTML = next
+			enforceMaxChars(pellEditor.content)
+			value = pellEditor.content.innerHTML
+			suppressEffect = false
+		}
+		htmlMode = false
+		syncHtmlModeButtonState()
+	}
+
+	function syncHtmlModeButtonState() {
+		if (!containerEl) return
+		const button =
+			containerEl.querySelector('[data-action="htmlMode"]') ||
+			containerEl.querySelector('button[title="Toggle HTML mode"]')
+		if (!button) return
+		button.classList.toggle("pell-button-selected", htmlMode)
+		button.setAttribute("aria-pressed", htmlMode ? "true" : "false")
 	}
 
 	function getSelectionRange(contentEl) {
@@ -343,14 +619,38 @@
 			closestByTagNames(range.startContainer, blockTags, contentEl) ||
 			contentEl
 
-		if (block === contentEl) return
+		if (block === contentEl) {
+			if (range.collapsed) return
+			const wrapper = document.createElement(targetTagName.toLowerCase())
+			try {
+				const fragment = range.extractContents()
+				if (!fragment.textContent?.trim()) return
+				wrapper.appendChild(fragment)
+				range.insertNode(wrapper)
+				const sel = window.getSelection()
+				const nextRange = document.createRange()
+				nextRange.selectNodeContents(wrapper)
+				sel?.removeAllRanges()
+				sel?.addRange(nextRange)
+				dispatchEditorInput(contentEl)
+			} catch {
+				return
+			}
+			return
+		}
 
 		const currentTag = block.tagName
-		if (currentTag === targetTagName) {
-			replaceElementTag(block, "p")
-		} else {
-			replaceElementTag(block, targetTagName.toLowerCase())
-		}
+		const replacement =
+			currentTag === targetTagName
+				? replaceElementTag(block, "p")
+				: replaceElementTag(block, targetTagName.toLowerCase())
+		try {
+			const nextRange = document.createRange()
+			nextRange.selectNodeContents(replacement)
+			const sel = window.getSelection()
+			sel?.removeAllRanges()
+			sel?.addRange(nextRange)
+		} catch {}
 
 		dispatchEditorInput(contentEl)
 	}
@@ -374,7 +674,18 @@
 			contentEl,
 		)
 		if (active && active.contains(range.endContainer)) {
+			const children = [...active.childNodes]
 			unwrapElement(active)
+			if (children.length) {
+				try {
+					const nextRange = document.createRange()
+					nextRange.setStartBefore(children[0])
+					nextRange.setEndAfter(children[children.length - 1])
+					const sel = window.getSelection()
+					sel?.removeAllRanges()
+					sel?.addRange(nextRange)
+				} catch {}
+			}
 			dispatchEditorInput(contentEl)
 			return
 		}
@@ -437,58 +748,45 @@
 
 	onMount(async () => {
 		const {default: pell} = await import("pell")
-
-		const lucideSvgAttrs =
-			'xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"'
-		const svg = (inner) => `<svg ${lucideSvgAttrs}>${inner}</svg>`
+		const iconProps = {
+			size: 16,
+			color: "currentColor",
+			strokeWidth: 2,
+		}
 
 		const defaultActionDefs = {
 			h1: {
-				icon: svg(
-					'<path d="M4 12h8"/><path d="M4 18V6"/><path d="M12 18V6"/><path d="m17 12 3-2v8"/>',
-				),
+				icon: "H1",
 				title: "Heading 1",
 				result: () => toggleBlockTag(pellEditor?.content, "H1"),
 			},
 			h2: {
-				icon: svg(
-					'<path d="M4 12h8"/><path d="M4 18V6"/><path d="M12 18V6"/><path d="M21 18h-4c0-4 4-3 4-6 0-1.5-2-2.5-4-1"/>',
-				),
+				icon: "H2",
 				title: "Heading 2",
 				result: () => toggleBlockTag(pellEditor?.content, "H2"),
 			},
 			bold: {
-				icon: svg(
-					'<path d="M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8"/>',
-				),
+				icon: "<strong>B</strong>",
 				title: "Bold",
 				result: () => toggleInlineTag(pellEditor?.content, "STRONG"),
 			},
 			italic: {
-				icon: svg(
-					'<line x1="19" x2="10" y1="4" y2="4"/><line x1="14" x2="5" y1="20" y2="20"/><line x1="15" x2="9" y1="4" y2="20"/>',
-				),
+				icon: '<i class="pell-italic-icon">I</i>',
 				title: "Italic",
 				result: () => toggleInlineTag(pellEditor?.content, "EM"),
 			},
 			underline: {
-				icon: svg(
-					'<path d="M6 4v6a6 6 0 0 0 12 0V4"/><line x1="4" x2="20" y1="20" y2="20"/>',
-				),
+				icon: "<u>U</u>",
 				title: "Underline",
 				result: () => toggleInlineTag(pellEditor?.content, "U"),
 			},
 			strikethrough: {
-				icon: svg(
-					'<path d="M16 4H9a3 3 0 0 0-2.83 4"/><path d="M14 12a4 4 0 0 1 0 8H6"/><line x1="4" x2="20" y1="12" y2="12"/>',
-				),
+				icon: "<s>S</s>",
 				title: "Strikethrough",
 				result: () => toggleInlineTag(pellEditor?.content, "S"),
 			},
 			link: {
-				icon: svg(
-					'<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
-				),
+				icon: createElement(LinkIcon, iconProps).outerHTML,
 				title: "Link",
 				result: () => toggleLink(pellEditor?.content),
 			},
@@ -500,15 +798,17 @@
 				: a,
 		)
 
-		const imageIcon = svg(
-			'<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>',
-		)
-		const videoIcon = svg(
-			'<path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"/><rect x="2" y="6" width="14" height="12" rx="2"/>',
-		)
+		const imageIcon = createElement(ImageIcon, iconProps).outerHTML
+		const videoIcon = createElement(VideoIcon, iconProps).outerHTML
 
 		const allActions = [
 			...resolvedActions,
+			{
+				name: "htmlMode",
+				icon: '<span class="pell-html-mode-icon">&lt;/&gt;</span>',
+				title: "Toggle HTML mode",
+				result: () => toggleHtmlMode(),
+			},
 			{
 				name: "insertImage",
 				icon: imageIcon,
@@ -543,13 +843,15 @@
 		}
 		lastValidHtml = String(pellEditor.content.innerHTML || "")
 		enforceMaxChars(pellEditor.content)
+		syncHtmlModeButtonState()
 
 		// Add placeholder behaviour
 		const content = pellEditor.content
 		content.setAttribute("data-placeholder", placeholder)
 
 		// Expose proxy so HashTagCloud can use it
-		editorEl = buildProxy(content)
+		contentProxy = buildProxy(content)
+		editorEl = contentProxy
 
 		// Internal drag-and-drop for media files onto the content area
 		function onContentDragover(e) {
@@ -573,22 +875,75 @@
 			contentDragging = false
 			handleFiles(files)
 		}
+		function onContentPaste(e) {
+			e.preventDefault()
+			const html = e.clipboardData?.getData("text/html")
+			if (html) {
+				const clean = sanitizePastedHtml(html)
+				if (clean.trim()) {
+					insertHtmlAtCaret(content, clean)
+					return
+				}
+			}
+			const pastedText = e.clipboardData?.getData("text/plain") ?? ""
+			insertPlainTextAtCaret(content, pastedText)
+		}
 		content.addEventListener("dragover", onContentDragover)
 		content.addEventListener("dragleave", onContentDragleave)
 		content.addEventListener("drop", onContentDrop)
+		content.addEventListener("paste", onContentPaste)
 
 		return () => {
 			content.removeEventListener("dragover", onContentDragover)
 			content.removeEventListener("dragleave", onContentDragleave)
 			content.removeEventListener("drop", onContentDrop)
+			content.removeEventListener("paste", onContentPaste)
+			contentProxy = null
 			editorEl = null
 			pellEditor = null
 		}
 	})
 
+	$effect(() => {
+		syncHtmlModeButtonState()
+		if (!htmlMode && contentProxy) editorEl = contentProxy
+	})
+
+	$effect(() => {
+		if (!htmlMode || !cmContainer) {
+			cmView?.destroy()
+			cmView = null
+			return
+		}
+		const initialContent = untrack(() => htmlSource)
+		cmView = new EditorView({
+			state: EditorState.create({
+				doc: initialContent,
+				extensions: [
+					basicSetup,
+					htmlLang(),
+					oneDark,
+					EditorView.theme({"&": {height: "100%"}}),
+					EditorView.updateListener.of((update) => {
+						if (!update.docChanged) return
+						const next = update.state.doc.toString()
+						const safe = enforceMaxCharString(next)
+						htmlSource = safe
+						value = safe
+					}),
+				],
+			}),
+			parent: cmContainer,
+		})
+		return () => {
+			cmView?.destroy()
+			cmView = null
+		}
+	})
+
 	// Sync external value changes (e.g. loadPostIntoEditor sets draft = "...")
 	$effect(() => {
-		if (!pellEditor || suppressEffect) return
+		if (!pellEditor || suppressEffect || htmlMode) return
 		const incoming = value ?? ""
 		if (pellEditor.content.innerHTML !== incoming) {
 			suppressEffect = true
@@ -599,7 +954,7 @@
 	})
 
 	$effect(() => {
-		if (!pellEditor || suppressEffect) return
+		if (!pellEditor || suppressEffect || htmlMode) return
 		suppressEffect = true
 		enforceMaxChars(pellEditor.content)
 		value = pellEditor.content.innerHTML
@@ -634,12 +989,20 @@
 	class="pell-wrapper"
 	class:is-dragging={isDragging}
 	class:content-dragging={contentDragging}
+	class:html-mode={htmlMode}
 	role="region"
 	aria-label="Rich text editor"
 	bind:this={containerEl}
 	{ondragover}
 	{ondragleave}
 	{ondrop}
+></div>
+
+<div
+	class="html-source"
+	class:hidden={!htmlMode}
+	bind:this={cmContainer}
+	aria-label="HTML source editor"
 ></div>
 
 {#if Number.isFinite(normalizedMaxChar())}
@@ -657,6 +1020,9 @@
 		overflow: hidden;
 		box-sizing: border-box;
 		width: 100%;
+		max-width: 100%;
+		min-width: 0;
+		position: relative;
 		background: #fff;
 		display: flex;
 		flex-direction: column;
@@ -668,6 +1034,27 @@
 	.pell-wrapper.is-dragging {
 		background: #ece8d7;
 		border-color: #55724d;
+	}
+
+	.html-source.hidden {
+		display: none;
+	}
+
+	.pell-wrapper.html-mode {
+		height: auto;
+		min-height: 0;
+		resize: none;
+	}
+
+	.pell-wrapper.html-mode :global(.pell-content) {
+		display: none;
+	}
+
+	.pell-wrapper.html-mode
+		:global(.pell-button:not([title="Toggle HTML mode"])) {
+		opacity: 0.35;
+		pointer-events: none;
+		cursor: default;
 	}
 
 	.pell-wrapper.content-dragging :global(.pell-content) {
@@ -704,10 +1091,26 @@
 		border-color: #c9bfb0;
 	}
 
+	.pell-wrapper :global(.pell-italic-icon) {
+		font-style: italic;
+		font-weight: 700;
+		font-family: "Atkinson Hyperlegible Mono", "JetBrains Mono", monospace;
+	}
+
+	.pell-wrapper :global(.pell-html-mode-icon) {
+		font-family: "Atkinson Hyperlegible Mono", "JetBrains Mono", monospace;
+		font-weight: 700;
+		font-size: 0.76rem;
+		line-height: 1;
+	}
+
 	.pell-wrapper :global(.pell-content) {
 		flex: 1;
 		min-height: 0;
+		min-width: 0;
 		overflow-y: auto;
+		overflow-x: auto;
+		overscroll-behavior-x: contain;
 		padding: 0.75rem;
 		outline: none;
 		font: inherit;
@@ -715,6 +1118,50 @@
 		line-height: 1.55;
 		box-sizing: border-box;
 		width: 100%;
+		max-width: 100%;
+		overflow-wrap: anywhere;
+		word-break: break-word;
+		word-wrap: break-word;
+	}
+
+	.pell-wrapper :global(.pell-content > *) {
+		max-width: 100%;
+	}
+
+	.html-source {
+		width: 100%;
+		min-width: 0;
+		max-width: 100%;
+		height: 280px;
+		min-height: 200px;
+		resize: vertical;
+		border: 1px solid #d7c8b6;
+		border-radius: 12px;
+		box-sizing: border-box;
+		overflow: hidden;
+	}
+
+	.html-source :global(.cm-editor) {
+		height: 100%;
+		border-radius: 12px;
+		overflow: hidden;
+	}
+
+	.html-source :global(.cm-scroller) {
+		overflow: auto;
+		font-family: "Atkinson Hyperlegible Mono", "JetBrains Mono",
+			ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+		font-size: 0.875rem;
+	}
+
+	.pell-wrapper :global(.pell-content img),
+	.pell-wrapper :global(.pell-content video),
+	.pell-wrapper :global(.pell-content iframe),
+	.pell-wrapper :global(.pell-content table),
+	.pell-wrapper :global(.pell-content pre),
+	.pell-wrapper :global(.pell-content code) {
+		max-width: 100%;
+		box-sizing: border-box;
 	}
 
 	/* Placeholder */

@@ -1,5 +1,6 @@
 <script>
 	import {onMount} from "svelte"
+	import {Eraser, Save, X} from "lucide-svelte"
 	import Editor from "$lib/Editor.svelte"
 	import MediaUploadManager from "$lib/MediaUploadManager.svelte"
 	import ProfileImages from "$lib/ProfileImages.svelte"
@@ -529,14 +530,24 @@
 				required
 			/>
 		</label>
-	</section>
 
-	<section class="panel actions">
-		<button type="button" onclick={clearProfileDraft}>Clear</button>
-		<button type="button" onclick={cancelProfileEdit}>Cancel</button>
-		<button type="button" class="primary" onclick={saveProfile}
-			>Save
-		</button>
+		<div class="actions-row">
+			<div aria-hidden="true"></div>
+			<button type="button" class="primary" onclick={saveProfile}>
+				<Save size={16} aria-hidden="true" />
+				<span>Save</span>
+			</button>
+			<div class="actions-right">
+				<button type="button" onclick={clearProfileDraft}>
+					<Eraser size={16} aria-hidden="true" />
+					<span>Clear</span>
+				</button>
+				<button type="button" onclick={cancelProfileEdit}>
+					<X size={16} aria-hidden="true" />
+					<span>Cancel</span>
+				</button>
+			</div>
+		</div>
 		{#if saveMessage}
 			<p class="success">{saveMessage}</p>
 		{/if}
@@ -560,6 +571,7 @@
 		padding: 1rem;
 		display: grid;
 		gap: 0.8rem;
+		min-width: 0;
 	}
 	.topline {
 		display: flex;
@@ -586,6 +598,8 @@
 		border-radius: 16px;
 		padding: 0.9rem;
 		box-shadow: 0 8px 20px rgba(65, 42, 20, 0.1);
+		min-width: 0;
+		overflow-x: hidden;
 	}
 	.ids {
 		display: grid;
@@ -633,16 +647,26 @@
 		padding: 0.45rem 0.8rem;
 		font: inherit;
 		cursor: pointer;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.38rem;
 	}
 	button.primary {
 		background: #3b6e4f;
 		border-color: #305741;
 		color: #fff;
 	}
-	.actions {
-		display: flex;
-		flex-wrap: wrap;
+	.actions-row {
+		display: grid;
+		grid-template-columns: 1fr auto 1fr;
 		align-items: center;
+		width: 100%;
+		gap: 0.6rem;
+	}
+	.actions-right {
+		display: inline-flex;
+		align-items: center;
+		justify-self: end;
 		gap: 0.45rem;
 	}
 	.profile-image-wrap {
@@ -650,6 +674,8 @@
 	}
 	.editor-wrap {
 		margin-top: 0.55rem;
+		min-width: 0;
+		width: 100%;
 	}
 	.char-count {
 		margin: 0;
@@ -681,6 +707,13 @@
 	@media (max-width: 900px) {
 		.ids {
 			grid-template-columns: 1fr;
+		}
+		.actions-row {
+			grid-template-columns: 1fr;
+		}
+		.actions-row > button,
+		.actions-right {
+			justify-self: start;
 		}
 	}
 </style>

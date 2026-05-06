@@ -1,16 +1,16 @@
 import {minify} from "html-minifier-terser"
 
 export async function POST({request}) {
-	try {
-		const body = await request.json().catch(() => ({}))
-		const source = String(body?.html || "")
-		if (!source.trim()) {
-			return new Response(
-				JSON.stringify({ok: true, minifiedHtml: ""}),
-				{headers: {"content-type": "application/json"}},
-			)
-		}
+	const body = await request.json().catch(() => ({}))
+	const source = String(body?.html || "")
+	if (!source.trim()) {
+		return new Response(
+			JSON.stringify({ok: true, minifiedHtml: ""}),
+			{headers: {"content-type": "application/json"}},
+		)
+	}
 
+	try {
 		const minifiedHtml = await minify(source, {
 			collapseWhitespace: true,
 			removeComments: true,
@@ -18,6 +18,7 @@ export async function POST({request}) {
 			removeEmptyAttributes: true,
 			minifyCSS: true,
 			minifyJS: true,
+			continueOnParseError: true,
 		})
 
 		return new Response(
@@ -26,8 +27,12 @@ export async function POST({request}) {
 		)
 	} catch (error) {
 		return new Response(
-			JSON.stringify({error: error?.message || "Unable to minify HTML."}),
-			{status: 500, headers: {"content-type": "application/json"}},
+			JSON.stringify({
+				ok: true,
+				minifiedHtml: source,
+				warning: error?.message || "Unable to minify HTML.",
+			}),
+			{headers: {"content-type": "application/json"}},
 		)
 	}
 }

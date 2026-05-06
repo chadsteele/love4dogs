@@ -1,7 +1,7 @@
 import { hashToGps } from '$lib/utils';
 
 const BSKY_PUBLIC_XRPC_HOSTS = ['https://api.bsky.app/xrpc', 'https://public.api.bsky.app/xrpc'];
-const ACCOUNT_HANDLES = [ 'mylove4dogs.bsky.social'];
+const ACCOUNT_HANDLES = [ 'love4dogs.club'];
 const MAP_BASE_URL = 'https://love4dogs.club/map';
 const MAX_PAGES = 10;
 const PAGE_LIMIT = 100;
