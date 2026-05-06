@@ -3,10 +3,15 @@
 	import {Eraser, Save, X} from "lucide-svelte"
 	import Editor from "$lib/Editor.svelte"
 	import ProfileImages from "$lib/ProfileImages.svelte"
+	import {
+		CONTACT_LOCK_PREFIX,
+		encryptContact,
+		normalizeContactInput,
+	} from "$lib/utils"
 
 	const PROFILE_STORAGE_KEY = "love4dogs.profile-v2"
 	const CONTENT_CHUNK_SIZE = 1800
-	const CHUNK_ALT_PAYLOAD_TARGET_CHARS = 1900
+	const CHUNK_ALT_PAYLOAD_TARGET_CHARS = 2000
 	const CHUNK_ALT_COMPRESSION_MIN_HTML_CHARS = 2000
 	const CHUNK_BODY_TEXT_SIZE = 300
 	const MEDIA_UPLOAD_CONCURRENCY = 4
@@ -1376,10 +1381,16 @@
 			unresolvedEditorMediaCount > 0,
 	)
 
+	function encryptEmailForPayload(value = "") {
+		const normalized = normalizeContactInput(value)
+		if (!normalized) return ""
+		return CONTACT_LOCK_PREFIX + encryptContact(normalized)
+	}
+
 	const primaryPostPayload = $derived({
 		uuid,
 		version: primaryVersion,
-		email,
+		email: encryptEmailForPayload(email),
 		profilePic: uploadedProfileImage?.blob || null,
 		backgroundPic: uploadedBackgroundImage?.blob || null,
 		name: profileName,
@@ -1398,14 +1409,51 @@
 		})),
 	)
 
+	function mapSubsequentPayloadForBundle(entries = []) {
+		return entries.map((entry) => ({
+			index: entry.index,
+			total: entry.total,
+			htmlFragment: entry.htmlFragment,
+			postBody: entry.postBody,
+		}))
+	}
+
+	const subsequentPayloadForBundlePreview = $derived(
+		mapSubsequentPayloadForBundle(subsequentPostsPayload),
+	)
+
+	const combinedPayloadBundlePreview = $derived(
+		buildCombinedPayloadBundle(
+			primaryPostPayload,
+			subsequentPayloadForBundlePreview,
+		),
+	)
+
+	const combinedPayloadPostsEstimate = $derived(
+		Math.max(
+			1,
+			Math.ceil(combinedPayloadBundlePreview.fragments.length / 4),
+		),
+	)
+
 	function normalizeStoredMedia(value) {
 		if (!Array.isArray(value)) return []
-		return value.filter(
-			(entry) =>
-				entry &&
-				typeof entry === "object" &&
-				typeof entry.blob === "string",
-		)
+		return value
+			.filter((entry) => entry && typeof entry === "object")
+			.map((entry) => ({
+				...entry,
+				kind:
+					entry.kind === "video" || entry.kind === "image"
+						? entry.kind
+						: "image",
+			}))
+			.filter((entry) => {
+				const blob = entry?.blob
+				return Boolean(
+					blob &&
+						(typeof blob === "object" || typeof blob === "string"),
+				)
+			})
 	}
 
 	function cloneStoredProfile(value) {
@@ -1571,6 +1619,41 @@
 		return result
 	}
 
+	function buildCombinedPayloadBundle(
+		primaryPayload = {},
+		subsequentPayload = [],
+	) {
+		const combinedJson = JSON.stringify({
+			primary: primaryPayload,
+			subsequent: subsequentPayload,
+		})
+		const forceCompression =
+			combinedJson.length > CHUNK_ALT_COMPRESSION_MIN_HTML_CHARS
+		const limited = enforceAltPayloadLimit(
+			[combinedJson],
+			CHUNK_ALT_PAYLOAD_TARGET_CHARS,
+			{
+				uuid: String(primaryPayload?.uuid || uuid || ""),
+				version: String(primaryPayload?.version || priorVersion || ""),
+				forceCompression,
+			},
+		)
+		const fragments = coalesceAltPayloadChunks(
+			limited,
+			CHUNK_ALT_PAYLOAD_TARGET_CHARS,
+			{
+				uuid: String(primaryPayload?.uuid || uuid || ""),
+				version: String(primaryPayload?.version || priorVersion || ""),
+				forceCompression,
+			},
+		)
+		return {
+			combinedJson,
+			forceCompression,
+			fragments,
+		}
+	}
+
 	async function publishToBluesky() {
 		console.log("[profile] publishToBluesky:start", {
 			uuid,
@@ -1611,7 +1694,30 @@
 			console.log("[profile] saving draft before publish")
 			saveProfile(false)
 
-			const chunks = subsequentPostsPayload
+			const subsequentPayloadForBundle = mapSubsequentPayloadForBundle(
+				subsequentPostsPayload,
+			)
+			const primaryPayloadForBundle = {
+				uuid,
+				version: primaryVersion,
+				email: encryptEmailForPayload(email),
+				profilePic: uploadedProfileImage?.blob || null,
+				backgroundPic: uploadedBackgroundImage?.blob || null,
+				name: profileName,
+				description: profileDescription,
+			}
+			const combinedBundle = buildCombinedPayloadBundle(
+				primaryPayloadForBundle,
+				subsequentPayloadForBundle,
+			)
+			const chunks = combinedBundle.fragments.map(
+				(fragment, index, all) => ({
+					index: index + 1,
+					total: all.length,
+					bundleFragment: fragment,
+					forceCompression: combinedBundle.forceCompression,
+				}),
+			)
 
 			// Build post text: name + description (≤300 chars enforced by the form)
 			const postText = clampPostTextForApi(
@@ -1625,9 +1731,22 @@
 			})
 
 			const primaryMedia = []
-			if (uploadedProfileImage) primaryMedia.push(uploadedProfileImage)
-			if (uploadedBackgroundImage)
-				primaryMedia.push(uploadedBackgroundImage)
+			if (uploadedProfileImage?.blob) {
+				primaryMedia.push({
+					...uploadedProfileImage,
+					kind: "image",
+					alt: String(uploadedProfileImage.alt || "Profile image"),
+				})
+			}
+			if (uploadedBackgroundImage?.blob) {
+				primaryMedia.push({
+					...uploadedBackgroundImage,
+					kind: "image",
+					alt: String(
+						uploadedBackgroundImage.alt || "Profile background",
+					),
+				})
+			}
 
 			const imageAttachments = editorMediaList
 				.filter((entry) => entry?.kind === "image" && entry?.blob)
@@ -1653,38 +1772,56 @@
 							),
 							blob: uploadedProfileImage.blob,
 						},
-				  ]
+					]
 				: []
 			const attachmentPool =
-				imageAttachments.length > 0 ? imageAttachments : fallbackImage
+				imageAttachments.length > 0
+					? imageAttachments
+					: primaryMedia.length > 0
+						? primaryMedia
+						: fallbackImage
 
-			const canInlineSingleChunkOnPrimary =
-				chunks.length === 1 &&
-				imageAttachments.length === 0 &&
-				videoAttachments.length === 0 &&
-				primaryMedia.some((entry) => entry?.kind === "image")
-			const primaryMediaForPost = primaryMedia.map((entry) => ({...entry}))
-			if (canInlineSingleChunkOnPrimary) {
-				const singleChunk = chunks[0]
-				const inlineMeta = {
-					uuid,
-					version: priorVersion,
-					index: 1,
-					total: 1,
+			const primaryMediaForPost = primaryMedia.map((entry) => ({
+				...entry,
+			}))
+			const primaryChunkCapacity = Math.min(4, chunks.length)
+			const primaryChunks = chunks.slice(0, primaryChunkCapacity)
+			if (primaryChunks.length > 0) {
+				if (primaryMediaForPost.length === 0) {
+					publishError =
+						"Unable to attach payload chunks on the primary post: at least one profile/background image is required."
+					return
 				}
-				const altPayload = buildChunkAltPayload(
-					inlineMeta,
-					singleChunk?.htmlFragment || "",
-					{
-						forceCompression: Boolean(singleChunk?.forceCompression),
-					},
-				)
-				const imageIndex = primaryMediaForPost.findIndex(
-					(entry) => entry?.kind === "image",
-				)
-				if (imageIndex >= 0) {
-					primaryMediaForPost[imageIndex] = {
-						...primaryMediaForPost[imageIndex],
+				const primaryCarrierSeed = primaryMediaForPost.map((entry) => ({
+					...entry,
+				}))
+				while (primaryMediaForPost.length < primaryChunks.length) {
+					const seed =
+						primaryCarrierSeed[
+							primaryMediaForPost.length %
+								primaryCarrierSeed.length
+						]
+					primaryMediaForPost.push({...seed})
+				}
+				for (let i = 0; i < primaryChunks.length; i += 1) {
+					const chunkEntry = primaryChunks[i]
+					const meta = {
+						uuid,
+						version: priorVersion,
+						index: chunkEntry.index,
+						total: chunks.length,
+					}
+					const altPayload = buildChunkAltPayload(
+						meta,
+						chunkEntry?.bundleFragment || "",
+						{
+							forceCompression: Boolean(
+								chunkEntry?.forceCompression,
+							),
+						},
+					)
+					primaryMediaForPost[i] = {
+						...primaryMediaForPost[i],
 						alt: JSON.stringify(altPayload),
 					}
 				}
@@ -1694,17 +1831,29 @@
 				kinds: primaryMediaForPost.map(
 					(entry) => entry?.kind || "unknown",
 				),
-				canInlineSingleChunkOnPrimary,
+				primaryChunkCapacity,
+				primaryChunkUsed: primaryChunks.length,
+				remainingChunkCount: Math.max(
+					0,
+					chunks.length - primaryChunks.length,
+				),
 			})
 
-			const chunkDiagnostics = minifiedChunkEntries.map(
-				(entry, index) => ({
-					index: index + 1,
-					htmlLength: String(entry?.htmlFragment || "").length,
-					postBodyLength: String(entry?.postBody || "").length,
-					postBodyPreview: String(entry?.postBody || "").slice(0, 80),
-				}),
-			)
+			const chunkDiagnostics = chunks.map((entry, index) => ({
+				index: index + 1,
+				bundleFragmentLength: String(entry?.bundleFragment || "")
+					.length,
+				payloadLength: measureChunkAltPayloadLength(
+					entry?.bundleFragment || "",
+					{
+						uuid,
+						version: priorVersion,
+						index: index + 1,
+						total: chunks.length,
+						forceCompression: Boolean(entry?.forceCompression),
+					},
+				),
+			}))
 			console.log("[profile] chunk diagnostics", chunkDiagnostics)
 
 			const primaryFd = new FormData()
@@ -1755,63 +1904,88 @@
 				hasReplyRef: Boolean(replyRef),
 			})
 
-			const chunksForReplies = canInlineSingleChunkOnPrimary ? [] : chunks
-			const replyAttachmentPool = canInlineSingleChunkOnPrimary
-				? []
-				: attachmentPool
+			const chunksForReplies = chunks.slice(primaryChunks.length)
+			const replyAttachmentPool = attachmentPool
 			const chunkTotal = chunksForReplies.length
+			const chunkGroups = []
+			for (let i = 0; i < chunkTotal; i += 4) {
+				chunkGroups.push(chunksForReplies.slice(i, i + 4))
+			}
 			const attachmentTotal = replyAttachmentPool.length
-			const totalPosts = Math.max(chunkTotal, attachmentTotal)
+			const totalPosts = chunkGroups.length
 			console.log("[profile] chunk publish plan", {
 				chunkTotal,
+				chunkGroupCount: chunkGroups.length,
 				attachmentTotal,
 				totalPosts,
 				hasFallbackImage: fallbackImage.length > 0,
 				hasVideoAttachment: videoAttachments.length > 0,
-				canInlineSingleChunkOnPrimary,
+				primaryChunkUsed: primaryChunks.length,
 			})
 
 			for (let i = 0; i < totalPosts; i += 1) {
-				const chunkEntry = chunksForReplies[i] || null
-				const meta = {
-					uuid,
-					version: priorVersion,
-					index: i + 1,
-					total: totalPosts,
-				}
-				const chunkBody = chunkEntry?.postBody || ""
-				const text =
-					clampPostTextForApi(chunkBody) ||
-					`Photo ${i + 1}/${totalPosts}`
+				const chunkGroup = chunkGroups[i] || []
+				const text = `Payload ${i + 1}/${totalPosts}`
 
 				const mediaForPost = []
 				if (replyAttachmentPool.length > 0) {
-					const attachment =
-						replyAttachmentPool[i % replyAttachmentPool.length]
-					const chunkAltPayload = buildChunkAltPayload(
-						meta,
-						chunkEntry?.htmlFragment || "",
-						{
-							forceCompression: Boolean(
-								chunkEntry?.forceCompression,
-							),
-						},
-					)
-					mediaForPost.push({
-						...attachment,
-						alt: JSON.stringify(chunkAltPayload),
-					})
-				} else if (videoAttachments.length > 0) {
-					mediaForPost.push({
-						...videoAttachments[0],
-						alt: JSON.stringify(
-							buildChunkAltPayload(meta, "", {
+					for (let j = 0; j < chunkGroup.length; j += 1) {
+						const chunkEntry = chunkGroup[j]
+						const meta = {
+							uuid,
+							version: priorVersion,
+							index: chunkEntry.index,
+							total: chunks.length,
+						}
+						const attachment =
+							replyAttachmentPool[
+								(chunkEntry.index - 1) %
+									replyAttachmentPool.length
+							]
+						const chunkAltPayload = buildChunkAltPayload(
+							meta,
+							chunkEntry?.bundleFragment || "",
+							{
 								forceCompression: Boolean(
 									chunkEntry?.forceCompression,
 								),
-							}),
+							},
+						)
+						mediaForPost.push({
+							...attachment,
+							alt: JSON.stringify(chunkAltPayload),
+						})
+					}
+				} else if (
+					videoAttachments.length > 0 &&
+					chunkGroup.length === 1
+				) {
+					const chunkEntry = chunkGroup[0]
+					const meta = {
+						uuid,
+						version: priorVersion,
+						index: chunkEntry.index,
+						total: chunks.length,
+					}
+					mediaForPost.push({
+						...videoAttachments[0],
+						alt: JSON.stringify(
+							buildChunkAltPayload(
+								meta,
+								chunkEntry?.bundleFragment || "",
+								{
+									forceCompression: Boolean(
+										chunkEntry?.forceCompression,
+									),
+								},
+							),
 						),
 					})
+				}
+				if (!mediaForPost.length && chunkGroup.length > 0) {
+					publishError =
+						"Unable to attach payload chunks: add at least one image carrier (profile, background, or editor image)."
+					return
 				}
 
 				const chunkFd = new FormData()
@@ -1829,7 +2003,7 @@
 				console.log("[profile] posting chunk", {
 					index: i + 1,
 					total: totalPosts,
-					hasChunkEntry: Boolean(chunkEntry),
+					chunkCountInPost: chunkGroup.length,
 					textPreview: text.slice(0, 80),
 					mediaKinds: mediaForPost.map((entry) => entry.kind),
 				})
@@ -2292,6 +2466,28 @@
 		<pre>{JSON.stringify(primaryPostPayload, null, 2)}</pre>
 		<h2>Subsequent Payload Preview ({subsequentPostsPayload.length})</h2>
 		<pre>{JSON.stringify(subsequentPostsPayload, null, 2)}</pre>
+		<h2>Combined Payload Bundle Preview</h2>
+		<p class="char-count">
+			Combined JSON chars: {combinedPayloadBundlePreview.combinedJson
+				.length}
+		</p>
+		<p class="char-count">
+			Bundle chunks ({CHUNK_ALT_PAYLOAD_TARGET_CHARS} chars target each):
+			{combinedPayloadBundlePreview.fragments.length}
+		</p>
+		<p class="char-count">
+			Estimated Bluesky posts (up to 4 chunk-images/post):
+			{combinedPayloadPostsEstimate}
+		</p>
+		<p class="char-count">
+			Forced compression mode:
+			{combinedPayloadBundlePreview.forceCompression ? "yes" : "no"}
+		</p>
+		<pre>{JSON.stringify(
+				combinedPayloadBundlePreview.fragments,
+				null,
+				2,
+			)}</pre>
 	</section>
 </main>
 
