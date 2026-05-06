@@ -3,15 +3,10 @@
 	import Editor from "$lib/Editor.svelte"
 	import MediaUploadManager from "$lib/MediaUploadManager.svelte"
 	import ProfileImages from "$lib/ProfileImages.svelte"
-	import {
-		CONTACT_LOCK_PREFIX,
-		encryptContact,
-		decryptContact,
-		isContactEncrypted,
-	} from "$lib/utils"
 
 	const PROFILE_STORAGE_KEY = "love4dogs.profile-v2"
 	const CONTENT_CHUNK_SIZE = 1800
+	const CHUNK_BODY_TEXT_SIZE = 300
 
 	let uuid = $state("")
 	let primaryVersion = $state("")
@@ -32,10 +27,15 @@
 
 	let uploadError = $state("")
 	let saveMessage = $state("")
+	let storageReady = $state(false)
+	let initialProfileSnapshot = null
+	let suppressAutosave = false
 
 	let videoGalleryUploadedMedia = $state([])
 	let uploadingVideos = $state(false)
 	let videoUploadError = $state("")
+	let minifiedChunkEntries = $state([])
+	let chunkBuildVersion = 0
 
 	function generateShortUuid() {
 		return Math.random().toString(36).slice(2, 10)
@@ -43,13 +43,6 @@
 
 	function makeVersion() {
 		return Date.now().toString(36)
-	}
-
-	function withLockPrefix(value = "") {
-		const trimmed = String(value || "").trim()
-		if (!trimmed) return ""
-		if (isContactEncrypted(trimmed)) return trimmed
-		return CONTACT_LOCK_PREFIX + encryptContact(trimmed)
 	}
 
 	function parseLines(text = "") {
@@ -105,6 +98,43 @@
 
 		if (current) chunks.push(current)
 		return chunks
+	}
+
+	async function minifyHtmlForChunking(html = "") {
+		const source = String(html || "")
+		if (!source.trim()) return ""
+		try {
+			const response = await fetch("/api/minify-html", {
+				method: "POST",
+				headers: {"content-type": "application/json"},
+				body: JSON.stringify({html: source}),
+			})
+			const json = await response.json().catch(() => ({}))
+			if (
+				!response.ok ||
+				!json?.ok ||
+				typeof json.minifiedHtml !== "string"
+			) {
+				return source
+			}
+			return json.minifiedHtml
+		} catch {
+			return source
+		}
+	}
+
+	function extractChunkBodyText(html = "", maxChars = CHUNK_BODY_TEXT_SIZE) {
+		const source = String(html || "")
+		let text = ""
+		if (typeof document !== "undefined") {
+			const root = document.createElement("div")
+			root.innerHTML = source
+			text = root.textContent || ""
+		} else {
+			text = source.replace(/<[^>]+>/g, " ")
+		}
+		const normalized = text.replace(/\s+/g, " ").trim()
+		return normalized.slice(0, Math.max(0, maxChars))
 	}
 
 	async function uploadVideoFile(file) {
@@ -164,8 +194,13 @@
 	}
 
 	const contentChunks = $derived(
-		chunkHtmlByNodes(contentHtml, CONTENT_CHUNK_SIZE),
+		minifiedChunkEntries.map((entry) => entry.htmlFragment),
 	)
+
+	const combinedCharCount = $derived(
+		profileName.length + profileDescription.length,
+	)
+	const descMaxLength = $derived(Math.max(0, 300 - profileName.length))
 
 	const uploadedProfileImage = $derived(
 		profileUploadedMedia.find((entry) => entry?.kind === "image") || null,
@@ -183,7 +218,7 @@
 	const primaryPostPayload = $derived({
 		uuid,
 		version: primaryVersion,
-		email: withLockPrefix(email),
+		email,
 		profilePic: uploadedProfileImage?.blob || null,
 		backgroundPic: uploadedBackgroundImage?.blob || null,
 		name: profileName,
@@ -191,7 +226,8 @@
 	})
 
 	const subsequentPostsPayload = $derived(
-		contentChunks.map((htmlFragment, index) => {
+		minifiedChunkEntries.map((entry, index) => {
+			const htmlFragment = entry.htmlFragment
 			const attachments =
 				uploadedGalleryImages.length > 0
 					? uploadedGalleryImages
@@ -206,11 +242,11 @@
 				uuid,
 				version: priorVersion,
 				index: index + 1,
-				total: contentChunks.length,
+				total: minifiedChunkEntries.length,
 				htmlFragment,
+				postBody: entry.postBody,
 				attachedImage: attachment?.blob || null,
 				publicContact,
-				publicContactEncrypted: isContactEncrypted(publicContact),
 				urls: parseLines(urlsText),
 				photoGallery: uploadedGalleryImages.map((entry) => entry.blob),
 				videoGallery: videoGalleryUploadedMedia.map(
@@ -220,24 +256,22 @@
 		}),
 	)
 
-	function encryptEmail() {
-		email = withLockPrefix(email)
+	function normalizeStoredMedia(value) {
+		if (!Array.isArray(value)) return []
+		return value.filter(
+			(entry) =>
+				entry &&
+				typeof entry === "object" &&
+				typeof entry.blob === "string",
+		)
 	}
 
-	function togglePublicContactEncryption() {
-		if (!publicContact.trim()) return
-		if (isContactEncrypted(publicContact)) {
-			publicContact = decryptContact(
-				publicContact.slice(CONTACT_LOCK_PREFIX.length),
-			)
-			return
-		}
-		publicContact = withLockPrefix(publicContact)
+	function cloneStoredProfile(value) {
+		return JSON.parse(JSON.stringify(value))
 	}
 
-	function saveProfile() {
-		if (typeof localStorage === "undefined") return
-		const payload = {
+	function buildStoredProfile() {
+		return {
 			uuid,
 			primaryVersion,
 			priorVersion,
@@ -247,9 +281,49 @@
 			publicContact,
 			urlsText,
 			contentHtml,
+			profileUploadedMedia,
+			backgroundUploadedMedia,
+			galleryImageUploadedMedia,
+			videoGalleryUploadedMedia,
 		}
-		localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(payload))
-		saveMessage = `Saved at ${new Date().toLocaleTimeString()}`
+	}
+
+	function applyStoredProfile(profile = {}) {
+		uuid = String(profile.uuid || "") || generateShortUuid()
+		primaryVersion = String(profile.primaryVersion || "") || makeVersion()
+		priorVersion =
+			String(profile.priorVersion || profile.subsequentVersion || "") ||
+			primaryVersion
+		email = String(profile.email || "")
+		profileName = String(profile.profileName || "")
+		profileDescription = String(profile.profileDescription || "")
+		publicContact = String(profile.publicContact || "")
+		urlsText = String(profile.urlsText || "")
+		contentHtml = String(profile.contentHtml || "")
+		profileUploadedMedia = normalizeStoredMedia(
+			profile.profileUploadedMedia,
+		)
+		backgroundUploadedMedia = normalizeStoredMedia(
+			profile.backgroundUploadedMedia,
+		)
+		galleryImageUploadedMedia = normalizeStoredMedia(
+			profile.galleryImageUploadedMedia,
+		)
+		videoGalleryUploadedMedia = normalizeStoredMedia(
+			profile.videoGalleryUploadedMedia,
+		)
+		galleryImageSelectedFiles = []
+	}
+
+	function saveProfile(showMessage = true) {
+		if (typeof localStorage === "undefined") return
+		localStorage.setItem(
+			PROFILE_STORAGE_KEY,
+			JSON.stringify(buildStoredProfile()),
+		)
+		if (showMessage) {
+			saveMessage = `Saved at ${new Date().toLocaleTimeString()}`
+		}
 	}
 
 	function bumpPrimaryVersion() {
@@ -260,11 +334,63 @@
 		priorVersion = primaryVersion
 	}
 
+	function clearProfileDraft() {
+		if (
+			typeof window !== "undefined" &&
+			!window.confirm("Clear all profile draft fields?")
+		) {
+			return
+		}
+
+		suppressAutosave = true
+		uuid = generateShortUuid()
+		primaryVersion = makeVersion()
+		priorVersion = primaryVersion
+		email = ""
+		profileName = ""
+		profileDescription = ""
+		publicContact = ""
+		urlsText = ""
+		contentHtml = ""
+		profileUploadedMedia = []
+		backgroundUploadedMedia = []
+		galleryImageSelectedFiles = []
+		galleryImageUploadedMedia = []
+		videoGalleryUploadedMedia = []
+		minifiedChunkEntries = []
+		uploadError = ""
+		videoUploadError = ""
+		saveMessage = ""
+		suppressAutosave = false
+		saveProfile(false)
+	}
+
+	function cancelProfileEdit() {
+		if (initialProfileSnapshot) {
+			suppressAutosave = true
+			applyStoredProfile(initialProfileSnapshot)
+			saveProfile(false)
+			suppressAutosave = false
+		}
+		saveMessage = ""
+		uploadError = ""
+		videoUploadError = ""
+		if (typeof window !== "undefined") {
+			if (window.history.length > 1) {
+				window.history.back()
+				return
+			}
+			window.location.href = "/"
+		}
+	}
+
 	onMount(() => {
 		if (typeof localStorage === "undefined") {
 			uuid = generateShortUuid()
 			primaryVersion = makeVersion()
 			priorVersion = primaryVersion
+			initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
+			storageReady = true
 			return
 		}
 
@@ -273,29 +399,56 @@
 			uuid = generateShortUuid()
 			primaryVersion = makeVersion()
 			priorVersion = primaryVersion
-			saveProfile()
+			initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
+			storageReady = true
+			saveProfile(false)
 			return
 		}
 
 		try {
 			const parsed = JSON.parse(raw)
-			uuid = String(parsed.uuid || "") || generateShortUuid()
-			primaryVersion =
-				String(parsed.primaryVersion || "") || makeVersion()
-			priorVersion =
-				String(parsed.priorVersion || parsed.subsequentVersion || "") ||
-				primaryVersion
-			email = String(parsed.email || "")
-			profileName = String(parsed.profileName || "")
-			profileDescription = String(parsed.profileDescription || "")
-			publicContact = String(parsed.publicContact || "")
-			urlsText = String(parsed.urlsText || "")
-			contentHtml = String(parsed.contentHtml || "")
+			applyStoredProfile(parsed)
+			initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
 		} catch {
 			uuid = generateShortUuid()
 			primaryVersion = makeVersion()
 			priorVersion = primaryVersion
+			initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
 		}
+
+		storageReady = true
+	})
+
+	$effect(() => {
+		if (!storageReady || suppressAutosave) return
+		saveProfile(false)
+	})
+
+	$effect(() => {
+		const source = String(contentHtml || "")
+		const currentBuild = ++chunkBuildVersion
+		;(async () => {
+			const minifiedHtml = await minifyHtmlForChunking(source)
+			if (currentBuild !== chunkBuildVersion) return
+			const fragments = chunkHtmlByNodes(minifiedHtml, CONTENT_CHUNK_SIZE)
+			minifiedChunkEntries = fragments.map((htmlFragment) => ({
+				htmlFragment,
+				postBody: extractChunkBodyText(
+					htmlFragment,
+					CHUNK_BODY_TEXT_SIZE,
+				),
+			}))
+		})().catch(() => {
+			if (currentBuild !== chunkBuildVersion) return
+			const fragments = chunkHtmlByNodes(source, CONTENT_CHUNK_SIZE)
+			minifiedChunkEntries = fragments.map((htmlFragment) => ({
+				htmlFragment,
+				postBody: extractChunkBodyText(
+					htmlFragment,
+					CHUNK_BODY_TEXT_SIZE,
+				),
+			}))
+		})
 	})
 </script>
 
@@ -306,7 +459,7 @@
 <main class="page">
 	<header class="topline">
 		<a class="back" href="/">&lt; Back home</a>
-		<h1>Profile Builder</h1>
+		<h1>Profile</h1>
 	</header>
 
 	<section class="panel ids">
@@ -346,7 +499,9 @@
 			<input
 				type="text"
 				bind:value={profileName}
-				placeholder="Your name, handle or title"
+				placeholder="Name"
+				maxlength={100}
+				style="font-size: 1.25rem; font-weight: 600;"
 			/>
 		</label>
 		<label>
@@ -354,106 +509,34 @@
 				rows="4"
 				bind:value={profileDescription}
 				placeholder="Short profile description"
+				maxlength={descMaxLength}
 			></textarea>
 		</label>
-		<label>
-			<span>Email (encrypted)</span>
-			<div class="inline">
-				<input
-					type="text"
-					bind:value={email}
-					placeholder="you@email.com"
-				/>
-				<button type="button" onclick={encryptEmail}>Encrypt</button>
-			</div>
-		</label>
-	</section>
-
-	<section class="panel">
-		<h2>Subsequent Bluesky Posts</h2>
-		<label>
-			<span>Public contact info (encrypted or not)</span>
-			<div class="inline">
-				<input
-					type="text"
-					bind:value={publicContact}
-					placeholder="@handle, phone, email, etc."
-				/>
-				<button type="button" onclick={togglePublicContactEncryption}>
-					{isContactEncrypted(publicContact) ? "Decrypt" : "Encrypt"}
-				</button>
-			</div>
-		</label>
-		<label>
-			<span>URLs (one per line)</span>
-			<textarea
-				rows="3"
-				bind:value={urlsText}
-				placeholder="https://example.com"
-			></textarea>
-		</label>
-
-		<div class="upload-grid">
-			<div>
-				<p class="label">Image gallery (uploaded + resized)</p>
-				<MediaUploadManager
-					bind:selectedFiles={galleryImageSelectedFiles}
-					bind:uploadedMedia={galleryImageUploadedMedia}
-					bind:errorMessage={uploadError}
-					disabled={uploadingVideos}
-				/>
-			</div>
-			<div>
-				<p class="label">Video gallery (uploaded)</p>
-				<input
-					type="file"
-					accept="video/*"
-					multiple
-					onchange={handleVideoFiles}
-				/>
-				{#if uploadingVideos}
-					<p class="hint">Uploading videos...</p>
-				{/if}
-				{#if videoUploadError}
-					<p class="warning">{videoUploadError}</p>
-				{/if}
-				{#if videoGalleryUploadedMedia.length > 0}
-					<ul class="uploaded-list">
-						{#each videoGalleryUploadedMedia as video, index}
-							<li>
-								<span
-									>{video.sourceName ||
-										`video-${index + 1}`}</span
-								>
-								<button
-									type="button"
-									onclick={() => removeVideoAt(index)}
-									>Remove</button
-								>
-							</li>
-						{/each}
-					</ul>
-				{/if}
-			</div>
-		</div>
-
+		<p class="char-count">{300 - combinedCharCount}/{descMaxLength}</p>
 		<div class="editor-wrap">
-			<p class="label">Content (chunked HTML)</p>
 			<Editor
 				bind:value={contentHtml}
 				maxChar={100000}
 				placeholder="Write formatted profile content..."
 			/>
-			<p class="hint">
-				Chunk size: {CONTENT_CHUNK_SIZE} HTML chars • Total chunks: {contentChunks.length}
-			</p>
 		</div>
+		<label>
+			<span>Private</span>
+			<input
+				type="email"
+				bind:value={email}
+				placeholder="you@email.com"
+				required
+			/>
+		</label>
 	</section>
 
 	<section class="panel actions">
+		<button type="button" onclick={clearProfileDraft}>Clear</button>
+		<button type="button" onclick={cancelProfileEdit}>Cancel</button>
 		<button type="button" class="primary" onclick={saveProfile}
-			>Save Profile Draft</button
-		>
+			>Save
+		</button>
 		{#if saveMessage}
 			<p class="success">{saveMessage}</p>
 		{/if}
@@ -556,16 +639,11 @@
 		border-color: #305741;
 		color: #fff;
 	}
-	.inline {
-		display: grid;
-		grid-template-columns: 1fr auto;
+	.actions {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
 		gap: 0.45rem;
-	}
-	.upload-grid {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 0.8rem;
-		margin-top: 0.65rem;
 	}
 	.profile-image-wrap {
 		margin-top: 0.65rem;
@@ -573,9 +651,10 @@
 	.editor-wrap {
 		margin-top: 0.55rem;
 	}
-	.hint {
-		margin: 0.35rem 0 0;
-		font-size: 0.82rem;
+	.char-count {
+		margin: 0;
+		text-align: right;
+		font-size: 0.78rem;
 		color: #56695f;
 	}
 	.warning {
@@ -587,20 +666,6 @@
 		margin: 0.4rem 0 0;
 		color: #24633f;
 		font-size: 0.88rem;
-	}
-	.uploaded-list {
-		list-style: none;
-		padding: 0;
-		margin: 0.45rem 0 0;
-		display: grid;
-		gap: 0.4rem;
-	}
-	.uploaded-list li {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		gap: 0.5rem;
-		font-size: 0.84rem;
 	}
 	.payloads pre {
 		margin: 0.45rem 0 0.8rem;
@@ -614,8 +679,7 @@
 	}
 
 	@media (max-width: 900px) {
-		.ids,
-		.upload-grid {
+		.ids {
 			grid-template-columns: 1fr;
 		}
 	}
