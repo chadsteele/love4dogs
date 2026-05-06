@@ -279,6 +279,7 @@
 		approximates = [],
 		onSettled = () => {},
 		requestId = mapLoadRequestId,
+		onPostsFound = () => {},
 	) {
 		const results = []
 		const workers = []
@@ -386,6 +387,7 @@
 						status: "fulfilled",
 						value: {approximate, posts, throttled: false},
 					}
+					if (posts.length > 0) onPostsFound(approximate, posts)
 				} catch (error) {
 					const message = String(error?.message || "").toLowerCase()
 					const isConnectionFailure =
@@ -483,6 +485,14 @@
 				throttleBackoffActive: isThrottleBackoffActive(),
 			})
 
+			// Seed the map immediately with anything already cached
+			const seenUris = new Set()
+			const merged = [...cachedPosts]
+			for (const post of merged) {
+				if (post?.uri) seenUris.add(post.uri)
+			}
+			if (merged.length > 0) mapPosts = [...merged]
+
 			const responses = await fetchApproximatesBatched(
 				fetchApproximates,
 				() => {
@@ -490,15 +500,24 @@
 					hashLoadDone += 1
 				},
 				requestId,
+				(approximate, posts) => {
+					// Drop pins immediately as each hash cell resolves
+					if (requestId !== mapLoadRequestId) return
+					setApproxPostsInCache(approximate, posts)
+					const incoming = posts.filter((post) => {
+						if (!post?.uri || seenUris.has(post.uri)) return false
+						seenUris.add(post.uri)
+						return true
+					})
+					if (incoming.length > 0) {
+						merged.push(...incoming)
+						mapPosts = [...merged]
+					}
+				},
 			)
 
 			if (requestId !== mapLoadRequestId) return
 
-			const merged = [...cachedPosts]
-			const seenUris = new Set()
-			for (const post of merged) {
-				if (post?.uri) seenUris.add(post.uri)
-			}
 			for (let i = 0; i < responses.length; i += 1) {
 				const result = responses[i]
 				if (result.status !== "fulfilled") {
@@ -509,18 +528,6 @@
 							Date.now() + APPROX_ERROR_TTL_MS,
 						)
 					}
-					continue
-				}
-				if (!result.value.throttled) {
-					setApproxPostsInCache(
-						result.value.approximate,
-						result.value.posts,
-					)
-				}
-				for (const post of result.value.posts) {
-					if (!post?.uri || seenUris.has(post.uri)) continue
-					seenUris.add(post.uri)
-					merged.push(post)
 				}
 			}
 			const throttledResponses = responses.filter(
@@ -533,7 +540,9 @@
 					requested: fetchApproximates.length,
 				})
 			}
-			mapPosts = merged
+			// Final assignment ensures any posts from fulfilled results that
+			// arrived while the request was still in flight are included
+			mapPosts = [...merged]
 
 			const rejected = responses.find(
 				(result) => result.status === "rejected",

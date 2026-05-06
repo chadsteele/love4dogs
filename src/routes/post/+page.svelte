@@ -28,6 +28,7 @@
 	import MediaUploadManager from "$lib/MediaUploadManager.svelte"
 	import LocationPicker from "$lib/LocationPicker.svelte"
 	import PostCard from "$lib/PostCard.svelte"
+	import Editor from "$lib/Editor.svelte"
 
 	const LOCAL_TAG_KEY = "love4dogs.tag-counts"
 	const LOCAL_OLD_POSTS_KEY = "love4dogs.my-post-uris"
@@ -35,9 +36,11 @@
 	const MAX_OLD_POSTS = 100
 	const MAX_CHARS = 300
 	const MAX_ATTACHMENTS = 4
+	const altMaxChar = 300
 	const ps = "" //"❤️4🐶s"
 
 	let draft = $state("")
+	let imageAltHtml = $state("")
 	let title = $state("")
 	let addressText = $state("")
 	let locationConfirmed = $state(false)
@@ -60,6 +63,10 @@
 	let editingPostUri = $state("")
 	let loadingEditPost = $state(false)
 	let tagsDrawerOpen = $state(true)
+	let isLocalhost = $state(false)
+	const imageCount = $derived(
+		selectedFiles.filter((file) => file.type.startsWith("image/")).length,
+	)
 
 	const LOCAL_CONTACT_KEY = "love4dogs.contact"
 	function loadContactState() {
@@ -384,6 +391,23 @@
 		return text
 	}
 
+	function splitHtmlIntoImageAltChunks(
+		html = "",
+		imageTotal = 0,
+		perImageLimit = altMaxChar,
+	) {
+		const source = String(html || "")
+		if (!source || imageTotal <= 0) return []
+		const chunks = []
+		for (let i = 0; i < imageTotal; i += 1) {
+			const start = i * perImageLimit
+			if (start >= source.length) break
+			const chunk = source.slice(start, start + perImageLimit)
+			if (chunk) chunks.push(chunk)
+		}
+		return chunks
+	}
+
 	async function submitPost() {
 		postError = ""
 		postSuccess = ""
@@ -451,6 +475,17 @@
 			return
 		}
 
+		const trimmedImageAltHtml = String(imageAltHtml || "")
+		const maxImageAltChars = imageCount * altMaxChar
+		if (
+			imageCount > 0 &&
+			maxImageAltChars > 0 &&
+			trimmedImageAltHtml.length > maxImageAltChars
+		) {
+			postError = `Image description HTML exceeds ${maxImageAltChars} characters.`
+			return
+		}
+
 		if (
 			selectedFiles.length > 0 &&
 			uploadedMedia.length < selectedFiles.length
@@ -465,7 +500,20 @@
 			const formData = new FormData()
 			formData.append("text", finalText)
 			if (uploadedMedia.length > 0) {
-				formData.append("uploadedMedia", JSON.stringify(uploadedMedia))
+				const htmlChunks = splitHtmlIntoImageAltChunks(
+					trimmedImageAltHtml,
+					imageCount,
+					altMaxChar,
+				)
+				let nextImageIndex = 0
+				const payloadMedia = uploadedMedia.map((entry) => {
+					if (entry?.kind !== "image") return entry
+					const htmlAlt = htmlChunks[nextImageIndex] || ""
+					nextImageIndex += 1
+					if (!htmlAlt) return entry
+					return {...entry, alt: htmlAlt}
+				})
+				formData.append("uploadedMedia", JSON.stringify(payloadMedia))
 			}
 
 			const res = await fetch("/api/post", {
@@ -534,6 +582,7 @@
 
 			incrementLocalTags(extractHashtags(finalText))
 			draft = ""
+			imageAltHtml = ""
 			addressText = ""
 			locationConfirmed = false
 			confirmedAddress = ""
@@ -552,6 +601,12 @@
 		}
 	}
 
+	$effect(() => {
+		if (imageCount > 0) return
+		if (!imageAltHtml) return
+		imageAltHtml = ""
+	})
+
 	function remainingChars() {
 		return MAX_CHARS - [...composeFinalText()].length
 	}
@@ -564,7 +619,8 @@
 	}
 
 	async function beginEditFromUri(uri = "") {
-		if (!uri || !oldPostUris.includes(uri)) return
+		if (!uri) return
+		if (!isLocalhost && !oldPostUris.includes(uri)) return
 		loadingEditPost = true
 		postError = ""
 		try {
@@ -609,11 +665,16 @@
 	onMount(() => {
 		contactinfo = loadContactState()
 		hasLoadedContact = true
+		if (typeof window !== "undefined") {
+			const host = window.location.hostname
+			isLocalhost =
+				host === "localhost" || host === "127.0.0.1" || host === "::1"
+		}
 
 		oldPostUris = loadOldPostUris()
 		hydrateOldPostDetails(oldPostUris)
 		const editUri = currentEditUriFromQuery()
-		if (editUri && oldPostUris.includes(editUri)) {
+		if (editUri && (isLocalhost || oldPostUris.includes(editUri))) {
 			beginEditFromUri(editUri)
 		}
 
@@ -1178,6 +1239,14 @@
 	}
 	.counter.danger {
 		color: #8e2f21;
+	}
+	.image-alt-editor-wrap {
+		margin-top: 0.7rem;
+	}
+	.image-alt-editor-label {
+		margin: 0 0 0.35rem;
+		font-size: 0.85rem;
+		color: #506157;
 	}
 	.tags-drawer {
 		margin-top: 0.6rem;
