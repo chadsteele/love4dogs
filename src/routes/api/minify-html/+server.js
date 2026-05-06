@@ -13,9 +13,14 @@ export async function POST({request}) {
 	try {
 		const minifiedHtml = await minify(source, {
 			collapseWhitespace: true,
+			collapseInlineTagWhitespace: true,
 			removeComments: true,
 			removeRedundantAttributes: true,
 			removeEmptyAttributes: true,
+			removeAttributeQuotes: true,
+			removeOptionalTags: true,
+			sortAttributes: true,
+			sortClassName: true,
 			minifyCSS: true,
 			minifyJS: true,
 			continueOnParseError: true,

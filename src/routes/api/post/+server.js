@@ -1,8 +1,11 @@
 import { env } from '$env/dynamic/private';
+import { createHash } from 'node:crypto';
 
 const BSKY_XRPC = 'https://bsky.social/xrpc';
 const MAX_IMAGE_SIZE_BYTES = 2_000_000; // Bluesky's hard limit is 2,000,000 bytes (not 2 MiB)
 const MAX_VIDEO_SIZE_BYTES = 100 * 1024 * 1024;
+const MEDIA_CACHE_PREFIX = '🎞️';
+const LEGACY_MEDIA_CACHE_PREFIX = 'L4D_MEDIA_CACHE:';
 
 let cachedSession = null;
 
@@ -156,6 +159,83 @@ function parsePostAtUri(uri) {
 	};
 }
 
+function getBlobCid(blobRef) {
+	if (!blobRef || typeof blobRef !== 'object') return '';
+	return String(blobRef.ref?.$link || blobRef.cid || '').trim();
+}
+
+function buildImageCdnUrl(did, blobRef) {
+	const cid = getBlobCid(blobRef);
+	if (!did || !cid) return '';
+	return `https://cdn.bsky.app/img/feed_fullsize/plain/${did}/${cid}@jpeg`;
+}
+
+function isHttpUrl(value) {
+	return /^https?:\/\//i.test(String(value || '').trim());
+}
+
+function buildCachePostPrefix(name, description) {
+	const parts = [name, description].filter(Boolean)
+	if (!parts.length) return ''
+	const combined = parts.join(' — ')
+	return combined.length > 200 ? combined.slice(0, 200) : combined
+}
+
+function buildMediaCacheToken(sourceUrl) {
+	return createHash('sha256').update(String(sourceUrl || '').trim()).digest('base64url').slice(0, 12);
+}
+
+function buildMediaCacheMarker(sourceUrl) {
+	return `${MEDIA_CACHE_PREFIX} ${buildMediaCacheToken(sourceUrl)}`;
+}
+
+async function findCachedImageBlobBySourceUrl(session, sourceUrl) {
+	const marker = buildMediaCacheMarker(sourceUrl);
+	const legacyMarker = `${LEGACY_MEDIA_CACHE_PREFIX}${sourceUrl}`;
+	let cursor = '';
+	for (let page = 0; page < 5; page += 1) {
+		const qs = new URLSearchParams({
+			repo: session.did,
+			collection: 'app.bsky.feed.post',
+			limit: '100',
+			reverse: 'true'
+		});
+		if (cursor) qs.set('cursor', cursor);
+
+		const res = await fetch(`${BSKY_XRPC}/com.atproto.repo.listRecords?${qs.toString()}`, {
+			headers: {
+				authorization: `Bearer ${session.accessJwt}`,
+				accept: 'application/json'
+			}
+		});
+
+		if (!res.ok) {
+			if (res.status === 401 || res.status === 403) cachedSession = null;
+			break;
+		}
+
+		const json = await res.json().catch(() => ({}));
+		const records = Array.isArray(json?.records) ? json.records : [];
+		for (const record of records) {
+			const text = String(record?.value?.text || '');
+			if (text !== marker && text !== legacyMarker) continue;
+			const embed = record?.value?.embed;
+			const blob = embed?.images?.[0]?.image || null;
+			if (!blob || typeof blob !== 'object') continue;
+			return {
+				blob,
+				uri: String(record?.uri || ''),
+				cid: String(record?.cid || '')
+			};
+		}
+
+		cursor = String(json?.cursor || '');
+		if (!cursor) break;
+	}
+
+	return null;
+}
+
 function mapSinglePostFromThread(threadPost) {
 	const post = threadPost?.post;
 	if (!post) return null;
@@ -293,12 +373,158 @@ export async function POST({ request }) {
 			const session = await getSession();
 			const kindLabel = isImage ? 'Image' : 'Video';
 			const blob = await uploadBlob(session.accessJwt, file, kindLabel);
+			const cid = String(blob?.ref?.$link || blob?.cid || '');
+			const imageUrl =
+				isImage && cid && session?.did
+					? `https://cdn.bsky.app/img/feed_fullsize/plain/${session.did}/${cid}@jpeg`
+					: '';
 			return new Response(
 				JSON.stringify({
 					ok: true,
 					kind: isImage ? 'image' : 'video',
 					alt: file.name || (isImage ? 'Photo' : 'Video'),
-					blob
+					blob,
+					did: session?.did || '',
+					url: imageUrl
+				}),
+				{
+					headers: { 'content-type': 'application/json' }
+				}
+			);
+		}
+
+		if (mode === 'cache-media-url') {
+			const sourceUrl = String(formData.get('sourceUrl') || '').trim();
+			const rawName = String(formData.get('profileName') || '').trim();
+			const rawDesc = String(formData.get('profileDescription') || '').trim();
+			const marker = buildMediaCacheMarker(sourceUrl);
+			const prefix = buildCachePostPrefix(rawName, rawDesc);
+			const cacheText = prefix ? `${prefix}\n${marker}` : marker;
+			const file = formData.get('file');
+			if (!isHttpUrl(sourceUrl)) {
+				return new Response(JSON.stringify({ error: 'A valid source URL is required.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+
+			const session = await getSession();
+			const cached = await findCachedImageBlobBySourceUrl(session, sourceUrl);
+			if (cached?.blob) {
+				return new Response(
+					JSON.stringify({
+						ok: true,
+						cached: true,
+						cacheToken: buildMediaCacheToken(sourceUrl),
+						kind: 'image',
+						alt: file instanceof File ? file.name || 'Photo' : 'Photo',
+						blob: cached.blob,
+						did: session.did,
+						url: buildImageCdnUrl(session.did, cached.blob),
+						cacheUri: cached.uri,
+						cacheCid: cached.cid
+					}),
+					{
+						headers: { 'content-type': 'application/json' }
+					}
+				);
+			}
+
+			if (!(file instanceof File) || file.size <= 0) {
+				return new Response(JSON.stringify({ error: 'Media file is required.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+
+			const isImage = String(file.type || '').startsWith('image/');
+			if (!isImage) {
+				return new Response(JSON.stringify({ error: 'Only images are supported for URL caching.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+
+			if (file.size > MAX_IMAGE_SIZE_BYTES) {
+				return new Response(JSON.stringify({ error: 'Each image must be 2 MB or smaller.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+
+			const blob = await uploadBlob(session.accessJwt, file, 'Image');
+			const record = {
+				$type: 'app.bsky.feed.post',
+				text: cacheText.slice(0, 300),
+				createdAt: new Date().toISOString(),
+				embed: {
+					$type: 'app.bsky.embed.images',
+					images: [
+						{
+							alt: sourceUrl,
+							image: blob
+						}
+					]
+				}
+			};
+
+			let cacheSession = session;
+			let createRes = await fetch(`${BSKY_XRPC}/com.atproto.repo.createRecord`, {
+				method: 'POST',
+				headers: {
+					authorization: `Bearer ${cacheSession.accessJwt}`,
+					'content-type': 'application/json'
+				},
+				body: JSON.stringify({
+					repo: cacheSession.did,
+					collection: 'app.bsky.feed.post',
+					record
+				})
+			});
+
+			if (!createRes.ok && (createRes.status === 401 || createRes.status === 403)) {
+				cachedSession = null;
+				cacheSession = await createSession();
+				createRes = await fetch(`${BSKY_XRPC}/com.atproto.repo.createRecord`, {
+					method: 'POST',
+					headers: {
+						authorization: `Bearer ${cacheSession.accessJwt}`,
+						'content-type': 'application/json'
+					},
+					body: JSON.stringify({
+						repo: cacheSession.did,
+						collection: 'app.bsky.feed.post',
+						record
+					})
+				});
+			}
+
+			if (!createRes.ok) {
+				const errBody = await createRes.json().catch(() => ({}));
+				return new Response(
+					JSON.stringify({
+						error: errBody.message || errBody.error || 'Failed to create media cache post.'
+					}),
+					{
+						status: 502,
+						headers: { 'content-type': 'application/json' }
+					}
+				);
+			}
+
+			const created = await createRes.json().catch(() => ({}));
+			return new Response(
+				JSON.stringify({
+					ok: true,
+					cached: false,
+					cacheToken: buildMediaCacheToken(sourceUrl),
+					kind: 'image',
+					alt: file.name || 'Photo',
+					blob,
+					did: cacheSession.did,
+					url: buildImageCdnUrl(cacheSession.did, blob),
+					cacheUri: created?.uri || '',
+					cacheCid: created?.cid || ''
 				}),
 				{
 					headers: { 'content-type': 'application/json' }
@@ -491,6 +717,25 @@ export async function POST({ request }) {
 		} else {
 			const videoEmbed = buildVideoEmbed(uploadedVideo);
 			if (videoEmbed) record.embed = videoEmbed;
+		}
+
+		const replyRaw = String(formData.get('reply') || '').trim();
+		if (replyRaw) {
+			try {
+				const replyRef = JSON.parse(replyRaw);
+				const rootUri = replyRef?.root?.uri;
+				const rootCid = replyRef?.root?.cid;
+				const parentUri = replyRef?.parent?.uri;
+				const parentCid = replyRef?.parent?.cid;
+				if (rootUri && rootCid && parentUri && parentCid) {
+					record.reply = {
+						root: { uri: rootUri, cid: rootCid },
+						parent: { uri: parentUri, cid: parentCid }
+					};
+				}
+			} catch {
+				// invalid reply JSON — post without reply
+			}
 		}
 
 		let createRecordSession = session;

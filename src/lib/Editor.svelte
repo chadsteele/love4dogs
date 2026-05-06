@@ -35,6 +35,9 @@
 		editorEl = $bindable(null),
 		uploadedMedia = $bindable([]),
 		isDragging = false,
+		uploadProgressActive = false,
+		uploadProgressPercent = 0,
+		uploadProgressLabel = "",
 		maxChar = Number.POSITIVE_INFINITY,
 		placeholder = "Share your ❤️ for dogs...",
 		actions = [
@@ -90,6 +93,11 @@
 			lastValidHtml = html
 			return html
 		}
+		console.warn("[Editor] max char limit exceeded (string)", {
+			incomingLength: html.length,
+			limit,
+			keptLength: String(lastValidHtml || "").length,
+		})
 		htmlLength = lastValidHtml.length
 		return lastValidHtml
 	}
@@ -107,6 +115,11 @@
 			lastValidHtml = html
 			return false
 		}
+		console.warn("[Editor] max char limit exceeded (content)", {
+			incomingLength: html.length,
+			limit,
+			keptLength: String(lastValidHtml || "").length,
+		})
 		if (typeof lastValidHtml === "string") {
 			contentEl.innerHTML = lastValidHtml
 			htmlLength = lastValidHtml.length
@@ -279,7 +292,7 @@
 			const alt = file.name || "Image"
 			insertHtmlAtCaret(
 				contentEl,
-				`<img src="${thumb}" alt="${alt.replace(/"/g, "&quot;")}" style="max-width:100%;height:auto;" />`,
+				`<img src="${thumb}" alt="${alt.replace(/"/g, "&quot;")}" />`,
 			)
 			const normalized = await normalizeImageForUpload(file)
 			const uploaded = await uploadFile(normalized)
@@ -302,10 +315,7 @@
 		const contentEl = pellEditor.content
 		const objUrl = URL.createObjectURL(file)
 		const name = file.name || "Video"
-		insertHtmlAtCaret(
-			contentEl,
-			`<video src="${objUrl}" controls style="max-width:100%;border-radius:8px;"></video>`,
-		)
+		insertHtmlAtCaret(contentEl, `<video src="${objUrl}" controls></video>`)
 		try {
 			const uploaded = await uploadFile(file)
 			uploadedMedia = [
@@ -354,6 +364,9 @@
 			"ol",
 			"li",
 			"a",
+			"img",
+			"video",
+			"source",
 			"span",
 			"div",
 			"blockquote",
@@ -362,15 +375,136 @@
 		])
 		// Only allow href on <a>, and only http/https/mailto hrefs
 		const SAFE_HREF = /^(https?:\/\/|mailto:)/i
+		const SAFE_SRC = /^(https?:\/\/|blob:|data:)/i
+		const LIKELY_IMAGE = /\.(avif|gif|jpe?g|png|svg|webp)(\?|#|$)/i
+		const LIKELY_VIDEO = /\.(m3u8|mov|mp4|m4v|webm)(\?|#|$)/i
 
 		const template = document.createElement("div")
 		template.innerHTML = html
+
+		function extractFirstUrlFromSrcset(value = "") {
+			for (const item of String(value || "").split(",")) {
+				const url = item.trim().split(/\s+/)[0] || ""
+				if (SAFE_SRC.test(url)) return url
+			}
+			return ""
+		}
+
+		function extractBackgroundImageUrl(styleValue = "") {
+			const match = String(styleValue || "").match(
+				/background-image\s*:\s*url\((['"]?)(.*?)\1\)/i,
+			)
+			const candidate = String(match?.[2] || "").trim()
+			return SAFE_SRC.test(candidate) ? candidate : ""
+		}
+
+		function resolveNodeMediaSrc(node) {
+			const direct = String(node.getAttribute("src") || "").trim()
+			if (SAFE_SRC.test(direct)) return direct
+
+			for (const attrName of [
+				"data-src",
+				"data-lazy-src",
+				"data-original",
+				"data-url",
+				"data-src-url",
+				"poster",
+			]) {
+				const candidate = String(
+					node.getAttribute(attrName) || "",
+				).trim()
+				if (SAFE_SRC.test(candidate)) return candidate
+			}
+
+			const srcsetBased = extractFirstUrlFromSrcset(
+				node.getAttribute("srcset") || node.getAttribute("data-srcset"),
+			)
+			if (srcsetBased) return srcsetBased
+
+			const backgroundBased = extractBackgroundImageUrl(
+				node.getAttribute("style"),
+			)
+			if (backgroundBased) return backgroundBased
+
+			return ""
+		}
+
+		function createMediaElement(url, kind = "image", title = "") {
+			if (!url) return null
+			if (kind === "video") {
+				const video = document.createElement("video")
+				video.setAttribute("src", url)
+				video.setAttribute("controls", "")
+				if (title) video.setAttribute("title", title)
+				return video
+			}
+			const image = document.createElement("img")
+			image.setAttribute("src", url)
+			if (title) image.setAttribute("alt", title)
+			return image
+		}
+
+		function hydrateMediaNodes(root) {
+			for (const node of root.querySelectorAll("*")) {
+				const tag = node.tagName.toLowerCase()
+				if (tag === "img" || tag === "video" || tag === "source") {
+					const resolved = resolveNodeMediaSrc(node)
+					if (resolved) node.setAttribute("src", resolved)
+					continue
+				}
+
+				if (tag === "a") {
+					const href = String(node.getAttribute("href") || "").trim()
+					if (!SAFE_SRC.test(href)) continue
+					if (node.querySelector("img,video,source")) continue
+					const title = String(
+						node.getAttribute("title") || node.textContent || "",
+					).trim()
+					if (LIKELY_IMAGE.test(href)) {
+						node.appendChild(
+							createMediaElement(href, "image", title),
+						)
+					} else if (LIKELY_VIDEO.test(href)) {
+						node.appendChild(
+							createMediaElement(href, "video", title),
+						)
+					}
+					continue
+				}
+
+				const backgroundUrl = extractBackgroundImageUrl(
+					node.getAttribute("style"),
+				)
+				if (!backgroundUrl) continue
+				if (node.querySelector("img,video,source")) continue
+				const title = String(node.getAttribute("title") || "").trim()
+				node.prepend(createMediaElement(backgroundUrl, "image", title))
+			}
+		}
+
+		hydrateMediaNodes(template)
 
 		function clean(node) {
 			if (node.nodeType === Node.TEXT_NODE) return true
 			if (node.nodeType !== Node.ELEMENT_NODE) return false
 			const tag = node.tagName.toLowerCase()
 			if (!ALLOWED_TAGS.has(tag)) {
+				const mediaSrc = resolveNodeMediaSrc(node)
+				if (mediaSrc) {
+					const mediaKind = LIKELY_VIDEO.test(mediaSrc)
+						? "video"
+						: "image"
+					const title = String(
+						node.getAttribute("title") || "",
+					).trim()
+					const mediaEl = createMediaElement(
+						mediaSrc,
+						mediaKind,
+						title,
+					)
+					node.parentNode?.replaceChild(mediaEl, node)
+					return true
+				}
 				// replace with its children (unwrap)
 				const parent = node.parentNode
 				while (node.firstChild)
@@ -378,8 +512,54 @@
 				parent.removeChild(node)
 				return false
 			}
-			// Strip all attributes except safe href on <a>
+			// Strip all attributes except a safe subset on anchors and media tags.
 			for (const attr of [...node.attributes]) {
+				if (
+					tag === "img" &&
+					(attr.name === "src" ||
+						attr.name === "srcset" ||
+						attr.name === "loading" ||
+						attr.name === "decoding" ||
+						attr.name === "alt" ||
+						attr.name === "title")
+				) {
+					if (
+						(attr.name === "src" || attr.name === "srcset") &&
+						!SAFE_SRC.test(attr.value)
+					) {
+						node.removeAttribute(attr.name)
+					}
+					continue
+				}
+				if (
+					tag === "video" &&
+					(attr.name === "src" ||
+						attr.name === "srcset" ||
+						attr.name === "poster" ||
+						attr.name === "controls" ||
+						attr.name === "muted" ||
+						attr.name === "loop" ||
+						attr.name === "playsinline")
+				) {
+					if (
+						(attr.name === "src" ||
+							attr.name === "srcset" ||
+							attr.name === "poster") &&
+						!SAFE_SRC.test(attr.value)
+					) {
+						node.removeAttribute(attr.name)
+					}
+					continue
+				}
+				if (
+					tag === "source" &&
+					(attr.name === "src" || attr.name === "type")
+				) {
+					if (attr.name === "src" && !SAFE_SRC.test(attr.value)) {
+						node.removeAttribute(attr.name)
+					}
+					continue
+				}
 				if (
 					tag === "a" &&
 					attr.name === "href" &&
@@ -390,6 +570,21 @@
 			}
 			// Recurse children (iterate copy since we may mutate)
 			for (const child of [...node.childNodes]) clean(child)
+			if (
+				tag === "img" &&
+				!String(node.getAttribute("src") || "").trim()
+			) {
+				node.parentNode?.removeChild(node)
+				return false
+			}
+			if (
+				tag === "video" &&
+				!String(node.getAttribute("src") || "").trim() &&
+				!node.querySelector("source[src]")
+			) {
+				node.parentNode?.removeChild(node)
+				return false
+			}
 			return true
 		}
 
@@ -405,6 +600,102 @@
 			.replace(/[\u00A0\u202F\u2007]/g, " ")
 			.replace(/[\u200B\u200C\u200D\u2060\uFEFF]/g, "")
 			.replace(/\r\n?/g, "\n")
+	}
+
+	function normalizeThirdPartyImageSrc(url = "") {
+		const source = String(url || "").trim()
+		if (!source) return source
+		let parsed
+		try {
+			parsed = new URL(source)
+		} catch {
+			return source
+		}
+		if (/static\.wixstatic\.com$/i.test(parsed.hostname)) {
+			parsed.pathname = parsed.pathname
+				.replace(/,enc_avif(?=,|\/|$)/gi, "")
+				.replace(/,,+/g, ",")
+		}
+		return parsed.toString()
+	}
+
+	function escapeHtmlText(value = "") {
+		return String(value)
+			.replace(/&/g, "&amp;")
+			.replace(/</g, "&lt;")
+			.replace(/>/g, "&gt;")
+	}
+
+	function escapeHtmlAttr(value = "") {
+		return escapeHtmlText(value).replace(/"/g, "&quot;")
+	}
+
+	function buildMediaFirstHtmlFromPaste(html = "") {
+		const source = String(html || "")
+		if (!source.trim()) return ""
+		const root = document.createElement("div")
+		root.innerHTML = source
+
+		const heading = String(
+			root.querySelector("h1, h2, [data-hook='product-item-name']")
+				?.textContent || "",
+		)
+			.replace(/\s+/g, " ")
+			.trim()
+
+		const seen = new Set()
+		const items = []
+		for (const tile of root.querySelectorAll(
+			"li[data-hook='product-list-grid-item'], li, [data-hook='product-item-root']",
+		)) {
+			const img = tile.querySelector("img[src]")
+			if (!img) continue
+			const src = normalizeThirdPartyImageSrc(
+				img.getAttribute("src") || "",
+			)
+			if (!/^https?:\/\//i.test(src) || seen.has(src)) continue
+			seen.add(src)
+
+			const label = String(
+				tile.querySelector(
+					"[data-hook='product-item-name'], h1, h2, h3",
+				)?.textContent ||
+					img.getAttribute("alt") ||
+					"",
+			)
+				.replace(/\s+/g, " ")
+				.trim()
+			items.push({src, label})
+		}
+
+		if (!items.length) return ""
+
+		let output = ""
+		if (heading) {
+			output += `<p><strong>${escapeHtmlText(heading)}</strong></p>`
+		}
+		for (const item of items) {
+			output += `<figure><img src="${escapeHtmlAttr(item.src)}" alt="${escapeHtmlAttr(item.label || "Image")}" />`
+			if (item.label) {
+				output += `<figcaption>${escapeHtmlText(item.label)}</figcaption>`
+			}
+			output += `</figure>`
+		}
+		return output
+	}
+
+	function hasExternalMediaUrlsInHtml(html = "") {
+		const source = String(html || "")
+		if (!source.trim()) return false
+		const root = document.createElement("div")
+		root.innerHTML = source
+		for (const node of root.querySelectorAll(
+			"img[src],video[src],source[src]",
+		)) {
+			const src = String(node.getAttribute("src") || "").trim()
+			if (/^https?:\/\//i.test(src)) return true
+		}
+		return false
 	}
 
 	function insertPlainTextAtCaret(contentEl, text) {
@@ -439,6 +730,27 @@
 		}
 
 		dispatchEditorInput(contentEl)
+	}
+
+	function logMediaSnapshot(contentEl, reason = "") {
+		if (!contentEl) return
+		const images = [...contentEl.querySelectorAll("img")]
+		const videos = [...contentEl.querySelectorAll("video")]
+		const preview = images.slice(0, 5).map((img) => ({
+			src: img.getAttribute("src") || "",
+			currentSrc: img.currentSrc || "",
+			complete: Boolean(img.complete),
+			naturalWidth: Number(img.naturalWidth || 0),
+			naturalHeight: Number(img.naturalHeight || 0),
+			clientWidth: Number(img.clientWidth || 0),
+			clientHeight: Number(img.clientHeight || 0),
+		}))
+		console.log("[Editor] media snapshot", {
+			reason,
+			imageCount: images.length,
+			videoCount: videos.length,
+			preview,
+		})
 	}
 
 	function prettyPrintHtml(html = "") {
@@ -877,27 +1189,138 @@
 		}
 		function onContentPaste(e) {
 			e.preventDefault()
-			const html = e.clipboardData?.getData("text/html")
+			const clipboardFiles = [...(e.clipboardData?.files || [])].filter(
+				(file) =>
+					file.type.startsWith("image/") ||
+					file.type.startsWith("video/"),
+			)
+			const html = e.clipboardData?.getData("text/html") || ""
+			const pastedText = e.clipboardData?.getData("text/plain") ?? ""
+			console.log("[Editor] paste detected", {
+				fileCount: clipboardFiles.length,
+				htmlLength: html.length,
+				textLength: pastedText.length,
+			})
+
+			let insertedTextualContent = false
+			let htmlHadExternalMediaUrls = false
+
 			if (html) {
-				const clean = sanitizePastedHtml(html)
+				const mediaFirst = buildMediaFirstHtmlFromPaste(html)
+				const clean = mediaFirst || sanitizePastedHtml(html)
 				if (clean.trim()) {
+					htmlHadExternalMediaUrls = hasExternalMediaUrlsInHtml(clean)
 					insertHtmlAtCaret(content, clean)
-					return
+					requestAnimationFrame(() => {
+						requestAnimationFrame(() => {
+							logMediaSnapshot(content, "after-paste-html")
+						})
+					})
+					insertedTextualContent = true
+					console.log("[Editor] pasted sanitized HTML", {
+						usedMediaFirst: Boolean(mediaFirst),
+						cleanLength: clean.length,
+						htmlHadExternalMediaUrls,
+					})
 				}
 			}
-			const pastedText = e.clipboardData?.getData("text/plain") ?? ""
-			insertPlainTextAtCaret(content, pastedText)
+
+			if (!insertedTextualContent && pastedText.trim()) {
+				insertPlainTextAtCaret(content, pastedText)
+				requestAnimationFrame(() => {
+					requestAnimationFrame(() => {
+						logMediaSnapshot(content, "after-paste-text")
+					})
+				})
+				insertedTextualContent = true
+				console.log("[Editor] pasted plain text", {
+					textLength: pastedText.length,
+				})
+			}
+
+			if (clipboardFiles.length) {
+				if (htmlHadExternalMediaUrls) {
+					console.log(
+						"[Editor] skipping clipboard files because HTML already includes external media URLs",
+						{fileCount: clipboardFiles.length},
+					)
+					return
+				}
+				console.log("[Editor] processing pasted media files", {
+					fileCount: clipboardFiles.length,
+					types: clipboardFiles.map((file) => file.type),
+				})
+				handleFiles(clipboardFiles)
+				return
+			}
+
+			if (!insertedTextualContent) {
+				console.log("[Editor] paste had no usable text/html/media")
+			}
+		}
+		function onContentMediaLoad(e) {
+			const el = e.target
+			if (
+				!(
+					el instanceof HTMLImageElement ||
+					el instanceof HTMLVideoElement
+				)
+			) {
+				return
+			}
+			if (el instanceof HTMLImageElement) {
+				console.log("[Editor] image load", {
+					src: el.getAttribute("src") || "",
+					currentSrc: el.currentSrc || "",
+					naturalWidth: Number(el.naturalWidth || 0),
+					naturalHeight: Number(el.naturalHeight || 0),
+				})
+				return
+			}
+			console.log("[Editor] video load", {
+				src: el.getAttribute("src") || "",
+				readyState: Number(el.readyState || 0),
+			})
+		}
+		function onContentMediaError(e) {
+			const el = e.target
+			if (
+				!(
+					el instanceof HTMLImageElement ||
+					el instanceof HTMLVideoElement
+				)
+			) {
+				return
+			}
+			if (el instanceof HTMLImageElement) {
+				console.warn("[Editor] image error", {
+					src: el.getAttribute("src") || "",
+					currentSrc: el.currentSrc || "",
+					complete: Boolean(el.complete),
+					naturalWidth: Number(el.naturalWidth || 0),
+					naturalHeight: Number(el.naturalHeight || 0),
+				})
+				return
+			}
+			console.warn("[Editor] video error", {
+				src: el.getAttribute("src") || "",
+				readyState: Number(el.readyState || 0),
+			})
 		}
 		content.addEventListener("dragover", onContentDragover)
 		content.addEventListener("dragleave", onContentDragleave)
 		content.addEventListener("drop", onContentDrop)
 		content.addEventListener("paste", onContentPaste)
+		content.addEventListener("load", onContentMediaLoad, true)
+		content.addEventListener("error", onContentMediaError, true)
 
 		return () => {
 			content.removeEventListener("dragover", onContentDragover)
 			content.removeEventListener("dragleave", onContentDragleave)
 			content.removeEventListener("drop", onContentDrop)
 			content.removeEventListener("paste", onContentPaste)
+			content.removeEventListener("load", onContentMediaLoad, true)
+			content.removeEventListener("error", onContentMediaError, true)
 			contentProxy = null
 			editorEl = null
 			pellEditor = null
@@ -950,6 +1373,11 @@
 			pellEditor.content.innerHTML = incoming
 			enforceMaxChars(pellEditor.content)
 			suppressEffect = false
+			requestAnimationFrame(() => {
+				requestAnimationFrame(() => {
+					logMediaSnapshot(pellEditor?.content, "after-external-sync")
+				})
+			})
 		}
 	})
 
@@ -985,6 +1413,21 @@
 	}}
 />
 
+{#if uploadProgressActive}
+	<div class="upload-progress" role="status" aria-live="polite">
+		<div class="upload-progress-row">
+			<span>{uploadProgressLabel || "Uploading media…"}</span>
+			<span>{uploadProgressPercent}%</span>
+		</div>
+		<div class="upload-progress-track">
+			<div
+				class="upload-progress-fill"
+				style={`width: ${Math.max(0, Math.min(100, uploadProgressPercent))}%`}
+			></div>
+		</div>
+	</div>
+{/if}
+
 <div
 	class="pell-wrapper"
 	class:is-dragging={isDragging}
@@ -1013,6 +1456,37 @@
 
 <style>
 	@import "pell/dist/pell.css";
+
+	.upload-progress {
+		margin: 0 0 0.45rem;
+		padding: 0.45rem 0.6rem;
+		border: 1px solid #d7c8b6;
+		border-radius: 10px;
+		background: #fff8ef;
+	}
+
+	.upload-progress-row {
+		display: flex;
+		justify-content: space-between;
+		gap: 0.65rem;
+		font-size: 0.82rem;
+		font-weight: 600;
+		color: #46583f;
+		margin-bottom: 0.3rem;
+	}
+
+	.upload-progress-track {
+		height: 7px;
+		border-radius: 999px;
+		overflow: hidden;
+		background: #e5dccf;
+	}
+
+	.upload-progress-fill {
+		height: 100%;
+		background: linear-gradient(90deg, #6c8e4f, #3f6b44);
+		transition: width 180ms ease;
+	}
 
 	.pell-wrapper {
 		border: 1px solid #d7c8b6;
@@ -1155,7 +1629,16 @@
 	}
 
 	.pell-wrapper :global(.pell-content img),
-	.pell-wrapper :global(.pell-content video),
+	.pell-wrapper :global(.pell-content video) {
+		display: block;
+		margin: 0.7rem auto;
+		width: auto;
+		height: auto;
+		max-width: min(90dvw, 100%);
+		border-radius: 14px;
+		box-shadow: 0 14px 30px -18px rgba(20, 18, 14, 0.55);
+	}
+
 	.pell-wrapper :global(.pell-content iframe),
 	.pell-wrapper :global(.pell-content table),
 	.pell-wrapper :global(.pell-content pre),
