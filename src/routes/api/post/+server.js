@@ -1,10 +1,10 @@
 import { env } from '$env/dynamic/private';
-import { createHash } from 'node:crypto';
+import { MEDIA_TOKEN_PREFIX } from '$lib/utils.js';
 
 const BSKY_XRPC = 'https://bsky.social/xrpc';
 const MAX_IMAGE_SIZE_BYTES = 2_000_000; // Bluesky's hard limit is 2,000,000 bytes (not 2 MiB)
 const MAX_VIDEO_SIZE_BYTES = 100 * 1024 * 1024;
-const MEDIA_CACHE_PREFIX = '🎞️';
+const MEDIA_CACHE_PREFIX = MEDIA_TOKEN_PREFIX;
 const LEGACY_MEDIA_CACHE_PREFIX = 'L4D_MEDIA_CACHE:';
 
 let cachedSession = null;
@@ -132,20 +132,36 @@ async function getSession() {
 }
 
 async function uploadBlob(accessJwt, file, kindLabel = 'Media') {
-	const res = await fetch(`${BSKY_XRPC}/com.atproto.repo.uploadBlob`, {
-		method: 'POST',
-		headers: {
-			authorization: `Bearer ${accessJwt}`,
-			'content-type': file.type || 'application/octet-stream'
-		},
-		body: Buffer.from(await file.arrayBuffer())
-	});
+	const uploadBody = Buffer.from(await file.arrayBuffer());
 
-	if (!res.ok) {
-		throw new Error(`${kindLabel} upload failed.`);
+	async function doUpload(jwt) {
+		return fetch(`${BSKY_XRPC}/com.atproto.repo.uploadBlob`, {
+			method: 'POST',
+			headers: {
+				authorization: `Bearer ${jwt}`,
+				'content-type': file.type || 'application/octet-stream'
+			},
+			body: uploadBody
+		});
 	}
 
-	const json = await res.json();
+	let res = await doUpload(accessJwt);
+
+	if (!res.ok && (res.status === 401 || res.status === 403)) {
+		cachedSession = null;
+		const refreshed = await createSession();
+		res = await doUpload(refreshed.accessJwt);
+	}
+
+	if (!res.ok) {
+		const errBody = await res.json().catch(() => ({}));
+		throw new Error(errBody.message || errBody.error || `${kindLabel} upload failed.`);
+	}
+
+	const json = await res.json().catch(() => ({}));
+	if (!json?.blob || typeof json.blob !== 'object') {
+		throw new Error(`${kindLabel} upload failed.`);
+	}
 	return json.blob;
 }
 
@@ -174,6 +190,15 @@ function isHttpUrl(value) {
 	return /^https?:\/\//i.test(String(value || '').trim());
 }
 
+function isCacheableMediaSource(value) {
+	const source = String(value || '').trim();
+	if (!source) return false;
+	if (isHttpUrl(source)) return true;
+	if (source.startsWith(MEDIA_CACHE_PREFIX)) return true;
+	if (/^inline:/i.test(source)) return true;
+	return false;
+}
+
 function buildCachePostPrefix(name, description) {
 	const parts = [name, description].filter(Boolean)
 	if (!parts.length) return ''
@@ -182,11 +207,16 @@ function buildCachePostPrefix(name, description) {
 }
 
 function buildMediaCacheToken(sourceUrl) {
-	return createHash('sha256').update(String(sourceUrl || '').trim()).digest('base64url').slice(0, 12);
+	const source = String(sourceUrl || '').trim();
+	if (!source.startsWith(MEDIA_CACHE_PREFIX)) {
+		throw new Error(`sourceUrl must be a content-hash token, not a URL: ${source}`);
+	}
+	return source;
 }
 
 function buildMediaCacheMarker(sourceUrl) {
-	return `${MEDIA_CACHE_PREFIX} ${buildMediaCacheToken(sourceUrl)}`;
+	// The token itself is the full marker (prefix + hash)
+	return buildMediaCacheToken(sourceUrl);
 }
 
 async function findCachedImageBlobBySourceUrl(session, sourceUrl) {
@@ -401,8 +431,8 @@ export async function POST({ request }) {
 			const prefix = buildCachePostPrefix(rawName, rawDesc);
 			const cacheText = prefix ? `${prefix}\n${marker}` : marker;
 			const file = formData.get('file');
-			if (!isHttpUrl(sourceUrl)) {
-				return new Response(JSON.stringify({ error: 'A valid source URL is required.' }), {
+			if (!isCacheableMediaSource(sourceUrl)) {
+				return new Response(JSON.stringify({ error: 'A valid source URL or inline source token is required.' }), {
 					status: 400,
 					headers: { 'content-type': 'application/json' }
 				});

@@ -1,5 +1,6 @@
 <script>
 	const MAX_IMAGE_SIZE_BYTES = 2_000_000
+	const NORMALIZED_IMAGE_MAX_DIM = 1800
 	import {User, Pencil} from "lucide-svelte"
 
 	let {
@@ -165,7 +166,11 @@
 		setProfilePreview(file)
 
 		try {
-			const normalized = await normalizeImageForSlot(file, 900, 900)
+			const normalized = await normalizeImageForSlot(
+				file,
+				NORMALIZED_IMAGE_MAX_DIM,
+				NORMALIZED_IMAGE_MAX_DIM,
+			)
 			const uploaded = await uploadImage(normalized)
 			profileUploadedMedia = [
 				{
@@ -192,7 +197,11 @@
 		setBackgroundPreview(file)
 
 		try {
-			const normalized = await normalizeImageForSlot(file, 1800, 700)
+			const normalized = await normalizeImageForSlot(
+				file,
+				NORMALIZED_IMAGE_MAX_DIM,
+				NORMALIZED_IMAGE_MAX_DIM,
+			)
 			const uploaded = await uploadImage(normalized)
 			backgroundUploadedMedia = [
 				{

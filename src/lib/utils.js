@@ -3,6 +3,29 @@ import {
 	PUBLIC_CONTACT_OUTPUT_ALPHABET
 } from '$env/static/public';
 
+export const MEDIA_TOKEN_PREFIX = '🎞️';
+export const MEDIA_TOKEN_HEX_LENGTH = 12;
+
+/**
+ * Build a media token from a hex digest string (lowercase, no special chars).
+ * @param {string} hex
+ * @returns {string}
+ */
+export function mediaTokenFromHex(hex) {
+	return `${MEDIA_TOKEN_PREFIX}${String(hex).toLowerCase().slice(0, MEDIA_TOKEN_HEX_LENGTH)}`;
+}
+
+/**
+ * Build a media token by SHA-256 hashing an ArrayBuffer (browser-compatible).
+ * @param {ArrayBuffer} buffer
+ * @returns {Promise<string>}
+ */
+export async function mediaTokenFromBuffer(buffer) {
+	const digest = await crypto.subtle.digest('SHA-256', buffer);
+	const hex = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+	return mediaTokenFromHex(hex);
+}
+
 const BASE32 = '0123456789bcdefghjkmnpqrstuvwxyz';
 const BASE32_INDEX = Object.fromEntries([...BASE32].map((char, index) => [char, index]));
 const DEFAULT_MAP_BASE_URL = 'https://love4dogs.club/map';

@@ -7,9 +7,11 @@
 		CONTACT_LOCK_PREFIX,
 		encryptContact,
 		normalizeContactInput,
+		mediaTokenFromBuffer,
 	} from "$lib/utils"
 
 	const PROFILE_STORAGE_KEY = "love4dogs.profile-v2"
+	const NORMALIZED_IMAGE_MAX_DIM = 1800
 	const CONTENT_CHUNK_SIZE = 1800
 	const CHUNK_ALT_PAYLOAD_TARGET_CHARS = 2000
 	const CHUNK_ALT_COMPRESSION_MIN_HTML_CHARS = 2000
@@ -62,6 +64,7 @@
 	let chunkBuildVersion = 0
 	const cdnPromotionMeta = new Map()
 	const editorUploadCache = new Map()
+	let failedCdnUrls = $state(new Set())
 
 	function generateShortUuid() {
 		return Math.random().toString(36).slice(2, 10)
@@ -734,6 +737,16 @@
 		return current
 	}
 
+	function extensionFromMimeType(mimeType = "") {
+		const value = String(mimeType || "").toLowerCase()
+		if (value.includes("png")) return "png"
+		if (value.includes("webp")) return "webp"
+		if (value.includes("gif")) return "gif"
+		if (value.includes("svg")) return "svg"
+		if (value.includes("jpeg") || value.includes("jpg")) return "jpg"
+		return "jpg"
+	}
+
 	function proxyExternalImageUrlsInRoot(root) {
 		let changed = false
 		for (const img of root.querySelectorAll("img[src]")) {
@@ -871,6 +884,7 @@
 		const pending = editorMediaList.filter((entry) => {
 			if (!entry || entry.kind !== "image") return false
 			if (!entry.blob || !entry.url || !entry.bskyUrl) return false
+			if (!/^https?:\/\//i.test(String(entry.url || ""))) return false
 			if (isBskyHostedUrl(entry.url)) return false
 			return true
 		})
@@ -1029,8 +1043,41 @@
 	async function uploadExternalMediaUrl(url, preferredKind = "") {
 		const sourceUrl = String(url || "").trim()
 		const resolvedSourceUrl = resolveUploadSourceUrl(sourceUrl) || sourceUrl
-		if (!resolvedSourceUrl || isBskyHostedUrl(resolvedSourceUrl))
-			return null
+		if (!resolvedSourceUrl) return null
+		if (isBskyHostedUrl(resolvedSourceUrl)) return null
+		if (isInlineMediaDataUrl(resolvedSourceUrl)) {
+			const response = await fetch(resolvedSourceUrl)
+			if (!response.ok)
+				throw new Error("Unable to read inline image data.")
+			const blob = await response.blob()
+
+			const ext = extensionFromMimeType(blob.type)
+			const file = new File([blob], `inline-upload.${ext}`, {
+				type: blob.type || "image/jpeg",
+			})
+			const normalized = await normalizeImageForSlot(
+				file,
+				NORMALIZED_IMAGE_MAX_DIM,
+				NORMALIZED_IMAGE_MAX_DIM,
+			)
+			const token = await mediaTokenFromBuffer(
+				await normalized.arrayBuffer(),
+			)
+			const result = {
+				...uploaded,
+				sourceUrl: token,
+				alt: uploaded.alt || token,
+			}
+			editorUploadCache.set(token, result)
+			if (sourceUrl) editorUploadCache.set(sourceUrl, result)
+			if (resolvedSourceUrl !== sourceUrl)
+				editorUploadCache.set(resolvedSourceUrl, result)
+			console.log("[profile] inline image uploaded to bsky", {
+				token,
+				bskyUrl: result?.bskyUrl || "",
+			})
+			return result
+		}
 		if (editorUploadCache.has(resolvedSourceUrl))
 			return editorUploadCache.get(resolvedSourceUrl)
 		const wantsImage =
@@ -1058,13 +1105,21 @@
 			})
 			const normalized = await normalizeImageForSlot(
 				imageFile,
-				1800,
-				1800,
+				NORMALIZED_IMAGE_MAX_DIM,
+				NORMALIZED_IMAGE_MAX_DIM,
 			)
-			const uploaded = await cacheMediaUrlInBsky(
-				resolvedSourceUrl,
-				normalized,
+			const token = await mediaTokenFromBuffer(
+				await normalized.arrayBuffer(),
 			)
+			if (editorUploadCache.has(token)) {
+				const cached = editorUploadCache.get(token)
+				editorUploadCache.set(resolvedSourceUrl, cached)
+				if (sourceUrl && sourceUrl !== resolvedSourceUrl) {
+					editorUploadCache.set(sourceUrl, cached)
+				}
+				return cached
+			}
+			const uploaded = await cacheMediaUrlInBsky(token, normalized)
 			console.log("[profile] image uploaded to bsky", {
 				sourceUrl: resolvedSourceUrl,
 				bskyUrl: uploaded?.bskyUrl || "",
@@ -1072,9 +1127,10 @@
 			})
 			const result = {
 				...uploaded,
-				sourceUrl: resolvedSourceUrl,
+				sourceUrl: token,
 				alt: uploaded.alt || sourceName,
 			}
+			editorUploadCache.set(token, result)
 			editorUploadCache.set(resolvedSourceUrl, result)
 			if (sourceUrl && sourceUrl !== resolvedSourceUrl) {
 				editorUploadCache.set(sourceUrl, result)
@@ -1165,6 +1221,21 @@
 				candidateCount: candidates.length,
 			})
 		} else {
+			// Remove any nodes whose CDN URL is confirmed broken (blob evicted from Bluesky)
+			for (const entry of candidates) {
+				if (!failedCdnUrls.has(entry.url)) continue
+				const el = entry.node
+				const container = el.closest("figure,p,div") || el.parentElement
+				if (container && container !== root) {
+					container.remove()
+				} else {
+					el.remove()
+				}
+				changed = true
+			}
+			// Clear failed set so we don't re-run for the same URLs
+			if (failedCdnUrls.size > 0) failedCdnUrls = new Set()
+
 			const uniqueUploadEntries = []
 			const seenUploadUrls = new Set()
 			for (const entry of candidates) {
@@ -1232,8 +1303,27 @@
 			mediaUploadActive = false
 		}
 
+		for (const entry of candidates) {
+			const uploaded = uploadedByUrl.get(entry.url)
+			if (!uploaded?.bskyUrl) continue
+			if (!isInlineMediaDataUrl(entry.url)) continue
+			if (uploaded.bskyUrl === entry.url) continue
+			if (entry.node.tagName === "A") {
+				if (entry.node.getAttribute("href") !== uploaded.bskyUrl) {
+					entry.node.setAttribute("href", uploaded.bskyUrl)
+					changed = true
+				}
+				continue
+			}
+			if (entry.node.getAttribute("src") !== uploaded.bskyUrl) {
+				entry.node.setAttribute("src", uploaded.bskyUrl)
+				changed = true
+			}
+		}
+
 		const pendingPromotionCount = candidates.filter((entry) => {
 			const uploaded = uploadedByUrl.get(entry.url)
+			if (isInlineMediaDataUrl(entry.url)) return false
 			return Boolean(uploaded?.bskyUrl)
 		}).length
 		console.log("[profile] normalizeEditorMediaHtml:replacement", {
@@ -2209,6 +2299,7 @@
 
 	$effect(() => {
 		const source = String(contentHtml || "")
+		const _failedCdn = failedCdnUrls // track for re-run when CDN failures arrive
 		queuedEditorMediaSource = source
 		hasQueuedEditorMediaRun = true
 		if (editorMediaProcessing) return
@@ -2400,6 +2491,11 @@
 				uploadProgressActive={mediaUploadActive}
 				uploadProgressPercent={mediaUploadPercent}
 				uploadProgressLabel={mediaUploadLabel}
+				onmediaerror={(url) => {
+					if (!failedCdnUrls.has(url)) {
+						failedCdnUrls = new Set([...failedCdnUrls, url])
+					}
+				}}
 			/>
 		</div>
 		<label>

@@ -52,6 +52,7 @@
 		ondragover = () => {},
 		ondragleave = () => {},
 		ondrop = () => {},
+		onmediaerror = /** @type {(url: string) => void} */ (_url) => {},
 	} = $props()
 
 	let containerEl = $state(null)
@@ -1293,13 +1294,17 @@
 				return
 			}
 			if (el instanceof HTMLImageElement) {
+				const src = el.getAttribute("src") || ""
 				console.warn("[Editor] image error", {
-					src: el.getAttribute("src") || "",
+					src,
 					currentSrc: el.currentSrc || "",
 					complete: Boolean(el.complete),
 					naturalWidth: Number(el.naturalWidth || 0),
 					naturalHeight: Number(el.naturalHeight || 0),
 				})
+				if (src.startsWith("https://")) {
+					onmediaerror(src)
+				}
 				return
 			}
 			console.warn("[Editor] video error", {
