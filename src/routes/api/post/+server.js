@@ -146,16 +146,28 @@ async function uploadBlob(accessJwt, file, kindLabel = 'Media') {
 	}
 
 	let res = await doUpload(accessJwt);
+	let errBody = null;
 
-	if (!res.ok && (res.status === 401 || res.status === 403)) {
-		cachedSession = null;
-		const refreshed = await createSession();
-		res = await doUpload(refreshed.accessJwt);
+	if (!res.ok) {
+		errBody = await res.json().catch(() => ({}));
+		const errMessage = String(errBody?.message || errBody?.error || '');
+		const authLikeError =
+			res.status === 401 ||
+			res.status === 403 ||
+			/token\s+has\s+expired|expired\s+token|invalid\s+token|jwt/i.test(errMessage);
+
+		if (authLikeError) {
+			cachedSession = null;
+			const refreshed = await createSession();
+			res = await doUpload(refreshed.accessJwt);
+			if (!res.ok) {
+				errBody = await res.json().catch(() => ({}));
+			}
+		}
 	}
 
 	if (!res.ok) {
-		const errBody = await res.json().catch(() => ({}));
-		throw new Error(errBody.message || errBody.error || `${kindLabel} upload failed.`);
+		throw new Error(errBody?.message || errBody?.error || `${kindLabel} upload failed.`);
 	}
 
 	const json = await res.json().catch(() => ({}));

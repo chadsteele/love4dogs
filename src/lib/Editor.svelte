@@ -68,6 +68,32 @@
 	let cmContainer = $state(null)
 	let cmView = null
 	let contentProxy = null
+	let localUploadProgressActive = $state(false)
+	let localUploadProgressPercent = $state(0)
+	let localUploadProgressLabel = $state("")
+	let mediaDeleteButtonEl = $state(null)
+	let activeMediaTarget = $state(null)
+	let mediaDeleteVisible = $state(false)
+	let mediaDeleteX = $state(0)
+	let mediaDeleteY = $state(0)
+	let editorHeight = $state(280)
+	let resizingEditor = false
+	let resizeStartY = 0
+	let resizeStartHeight = 280
+
+	const effectiveUploadProgressActive = $derived(
+		uploadProgressActive || localUploadProgressActive,
+	)
+	const effectiveUploadProgressPercent = $derived(
+		localUploadProgressActive
+			? localUploadProgressPercent
+			: uploadProgressPercent,
+	)
+	const effectiveUploadProgressLabel = $derived(
+		localUploadProgressActive
+			? localUploadProgressLabel
+			: uploadProgressLabel,
+	)
 
 	function createElement(Component, props = {}) {
 		const host = document.createElement("span")
@@ -263,6 +289,60 @@
 		return json
 	}
 
+	function uploadFileWithProgress(file, onProgress, onUploadComplete) {
+		return new Promise((resolve, reject) => {
+			const fd = new FormData()
+			fd.append("mode", "upload-media")
+			fd.append("file", file)
+
+			const xhr = new XMLHttpRequest()
+			xhr.open("POST", "/api/post")
+			xhr.responseType = "text"
+			xhr.timeout = 15 * 60 * 1000
+
+			xhr.upload.onprogress = (event) => {
+				if (!event.lengthComputable) return
+				const percent = Math.max(
+					0,
+					Math.min(
+						100,
+						Math.round((event.loaded / event.total) * 100),
+					),
+				)
+				onProgress(percent)
+			}
+
+			xhr.upload.onload = () => {
+				onUploadComplete?.()
+			}
+
+			xhr.onerror = () => reject(new Error("Upload failed."))
+			xhr.onabort = () => reject(new Error("Upload aborted."))
+			xhr.ontimeout = () =>
+				reject(new Error("Upload timed out. Please try again."))
+			xhr.onload = () => {
+				let json = {}
+				try {
+					json = JSON.parse(String(xhr.responseText || "{}"))
+				} catch {
+					json = {}
+				}
+				if (
+					xhr.status < 200 ||
+					xhr.status >= 300 ||
+					!json?.ok ||
+					!json?.blob
+				) {
+					reject(new Error(json?.error || "Upload failed."))
+					return
+				}
+				resolve(json)
+			}
+
+			xhr.send(fd)
+		})
+	}
+
 	function insertHtmlAtCaret(contentEl, html) {
 		contentEl.focus()
 		const sel = window.getSelection()
@@ -318,7 +398,25 @@
 		const name = file.name || "Video"
 		insertHtmlAtCaret(contentEl, `<video src="${objUrl}" controls></video>`)
 		try {
-			const uploaded = await uploadFile(file)
+			localUploadProgressActive = true
+			localUploadProgressPercent = 0
+			localUploadProgressLabel = `Uploading video: ${name}`
+			const uploaded = await uploadFileWithProgress(
+				file,
+				(percent) => {
+					// Keep below 100 until server responds with uploaded blob metadata.
+					localUploadProgressPercent = Math.min(95, percent)
+				},
+				() => {
+					localUploadProgressPercent = Math.max(
+						localUploadProgressPercent,
+						96,
+					)
+					localUploadProgressLabel = "Processing video on server..."
+				},
+			)
+			localUploadProgressPercent = 100
+			localUploadProgressLabel = "Video upload complete"
 			uploadedMedia = [
 				...uploadedMedia,
 				{
@@ -330,6 +428,10 @@
 			]
 		} catch (err) {
 			console.error("[Editor] Video upload failed:", err)
+		} finally {
+			localUploadProgressActive = false
+			localUploadProgressPercent = 0
+			localUploadProgressLabel = ""
 		}
 	}
 
@@ -913,6 +1015,89 @@
 		contentEl.dispatchEvent(new Event("input", {bubbles: true}))
 	}
 
+	function clampEditorHeight(value) {
+		const next = Number(value)
+		if (!Number.isFinite(next)) return 280
+		return Math.max(200, Math.min(1200, Math.round(next)))
+	}
+
+	function onEditorResizeMove(e) {
+		if (!resizingEditor) return
+		const deltaY = Number(e.clientY || 0) - resizeStartY
+		editorHeight = clampEditorHeight(resizeStartHeight + deltaY)
+	}
+
+	function stopEditorResize() {
+		if (!resizingEditor) return
+		resizingEditor = false
+		window.removeEventListener("pointermove", onEditorResizeMove)
+		window.removeEventListener("pointerup", stopEditorResize)
+	}
+
+	function startEditorResize(e) {
+		e.preventDefault()
+		e.stopPropagation()
+		resizingEditor = true
+		resizeStartY = Number(e.clientY || 0)
+		resizeStartHeight = clampEditorHeight(editorHeight)
+		window.addEventListener("pointermove", onEditorResizeMove)
+		window.addEventListener("pointerup", stopEditorResize)
+	}
+
+	function hideMediaDeleteButton() {
+		activeMediaTarget = null
+		mediaDeleteVisible = false
+	}
+
+	function repositionMediaDeleteButton(contentEl) {
+		if (!mediaDeleteVisible || !activeMediaTarget || !containerEl) return
+		if (!contentEl.contains(activeMediaTarget)) {
+			hideMediaDeleteButton()
+			return
+		}
+		const targetRect = activeMediaTarget.getBoundingClientRect()
+		const wrapperRect = containerEl.getBoundingClientRect()
+		const contentRect = contentEl.getBoundingClientRect()
+		if (
+			targetRect.bottom < contentRect.top ||
+			targetRect.top > contentRect.bottom ||
+			targetRect.right < contentRect.left ||
+			targetRect.left > contentRect.right
+		) {
+			hideMediaDeleteButton()
+			return
+		}
+		mediaDeleteX = Math.max(0, targetRect.right - wrapperRect.left - 10)
+		mediaDeleteY = Math.max(0, targetRect.top - wrapperRect.top + 10)
+	}
+
+	function showMediaDeleteButton(targetEl, contentEl) {
+		if (!targetEl || !contentEl || !containerEl) return
+		activeMediaTarget = targetEl
+		mediaDeleteVisible = true
+		repositionMediaDeleteButton(contentEl)
+	}
+
+	function removeActiveMedia() {
+		if (!pellEditor?.content || !activeMediaTarget) return
+		const contentEl = pellEditor.content
+		if (!contentEl.contains(activeMediaTarget)) {
+			hideMediaDeleteButton()
+			return
+		}
+		const target = activeMediaTarget
+		const parent = target.parentElement
+		if (parent?.tagName === "FIGURE") {
+			parent.remove()
+		} else if (parent?.tagName === "A" && parent.childElementCount === 1) {
+			parent.remove()
+		} else {
+			target.remove()
+		}
+		hideMediaDeleteButton()
+		dispatchEditorInput(contentEl)
+	}
+
 	function replaceElementTag(element, nextTagName) {
 		const replacement = document.createElement(nextTagName)
 		replacement.innerHTML = element.innerHTML
@@ -1312,12 +1497,51 @@
 				readyState: Number(el.readyState || 0),
 			})
 		}
+		function onContentPointerMove(e) {
+			const target =
+				e.target instanceof Element
+					? e.target.closest("img,video")
+					: null
+			if (target && content.contains(target)) {
+				showMediaDeleteButton(target, content)
+			} else if (activeMediaTarget) {
+				repositionMediaDeleteButton(content)
+			}
+		}
+		function onContentPointerDown(e) {
+			if (
+				mediaDeleteButtonEl &&
+				e.target instanceof Node &&
+				mediaDeleteButtonEl.contains(e.target)
+			) {
+				return
+			}
+			const target =
+				e.target instanceof Element
+					? e.target.closest("img,video")
+					: null
+			if (target && content.contains(target)) {
+				showMediaDeleteButton(target, content)
+				return
+			}
+			hideMediaDeleteButton()
+		}
+		function onContentScroll() {
+			repositionMediaDeleteButton(content)
+		}
+		function onWindowResize() {
+			repositionMediaDeleteButton(content)
+		}
 		content.addEventListener("dragover", onContentDragover)
 		content.addEventListener("dragleave", onContentDragleave)
 		content.addEventListener("drop", onContentDrop)
 		content.addEventListener("paste", onContentPaste)
 		content.addEventListener("load", onContentMediaLoad, true)
 		content.addEventListener("error", onContentMediaError, true)
+		content.addEventListener("pointermove", onContentPointerMove)
+		content.addEventListener("pointerdown", onContentPointerDown)
+		content.addEventListener("scroll", onContentScroll)
+		window.addEventListener("resize", onWindowResize)
 
 		return () => {
 			content.removeEventListener("dragover", onContentDragover)
@@ -1326,6 +1550,12 @@
 			content.removeEventListener("paste", onContentPaste)
 			content.removeEventListener("load", onContentMediaLoad, true)
 			content.removeEventListener("error", onContentMediaError, true)
+			content.removeEventListener("pointermove", onContentPointerMove)
+			content.removeEventListener("pointerdown", onContentPointerDown)
+			content.removeEventListener("scroll", onContentScroll)
+			window.removeEventListener("resize", onWindowResize)
+			stopEditorResize()
+			hideMediaDeleteButton()
 			contentProxy = null
 			editorEl = null
 			pellEditor = null
@@ -1418,16 +1648,16 @@
 	}}
 />
 
-{#if uploadProgressActive}
+{#if effectiveUploadProgressActive}
 	<div class="upload-progress" role="status" aria-live="polite">
 		<div class="upload-progress-row">
-			<span>{uploadProgressLabel || "Uploading media…"}</span>
-			<span>{uploadProgressPercent}%</span>
+			<span>{effectiveUploadProgressLabel || "Uploading media…"}</span>
+			<span>{effectiveUploadProgressPercent}%</span>
 		</div>
 		<div class="upload-progress-track">
 			<div
 				class="upload-progress-fill"
-				style={`width: ${Math.max(0, Math.min(100, uploadProgressPercent))}%`}
+				style={`width: ${Math.max(0, Math.min(100, effectiveUploadProgressPercent))}%`}
 			></div>
 		</div>
 	</div>
@@ -1438,13 +1668,43 @@
 	class:is-dragging={isDragging}
 	class:content-dragging={contentDragging}
 	class:html-mode={htmlMode}
+	style={`height:${editorHeight}px;`}
 	role="region"
 	aria-label="Rich text editor"
 	bind:this={containerEl}
 	{ondragover}
 	{ondragleave}
 	{ondrop}
-></div>
+>
+	{#if mediaDeleteVisible && !htmlMode}
+		<button
+			bind:this={mediaDeleteButtonEl}
+			type="button"
+			class="media-delete-btn"
+			style={`left:${mediaDeleteX}px;top:${mediaDeleteY}px;`}
+			aria-label="Delete media"
+			title="Delete media"
+			onmousedown={(e) => {
+				e.preventDefault()
+				e.stopPropagation()
+			}}
+			onclick={(e) => {
+				e.preventDefault()
+				e.stopPropagation()
+				removeActiveMedia()
+			}}
+		>
+			x
+		</button>
+	{/if}
+	{#if !htmlMode}
+		<div
+			class="editor-resize-handle"
+			role="presentation"
+			onpointerdown={startEditorResize}
+		></div>
+	{/if}
+</div>
 
 <div
 	class="html-source"
@@ -1650,6 +1910,51 @@
 	.pell-wrapper :global(.pell-content code) {
 		max-width: 100%;
 		box-sizing: border-box;
+	}
+
+	.media-delete-btn {
+		position: absolute;
+		transform: translate(50%, -50%);
+		width: 1.35rem;
+		height: 1.35rem;
+		border-radius: 999px;
+		border: 1px solid #d4c2ae;
+		background: #fff7ee;
+		color: #6d2b1f;
+		font-size: 0.85rem;
+		line-height: 1;
+		font-weight: 700;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+		box-shadow: 0 6px 14px -10px rgba(20, 18, 14, 0.7);
+		z-index: 6;
+	}
+
+	.media-delete-btn:hover {
+		background: #ffe5df;
+		border-color: #bf7e73;
+	}
+
+	.editor-resize-handle {
+		position: absolute;
+		right: 0.35rem;
+		bottom: 0.25rem;
+		width: 0.95rem;
+		height: 0.95rem;
+		cursor: ns-resize;
+		z-index: 5;
+		border-right: 2px solid rgba(89, 94, 87, 0.55);
+		border-bottom: 2px solid rgba(89, 94, 87, 0.55);
+		border-radius: 1px;
+		opacity: 0.8;
+	}
+
+	.editor-resize-handle:hover {
+		opacity: 1;
+		border-right-color: rgba(62, 79, 57, 0.85);
+		border-bottom-color: rgba(62, 79, 57, 0.85);
 	}
 
 	/* Placeholder */

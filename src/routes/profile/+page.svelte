@@ -14,7 +14,6 @@
 	const NORMALIZED_IMAGE_MAX_DIM = 1800
 	const CONTENT_CHUNK_SIZE = 1800
 	const CHUNK_ALT_PAYLOAD_TARGET_CHARS = 2000
-	const CHUNK_ALT_COMPRESSION_MIN_HTML_CHARS = 2000
 	const CHUNK_BODY_TEXT_SIZE = 300
 	const MEDIA_UPLOAD_CONCURRENCY = 4
 	const CDN_PROMOTION_TICK_MS = 20000
@@ -388,12 +387,6 @@
 	function compressChunkHtmlForAlt(html = "", options = {}) {
 		const source = String(html || "")
 		if (!source) return {html: "", prefix: "", dict: []}
-		if (
-			source.length < CHUNK_ALT_COMPRESSION_MIN_HTML_CHARS &&
-			!options?.forceCompression
-		) {
-			return {html: source, prefix: "", dict: []}
-		}
 
 		let packed = source
 		let prefix = ""
@@ -1333,6 +1326,14 @@
 		})
 
 		const extractedMedia = []
+		const existingMediaByUrl = new Map()
+		for (const entry of editorMediaList) {
+			if (!entry || typeof entry !== "object") continue
+			const entryUrl = String(entry.url || "").trim()
+			const entrySourceUrl = String(entry.sourceUrl || "").trim()
+			if (entryUrl) existingMediaByUrl.set(entryUrl, entry)
+			if (entrySourceUrl) existingMediaByUrl.set(entrySourceUrl, entry)
+		}
 		for (const node of root.querySelectorAll(
 			"img[src],video[src],source[src],a[href]",
 		)) {
@@ -1358,17 +1359,22 @@
 									: ""
 			if (!mediaType) continue
 			const uploaded = uploadedByUrl.get(url)
+			const existing = existingMediaByUrl.get(url)
 			extractedMedia.push({
 				kind: mediaType,
 				alt:
 					node.getAttribute("alt") ||
 					node.getAttribute("title") ||
+					existing?.alt ||
 					uploaded?.alt ||
 					"Media",
-				sourceUrl: uploaded?.sourceUrl || url,
+				sourceUrl: uploaded?.sourceUrl || existing?.sourceUrl || url,
 				url,
-				blob: uploaded?.blob || null,
-				bskyUrl: uploaded?.bskyUrl || (isBskyHostedUrl(url) ? url : ""),
+				blob: uploaded?.blob || existing?.blob || null,
+				bskyUrl:
+					uploaded?.bskyUrl ||
+					existing?.bskyUrl ||
+					(isBskyHostedUrl(url) ? url : ""),
 			})
 		}
 		editorMediaList = extractedMedia
@@ -1466,9 +1472,7 @@
 	)
 
 	const publishBlockedByMedia = $derived(
-		mediaUploadActive ||
-			editorMediaProcessing ||
-			unresolvedEditorMediaCount > 0,
+		mediaUploadActive || unresolvedEditorMediaCount > 0,
 	)
 
 	function encryptEmailForPayload(value = "") {
@@ -1717,8 +1721,7 @@
 			primary: primaryPayload,
 			subsequent: subsequentPayload,
 		})
-		const forceCompression =
-			combinedJson.length > CHUNK_ALT_COMPRESSION_MIN_HTML_CHARS
+		const forceCompression = true
 		const limited = enforceAltPayloadLimit(
 			[combinedJson],
 			CHUNK_ALT_PAYLOAD_TARGET_CHARS,
@@ -1993,6 +1996,37 @@
 				primaryCid,
 				hasReplyRef: Boolean(replyRef),
 			})
+
+			if (videoAttachments.length > 0) {
+				const videoFd = new FormData()
+				videoFd.append("text", "Video")
+				videoFd.append(
+					"uploadedMedia",
+					JSON.stringify([videoAttachments[0]]),
+				)
+				if (replyRef) {
+					videoFd.append("reply", replyRef)
+				}
+				console.log("[profile] posting video reply", {
+					hasReplyRef: Boolean(replyRef),
+					alt: videoAttachments[0]?.alt || "Video",
+				})
+				const videoRes = await fetch("/api/post", {
+					method: "POST",
+					body: videoFd,
+				})
+				const videoJson = await videoRes.json().catch(() => ({}))
+				if (!videoRes.ok || !videoJson?.ok) {
+					console.error("[profile] video publish failed", {
+						status: videoRes.status,
+						videoJson,
+					})
+					publishError =
+						videoJson?.error ||
+						"Failed to publish video attachment post."
+					return
+				}
+			}
 
 			const chunksForReplies = chunks.slice(primaryChunks.length)
 			const replyAttachmentPool = attachmentPool
@@ -2339,8 +2373,7 @@
 		;(async () => {
 			const minifiedHtml = await minifyHtmlForChunking(source)
 			if (currentBuild !== chunkBuildVersion) return
-			const forceCompression =
-				minifiedHtml.length > CHUNK_ALT_COMPRESSION_MIN_HTML_CHARS
+			const forceCompression = true
 			const fragments = chunkHtmlByAltPayload(
 				minifiedHtml,
 				CHUNK_ALT_PAYLOAD_TARGET_CHARS,
@@ -2372,8 +2405,7 @@
 			})
 		})().catch(() => {
 			if (currentBuild !== chunkBuildVersion) return
-			const forceCompression =
-				source.length > CHUNK_ALT_COMPRESSION_MIN_HTML_CHARS
+			const forceCompression = true
 			const fragments = chunkHtmlByAltPayload(
 				source,
 				CHUNK_ALT_PAYLOAD_TARGET_CHARS,
@@ -2487,6 +2519,7 @@
 		<div class="editor-wrap">
 			<Editor
 				bind:value={contentHtml}
+				bind:uploadedMedia={editorMediaList}
 				placeholder="Write formatted profile content..."
 				uploadProgressActive={mediaUploadActive}
 				uploadProgressPercent={mediaUploadPercent}
