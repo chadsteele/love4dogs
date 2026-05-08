@@ -1313,12 +1313,12 @@
 				title: "Insert image",
 				result: () => imageFileInputEl?.click(),
 			},
-			{
-				name: "insertVideo",
-				icon: videoIcon,
-				title: "Insert video",
-				result: () => videoFileInputEl?.click(),
-			},
+			// {
+			// 	name: "insertVideo",
+			// 	icon: videoIcon,
+			// 	title: "Insert video",
+			// 	result: () => videoFileInputEl?.click(),
+			// },
 		]
 
 		pellEditor = pell.init({

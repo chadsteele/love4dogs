@@ -2513,6 +2513,7 @@
 				bind:value={profileDescription}
 				placeholder="Short profile description"
 				maxlength={descMaxLength}
+				style="min-height: 100px; resize: vertical;"
 			></textarea>
 		</label>
 		<p class="char-count">{300 - combinedCharCount}/{descMaxLength}</p>
@@ -2798,4 +2799,10 @@
 			justify-self: start;
 		}
 	}
+
+	/*
+Source - https://stackoverflow.com/a/79793317
+Posted by Debtanu Coder
+Retrieved 2026-05-08, License - CC BY-SA 4.0
+*/
 </style>
