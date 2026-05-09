@@ -1,6 +1,7 @@
 <script>
 	import {onDestroy} from "svelte"
 	import {ImagePlus} from "lucide-svelte"
+	import {mediaTokenFromBuffer} from "$lib/utils"
 
 	const MAX_ATTACHMENTS = 4
 	const MAX_IMAGE_SIZE_BYTES = 2_000_000 // Bluesky's hard limit is 2,000,000 bytes (not 2 MiB)
@@ -114,8 +115,11 @@
 	}
 
 	async function uploadFileToBluesky(file) {
+		const buffer = await file.arrayBuffer()
+		const sourceUrl = await mediaTokenFromBuffer(buffer)
 		const formData = new FormData()
-		formData.append("mode", "upload-media")
+		formData.append("mode", "cache-media-url")
+		formData.append("sourceUrl", sourceUrl)
 		formData.append("file", file)
 
 		const response = await fetch("/api/post", {

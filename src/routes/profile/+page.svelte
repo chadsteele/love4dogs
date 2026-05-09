@@ -60,6 +60,8 @@
 	let publishMessage = $state("")
 	let publishError = $state("")
 	let publishing = $state(false)
+	let uploadingProfileImage = $state(false)
+	let uploadingBackgroundImage = $state(false)
 	let currentView = $state("feed")
 	let touchedName = $state(false)
 	let touchedEmail = $state(false)
@@ -981,9 +983,14 @@
 	}
 
 	async function uploadMediaFile(file) {
+		const buffer = await file.arrayBuffer()
+		const sourceUrl = await mediaTokenFromBuffer(buffer)
 		const formData = new FormData()
-		formData.append("mode", "upload-media")
+		formData.append("mode", "cache-media-url")
+		formData.append("sourceUrl", sourceUrl)
 		formData.append("file", file)
+		formData.append("profileName", profileName)
+		formData.append("profileDescription", profileDescription)
 		const response = await fetch("/api/post", {
 			method: "POST",
 			body: formData,
@@ -996,7 +1003,7 @@
 		const did = String(json.did || "")
 		const bskyUrl =
 			json.url ||
-			(json.kind === "image" && cid && did
+			(cid && did
 				? `https://cdn.bsky.app/img/feed_fullsize/plain/${did}/${cid}@jpeg`
 				: "")
 		return {
@@ -1004,8 +1011,11 @@
 			alt: file.name || json.alt || "Media",
 			blob: json.blob,
 			sourceName: file.name || "uploaded",
-			sourceUrl: "",
+			sourceUrl,
 			bskyUrl,
+			cacheUri: String(json.cacheUri || ""),
+			cacheCid: String(json.cacheCid || ""),
+			cached: Boolean(json.cached),
 		}
 	}
 
@@ -1507,8 +1517,24 @@
 					: "",
 	)
 
+	const imageUploadActive = $derived(
+		uploadingProfileImage || uploadingBackgroundImage,
+	)
+
+	const imageUploadLabel = $derived(
+		uploadingProfileImage && uploadingBackgroundImage
+			? "Uploading profile and background images…"
+			: uploadingProfileImage
+				? "Uploading profile image…"
+				: uploadingBackgroundImage
+					? "Uploading background image…"
+					: "",
+	)
+
 	const publishBlockedByMedia = $derived(
-		mediaUploadActive || unresolvedEditorMediaCount > 0,
+		imageUploadActive ||
+			mediaUploadActive ||
+			unresolvedEditorMediaCount > 0,
 	)
 
 	function encryptEmailForPayload(value = "") {
@@ -2586,6 +2612,8 @@
 				bind:profileUploadedMedia
 				bind:backgroundUploadedMedia
 				bind:errorMessage={uploadError}
+				bind:uploadingProfile={uploadingProfileImage}
+				bind:uploadingBackground={uploadingBackgroundImage}
 				currentProfileSrc={storedProfileImageSrc}
 				currentBackgroundSrc={storedBackgroundImageSrc}
 				onchange={activateValidation}
@@ -2669,6 +2697,13 @@
 				<span class="address-confirmed-badge">✓ Confirmed</span>
 			{/if}
 		</div>
+
+		{#if imageUploadActive}
+			<div class="upload-progress-bar-wrap">
+				<div class="upload-progress-bar indeterminate"></div>
+				<p class="upload-progress-label">{imageUploadLabel}</p>
+			</div>
+		{/if}
 
 		<div class="actions-row">
 			<div aria-hidden="true"></div>
@@ -2983,6 +3018,38 @@
 		color: #24633f;
 		font-weight: 600;
 		white-space: nowrap;
+	}
+
+	.upload-progress-bar-wrap {
+		margin: 0.6rem 0 0.2rem;
+	}
+	.upload-progress-bar {
+		height: 4px;
+		border-radius: 999px;
+		background: #d7e8dc;
+		overflow: hidden;
+		position: relative;
+	}
+	.upload-progress-bar.indeterminate::after {
+		content: "";
+		position: absolute;
+		inset: 0;
+		background: #3b6e4f;
+		animation: indeterminate-slide 1.4s ease-in-out infinite;
+		width: 40%;
+	}
+	@keyframes indeterminate-slide {
+		0% {
+			transform: translateX(-100%);
+		}
+		100% {
+			transform: translateX(350%);
+		}
+	}
+	.upload-progress-label {
+		margin: 0.3rem 0 0;
+		font-size: 0.82rem;
+		color: #3b6e4f;
 	}
 
 	.modal-overlay {

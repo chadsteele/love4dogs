@@ -2,11 +2,14 @@
 	const MAX_IMAGE_SIZE_BYTES = 2_000_000
 	const NORMALIZED_IMAGE_MAX_DIM = 1800
 	import {User, Pencil} from "lucide-svelte"
+	import {mediaTokenFromBuffer} from "$lib/utils"
 
 	let {
 		profileUploadedMedia = $bindable([]),
 		backgroundUploadedMedia = $bindable([]),
 		errorMessage = $bindable(""),
+		uploadingProfile = $bindable(false),
+		uploadingBackground = $bindable(false),
 		disabled = false,
 		defaultBackgroundSrc = "/background.jpg",
 		currentProfileSrc = "",
@@ -15,9 +18,6 @@
 
 	let profileFileInput
 	let backgroundFileInput
-
-	let uploadingProfile = $state(false)
-	let uploadingBackground = $state(false)
 
 	let profilePreviewUrl = $state("")
 	let backgroundPreviewUrl = $state("")
@@ -169,9 +169,17 @@
 	}
 
 	async function uploadImage(file) {
+		const normalized = await normalizeImageForSlot(
+			file,
+			NORMALIZED_IMAGE_MAX_DIM,
+			NORMALIZED_IMAGE_MAX_DIM,
+		)
+		const buffer = await normalized.arrayBuffer()
+		const sourceUrl = await mediaTokenFromBuffer(buffer)
 		const formData = new FormData()
-		formData.append("mode", "upload-media")
-		formData.append("file", file)
+		formData.append("mode", "cache-media-url")
+		formData.append("sourceUrl", sourceUrl)
+		formData.append("file", normalized)
 
 		const response = await fetch("/api/post", {
 			method: "POST",
@@ -181,7 +189,10 @@
 		if (!response.ok || !json?.ok || !json?.blob) {
 			throw new Error(json?.error || "Media upload failed.")
 		}
-		return json
+		return {
+			...json,
+			sourceName: file.name || "uploaded",
+		}
 	}
 
 	async function onProfileFileChange(event) {
