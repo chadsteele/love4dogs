@@ -28,6 +28,7 @@ export async function mediaTokenFromBuffer(buffer) {
 
 const BASE32 = '0123456789bcdefghjkmnpqrstuvwxyz';
 const BASE32_INDEX = Object.fromEntries([...BASE32].map((char, index) => [char, index]));
+const DEFAULT_SITE_BASE_URL = 'https://love4dogs.club';
 const DEFAULT_MAP_BASE_URL = 'https://love4dogs.club/map';
 const DEFAULT_LOCATION_CACHE_KEY = 'love4dogs.location-cache';
 const DEFAULT_LOCATION_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -51,6 +52,33 @@ export function normalizeContactInput(text = '') {
 	return [...String(text).toLowerCase()]
 		.filter((char) => CONTACT_ALPHABET.includes(char))
 		.join('');
+}
+
+export function cleanCanonicalName(value = '') {
+	return String(value || '')
+		.replace(/[^A-Za-z0-9/]/g, '-')
+		.replace(/-+/g, '-')
+		.replace(/(^-|-$)/g, '');
+}
+
+export function isLocalHost() {
+	if (typeof window === 'undefined') return false;
+	const hostname = String(window.location?.hostname || '').toLowerCase();
+	return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+}
+
+export function buildCanonicalUrl(uuid = '', stamp = '', name = '', baseUrl = DEFAULT_SITE_BASE_URL) {
+	const trimmedName = String(name || '').trim();
+	if (!trimmedName) return '';
+
+	const cleaned = cleanCanonicalName(trimmedName);
+	if (!cleaned) return '';
+
+	const safeUuid = String(uuid || '').trim();
+	const safeStamp = String(stamp || '').trim();
+	const safeBaseUrl = String(baseUrl || DEFAULT_SITE_BASE_URL).replace(/\/+$/, '');
+
+	return `${safeBaseUrl}/${safeUuid}/${safeStamp}/${cleaned}`;
 }
 
 export function encryptContact(input = '') {

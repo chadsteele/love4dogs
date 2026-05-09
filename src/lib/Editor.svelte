@@ -76,10 +76,6 @@
 	let mediaDeleteVisible = $state(false)
 	let mediaDeleteX = $state(0)
 	let mediaDeleteY = $state(0)
-	let editorHeight = $state(280)
-	let resizingEditor = false
-	let resizeStartY = 0
-	let resizeStartHeight = 280
 
 	const effectiveUploadProgressActive = $derived(
 		uploadProgressActive || localUploadProgressActive,
@@ -1045,35 +1041,6 @@
 		contentEl.dispatchEvent(new Event("input", {bubbles: true}))
 	}
 
-	function clampEditorHeight(value) {
-		const next = Number(value)
-		if (!Number.isFinite(next)) return 280
-		return Math.max(200, Math.min(1200, Math.round(next)))
-	}
-
-	function onEditorResizeMove(e) {
-		if (!resizingEditor) return
-		const deltaY = Number(e.clientY || 0) - resizeStartY
-		editorHeight = clampEditorHeight(resizeStartHeight + deltaY)
-	}
-
-	function stopEditorResize() {
-		if (!resizingEditor) return
-		resizingEditor = false
-		window.removeEventListener("pointermove", onEditorResizeMove)
-		window.removeEventListener("pointerup", stopEditorResize)
-	}
-
-	function startEditorResize(e) {
-		e.preventDefault()
-		e.stopPropagation()
-		resizingEditor = true
-		resizeStartY = Number(e.clientY || 0)
-		resizeStartHeight = clampEditorHeight(editorHeight)
-		window.addEventListener("pointermove", onEditorResizeMove)
-		window.addEventListener("pointerup", stopEditorResize)
-	}
-
 	function hideMediaDeleteButton() {
 		activeMediaTarget = null
 		mediaDeleteVisible = false
@@ -1584,7 +1551,6 @@
 			content.removeEventListener("pointerdown", onContentPointerDown)
 			content.removeEventListener("scroll", onContentScroll)
 			window.removeEventListener("resize", onWindowResize)
-			stopEditorResize()
 			hideMediaDeleteButton()
 			contentProxy = null
 			editorEl = null
@@ -1611,7 +1577,7 @@
 					basicSetup,
 					htmlLang(),
 					oneDark,
-					EditorView.theme({"&": {height: "100%"}}),
+					EditorView.theme({"&": {height: "auto"}}),
 					EditorView.updateListener.of((update) => {
 						if (!update.docChanged) return
 						const next = update.state.doc.toString()
@@ -1698,7 +1664,6 @@
 	class:is-dragging={isDragging}
 	class:content-dragging={contentDragging}
 	class:html-mode={htmlMode}
-	style={`height:${editorHeight}px;`}
 	role="region"
 	aria-label="Rich text editor"
 	bind:this={containerEl}
@@ -1726,13 +1691,6 @@
 		>
 			x
 		</button>
-	{/if}
-	{#if !htmlMode}
-		<div
-			class="editor-resize-handle"
-			role="presentation"
-			onpointerdown={startEditorResize}
-		></div>
 	{/if}
 </div>
 
@@ -1795,9 +1753,9 @@
 		background: #fff;
 		display: flex;
 		flex-direction: column;
-		height: 280px;
-		min-height: 200px;
-		resize: vertical;
+		height: auto;
+		min-height: 400px;
+		max-height: 90dvh;
 	}
 
 	.pell-wrapper.is-dragging {
@@ -1822,6 +1780,7 @@
 	.pell-wrapper.html-mode
 		:global(.pell-button:not([title="Toggle HTML mode"])) {
 		opacity: 0.35;
+		max-height: none;
 		pointer-events: none;
 		cursor: default;
 	}
@@ -1874,8 +1833,13 @@
 	}
 
 	.pell-wrapper :global(.pell-content) {
-		flex: 1;
-		min-height: 0;
+		flex: 0 1 auto;
+		min-height: calc(
+			var(--editor-min-height) - var(--editor-chrome-height)
+		);
+		max-height: calc(
+			var(--editor-max-height) - var(--editor-chrome-height)
+		);
 		min-width: 0;
 		overflow-y: auto;
 		overflow-x: auto;
@@ -1901,9 +1865,9 @@
 		width: 100%;
 		min-width: 0;
 		max-width: 100%;
-		height: 280px;
-		min-height: 200px;
-		resize: vertical;
+		height: auto;
+		min-height: 400px;
+		max-height: 90dvh;
 		border: 1px solid #d7c8b6;
 		border-radius: 12px;
 		box-sizing: border-box;
@@ -1975,26 +1939,6 @@
 	.media-delete-btn:hover {
 		background: #ffe5df;
 		border-color: #bf7e73;
-	}
-
-	.editor-resize-handle {
-		position: absolute;
-		right: 0.35rem;
-		bottom: 0.25rem;
-		width: 0.95rem;
-		height: 0.95rem;
-		cursor: ns-resize;
-		z-index: 5;
-		border-right: 2px solid rgba(89, 94, 87, 0.55);
-		border-bottom: 2px solid rgba(89, 94, 87, 0.55);
-		border-radius: 1px;
-		opacity: 0.8;
-	}
-
-	.editor-resize-handle:hover {
-		opacity: 1;
-		border-right-color: rgba(62, 79, 57, 0.85);
-		border-bottom-color: rgba(62, 79, 57, 0.85);
 	}
 
 	/* Placeholder */

@@ -1,11 +1,12 @@
 <script>
 	import {onMount} from "svelte"
-	import {Eraser, Save, X} from "lucide-svelte"
+	import {Eraser, Save, Send, X} from "lucide-svelte"
 	import Editor from "$lib/Editor.svelte"
 	import NavBar from "$lib/NavBar.svelte"
 	import ProfileImages from "$lib/ProfileImages.svelte"
 	import LocationPicker from "$lib/LocationPicker.svelte"
 	import {
+		buildCanonicalUrl,
 		buildLocationBlock,
 		CONTACT_LOCK_PREFIX,
 		encryptContact,
@@ -13,6 +14,7 @@
 		lookupLocationDetails,
 		mediaTokenFromBuffer,
 	} from "$lib/utils"
+	import ShowAdmin from "$lib/ShowAdmin.svelte"
 
 	const PROFILE_STORAGE_KEY = "love4dogs.profile-v2"
 	const NORMALIZED_IMAGE_MAX_DIM = 1800
@@ -58,6 +60,7 @@
 	let publishMessage = $state("")
 	let publishError = $state("")
 	let publishing = $state(false)
+	let currentView = $state("feed")
 	let touchedName = $state(false)
 	let touchedEmail = $state(false)
 	let validationActive = $state(false)
@@ -1413,21 +1416,44 @@
 		minifiedChunkEntries.map((entry) => entry.htmlFragment),
 	)
 
+	const nameCharCount = $derived(String(profileName || "").trim().length)
 	const combinedCharCount = $derived(
-		profileName.length + profileDescription.length,
+		nameCharCount + profileDescription.length,
 	)
-	const descMaxLength = $derived(Math.max(0, 300 - profileName.length))
+	const descMaxLength = $derived(Math.max(0, 300 - nameCharCount))
+	const remainingProfileChars = $derived(Math.max(0, 300 - combinedCharCount))
 
-	const uploadedProfileImage = $derived(
+	const selectedProfileImage = $derived(
 		profileUploadedMedia.find((entry) => entry?.kind === "image") || null,
 	)
 
+	const uploadedProfileImage = $derived(
+		profileUploadedMedia.find(
+			(entry) =>
+				entry?.kind === "image" && !!entry?.blob && !!entry?.bskyUrl,
+		) || null,
+	)
+
 	const uploadedBackgroundImage = $derived(
-		backgroundUploadedMedia.find((entry) => entry?.kind === "image") ||
-			null,
+		backgroundUploadedMedia.find(
+			(entry) =>
+				entry?.kind === "image" && !!entry?.blob && !!entry?.bskyUrl,
+		) || null,
+	)
+
+	// Display URLs derived from stored bskyUrl so saved images are always visible.
+	const storedProfileImageSrc = $derived(
+		String(uploadedProfileImage?.bskyUrl || ""),
+	)
+	const storedBackgroundImageSrc = $derived(
+		String(uploadedBackgroundImage?.bskyUrl || ""),
 	)
 
 	const nameError = $derived(!profileName.trim() ? "Name is required." : "")
+
+	const canonicalurl = $derived.by(() => {
+		return buildCanonicalUrl(uuid, primaryVersion, profileName)
+	})
 
 	const emailError = $derived(
 		!email.trim()
@@ -1438,7 +1464,7 @@
 	)
 
 	const profileImageError = $derived(
-		!uploadedProfileImage ? "Profile picture is required." : "",
+		!selectedProfileImage ? "Profile picture is required." : "",
 	)
 
 	const unresolvedEditorMediaCount = $derived(
@@ -1473,11 +1499,11 @@
 
 	const mediaUploadLabel = $derived(
 		!ENABLE_EDITOR_MEDIA_UPLOADS
-			? "Media upload to Bluesky is paused (paste rendering debug mode)."
+			? "Media upload is paused (paste rendering debug mode)."
 			: mediaUploadActive
-				? `Uploading media to Bluesky (${mediaUploadCompleted}/${mediaUploadTotal})`
+				? `Uploading media (${mediaUploadCompleted}/${mediaUploadTotal})`
 				: unresolvedEditorMediaCount > 0
-					? `${unresolvedEditorMediaCount} media item${unresolvedEditorMediaCount === 1 ? "" : "s"} still not on Bluesky`
+					? `${unresolvedEditorMediaCount} media item${unresolvedEditorMediaCount === 1 ? "" : "s"} still not saved`
 					: "",
 	)
 
@@ -1494,6 +1520,7 @@
 	const primaryPostPayload = $derived({
 		uuid,
 		version: primaryVersion,
+		canonicalurl,
 		email: encryptEmailForPayload(email),
 		profilePic: uploadedProfileImage?.blob || null,
 		backgroundPic: uploadedBackgroundImage?.blob || null,
@@ -1605,10 +1632,30 @@
 		return root.innerHTML
 	}
 
+	function filterMediaForStorage(list) {
+		if (!Array.isArray(list)) return []
+		return list.filter((entry) => {
+			if (!entry || typeof entry !== "object") return false
+			const blob = entry?.blob
+			const bskyUrl = String(entry?.bskyUrl || "").trim()
+			return Boolean(
+				blob &&
+					(typeof blob === "object" || typeof blob === "string") &&
+					bskyUrl,
+			)
+		})
+	}
+
 	function buildStoredProfileForStorage() {
 		const base = buildStoredProfile()
 		return {
 			...base,
+			profileUploadedMedia: filterMediaForStorage(
+				base.profileUploadedMedia,
+			),
+			backgroundUploadedMedia: filterMediaForStorage(
+				base.backgroundUploadedMedia,
+			),
 			contentHtml: stripInlineMediaDataUrlsFromHtml(base.contentHtml),
 			editorMediaList: Array.isArray(base.editorMediaList)
 				? base.editorMediaList.map((entry) => {
@@ -1629,7 +1676,7 @@
 		if (html.length <= EDITOR_MAX_HTML_CHARS) return ""
 		const hasDataUrl = /data:(image|video)\//i.test(html)
 		if (hasDataUrl) {
-			return "Draft is temporarily too large to save while embedded media data URLs are present. It will save automatically after uploads replace them with Bluesky URLs."
+			return "Draft is temporarily too large to save while embedded media data URLs are present. It will save automatically after uploads replace them with CDN URLs."
 		}
 		return `Draft is too large to save (${html.length.toLocaleString()} chars, limit ${EDITOR_MAX_HTML_CHARS.toLocaleString()}).`
 	}
@@ -1658,16 +1705,23 @@
 	}
 
 	function validateRequiredFields() {
+		const submitProfileImageError = !uploadedProfileImage
+			? selectedProfileImage
+				? "Profile picture is still uploading. Please wait."
+				: "Profile picture is required."
+			: ""
 		console.log("[profile] validateRequiredFields", {
 			hasName: Boolean(profileName.trim()),
 			hasEmail: Boolean(email.trim()),
 			hasProfileImage: Boolean(uploadedProfileImage),
-			hasAddress: Boolean(addressText.trim()),
+			hasSelectedProfileImage: Boolean(selectedProfileImage),
+			locationConfirmed,
 			nameError,
 			emailError,
 			profileImageError,
+			submitProfileImageError,
 		})
-		return nameError || emailError || profileImageError || null
+		return nameError || emailError || submitProfileImageError || null
 	}
 
 	function activateValidation() {
@@ -1799,13 +1853,6 @@
 			editorMediaCount: editorMediaList.length,
 		})
 		activateValidation()
-		if (publishBlockedByMedia) {
-			publishError =
-				mediaUploadLabel ||
-				"Please wait for media uploads to finish before publishing."
-			publishMessage = ""
-			return
-		}
 		touchedName = true
 		touchedEmail = true
 		const validationError = validateRequiredFields()
@@ -1824,16 +1871,13 @@
 		console.log("[profile] publish validation passed")
 		publishError = ""
 		publishMessage = ""
-
-		const trimmedAddress = addressText.trim()
-		if (
-			trimmedAddress &&
-			(!locationConfirmed || trimmedAddress !== confirmedAddress)
-		) {
-			pinMovedInModal = false
-			showLocationModal = true
+		if (publishBlockedByMedia) {
+			publishError =
+				mediaUploadLabel ||
+				"Please wait for media uploads to finish before publishing."
 			return
 		}
+		showLocationModal = false
 
 		publishing = true
 
@@ -1847,6 +1891,7 @@
 			const primaryPayloadForBundle = {
 				uuid,
 				version: primaryVersion,
+				canonicalurl,
 				email: encryptEmailForPayload(email),
 				profilePic: uploadedProfileImage?.blob || null,
 				backgroundPic: uploadedBackgroundImage?.blob || null,
@@ -2304,6 +2349,10 @@
 		}
 	}
 
+	function setView(view = "feed") {
+		currentView = String(view || "feed")
+	}
+
 	onMount(() => {
 		console.log("[profile] onMount:start")
 		const intervalId = ENABLE_EDITOR_MEDIA_UPLOADS
@@ -2498,34 +2547,32 @@
 </svelte:head>
 
 <main class="page">
-	<NavBar />
-	<header class="topline">
-		<a class="back" href="/">&lt; Back home</a>
-		<h1>Profile</h1>
-	</header>
+	<NavBar {currentView} onSetView={setView} />
 
-	<section class="panel ids">
-		<div>
-			<p class="label">Short UUID</p>
-			<p class="mono">{uuid}</p>
-		</div>
-		<div class="version-group">
+	<ShowAdmin {currentView}>
+		<section class="panel ids">
 			<div>
-				<p class="label">Primary version</p>
-				<p class="mono">{primaryVersion}</p>
+				<p class="label">Short UUID</p>
+				<p class="mono">{uuid}</p>
 			</div>
-			<button type="button" onclick={bumpPrimaryVersion}>Bump</button>
-		</div>
-		<div class="version-group">
-			<div>
-				<p class="label">Prior version</p>
-				<p class="mono">{priorVersion}</p>
+			<div class="version-group">
+				<div>
+					<p class="label">Primary version</p>
+					<p class="mono">{primaryVersion}</p>
+				</div>
+				<button type="button" onclick={bumpPrimaryVersion}>Bump</button>
 			</div>
-			<button type="button" onclick={setPriorVersionFromPrimary}
-				>Use current</button
-			>
-		</div>
-	</section>
+			<div class="version-group">
+				<div>
+					<p class="label">Prior version</p>
+					<p class="mono">{priorVersion}</p>
+				</div>
+				<button type="button" onclick={setPriorVersionFromPrimary}
+					>Use current</button
+				>
+			</div>
+		</section>
+	</ShowAdmin>
 
 	<section class="panel">
 		<div
@@ -2539,6 +2586,8 @@
 				bind:profileUploadedMedia
 				bind:backgroundUploadedMedia
 				bind:errorMessage={uploadError}
+				currentProfileSrc={storedProfileImageSrc}
+				currentBackgroundSrc={storedBackgroundImageSrc}
 				onchange={activateValidation}
 				disabled={false}
 			/>
@@ -2552,6 +2601,7 @@
 				bind:this={profileNameInputEl}
 				type="text"
 				bind:value={profileName}
+				onfocus={activateValidation}
 				onblur={() => handleFieldBlur("name")}
 				class:invalid-field={touchedName && !!nameError}
 				placeholder="Name"
@@ -2559,6 +2609,9 @@
 				style="font-size: 1.25rem; font-weight: 600;"
 			/>
 		</label>
+		<ShowAdmin {currentView}>
+			<div class="canonicalurl-preview">{canonicalurl}</div>
+		</ShowAdmin>
 		{#if touchedName && nameError}
 			<p class="field-error">{nameError}</p>
 		{/if}
@@ -2566,12 +2619,13 @@
 			<textarea
 				rows="4"
 				bind:value={profileDescription}
+				onfocus={activateValidation}
 				placeholder="Short profile description"
 				maxlength={descMaxLength}
 				style="min-height: 100px; resize: vertical;"
 			></textarea>
 		</label>
-		<p class="char-count">{300 - combinedCharCount}/{descMaxLength}</p>
+		<p class="char-count">{remainingProfileChars}/{descMaxLength}</p>
 		<div class="editor-wrap">
 			<Editor
 				bind:value={contentHtml}
@@ -2593,6 +2647,7 @@
 				bind:this={emailInputEl}
 				type="email"
 				bind:value={email}
+				onfocus={activateValidation}
 				onblur={() => handleFieldBlur("email")}
 				class:invalid-field={touchedEmail && !!emailError}
 				placeholder="you@email.com"
@@ -2607,8 +2662,8 @@
 				class="address-input"
 				type="text"
 				bind:value={addressText}
-				placeholder="Address (required)"
-				required
+				onfocus={activateValidation}
+				placeholder="Location is required, but exact address is not"
 			/>
 			{#if locationConfirmed}
 				<span class="address-confirmed-badge">✓ Confirmed</span>
@@ -2623,13 +2678,13 @@
 				onclick={publishToBluesky}
 				disabled={publishing || publishBlockedByMedia}
 			>
-				<Save size={16} aria-hidden="true" />
-				<span>{publishing ? "Publishing…" : "Publish to Bluesky"}</span>
+				<Send size={16} aria-hidden="true" />
+				<span>{publishing ? "Publishing…" : "Publish"}</span>
 			</button>
 			<div class="actions-right">
 				<button type="button" onclick={saveProfile}>
 					<Save size={16} aria-hidden="true" />
-					<span>Save draft</span>
+					<span>draft</span>
 				</button>
 				<button type="button" onclick={clearProfileDraft}>
 					<Eraser size={16} aria-hidden="true" />
@@ -2700,34 +2755,38 @@
 		</div>
 	{/if}
 
-	<section class="panel payloads">
-		<h2>Primary Payload Preview</h2>
-		<pre>{JSON.stringify(primaryPostPayload, null, 2)}</pre>
-		<h2>Subsequent Payload Preview ({subsequentPostsPayload.length})</h2>
-		<pre>{JSON.stringify(subsequentPostsPayload, null, 2)}</pre>
-		<h2>Combined Payload Bundle Preview</h2>
-		<p class="char-count">
-			Combined JSON chars: {combinedPayloadBundlePreview.combinedJson
-				.length}
-		</p>
-		<p class="char-count">
-			Bundle chunks ({CHUNK_ALT_PAYLOAD_TARGET_CHARS} chars target each):
-			{combinedPayloadBundlePreview.fragments.length}
-		</p>
-		<p class="char-count">
-			Estimated Bluesky posts (up to 4 chunk-images/post):
-			{combinedPayloadPostsEstimate}
-		</p>
-		<p class="char-count">
-			Forced compression mode:
-			{combinedPayloadBundlePreview.forceCompression ? "yes" : "no"}
-		</p>
-		<pre>{JSON.stringify(
-				combinedPayloadBundlePreview.fragments,
-				null,
-				2,
-			)}</pre>
-	</section>
+	<ShowAdmin {currentView}>
+		<section class="panel payloads">
+			<h2>Primary Payload Preview</h2>
+			<pre>{JSON.stringify(primaryPostPayload, null, 2)}</pre>
+			<h2>
+				Subsequent Payload Preview ({subsequentPostsPayload.length})
+			</h2>
+			<pre>{JSON.stringify(subsequentPostsPayload, null, 2)}</pre>
+			<h2>Combined Payload Bundle Preview</h2>
+			<p class="char-count">
+				Combined JSON chars: {combinedPayloadBundlePreview.combinedJson
+					.length}
+			</p>
+			<p class="char-count">
+				Bundle chunks ({CHUNK_ALT_PAYLOAD_TARGET_CHARS} chars target each):
+				{combinedPayloadBundlePreview.fragments.length}
+			</p>
+			<p class="char-count">
+				Estimated Bluesky posts (up to 4 chunk-images/post):
+				{combinedPayloadPostsEstimate}
+			</p>
+			<p class="char-count">
+				Forced compression mode:
+				{combinedPayloadBundlePreview.forceCompression ? "yes" : "no"}
+			</p>
+			<pre>{JSON.stringify(
+					combinedPayloadBundlePreview.fragments,
+					null,
+					2,
+				)}</pre>
+		</section>
+	</ShowAdmin>
 </main>
 
 <style>
@@ -2739,18 +2798,6 @@
 		gap: 0.8rem;
 		min-width: 0;
 	}
-	.topline {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0.75rem;
-	}
-	.back {
-		text-decoration: none;
-		color: #1f5135;
-		font-weight: 600;
-	}
-	h1,
 	h2 {
 		margin: 0;
 	}
@@ -2836,6 +2883,7 @@
 		align-items: center;
 		width: 100%;
 		gap: 0.6rem;
+		margin-top: 1rem;
 	}
 	.actions-right {
 		display: inline-flex;
@@ -2866,6 +2914,12 @@
 		text-align: right;
 		font-size: 0.78rem;
 		color: #56695f;
+	}
+	.canonicalurl-preview {
+		margin: -0.1rem 0 0.45rem;
+		font-size: 0.78rem;
+		color: #7a817b;
+		word-break: break-all;
 	}
 	.field-error {
 		margin: -0.2rem 0 0.4rem;

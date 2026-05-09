@@ -11,6 +11,7 @@
 		lookupLocationDetails,
 		normalizeContactInput,
 		removeApproxPostFromCache,
+		isLocalHost,
 		upsertApproxPostInCache,
 	} from "$lib/utils"
 	import {
@@ -64,7 +65,6 @@
 	let editingPostUri = $state("")
 	let loadingEditPost = $state(false)
 	let tagsDrawerOpen = $state(true)
-	let isLocalhost = $state(false)
 	const imageCount = $derived(
 		selectedFiles.filter((file) => file.type.startsWith("image/")).length,
 	)
@@ -621,7 +621,7 @@
 
 	async function beginEditFromUri(uri = "") {
 		if (!uri) return
-		if (!isLocalhost && !oldPostUris.includes(uri)) return
+		if (!isLocalHost() && !oldPostUris.includes(uri)) return
 		loadingEditPost = true
 		postError = ""
 		try {
@@ -666,16 +666,11 @@
 	onMount(() => {
 		contactinfo = loadContactState()
 		hasLoadedContact = true
-		if (typeof window !== "undefined") {
-			const host = window.location.hostname
-			isLocalhost =
-				host === "localhost" || host === "127.0.0.1" || host === "::1"
-		}
 
 		oldPostUris = loadOldPostUris()
 		hydrateOldPostDetails(oldPostUris)
 		const editUri = currentEditUriFromQuery()
-		if (editUri && (isLocalhost || oldPostUris.includes(editUri))) {
+		if (editUri && (isLocalHost() || oldPostUris.includes(editUri))) {
 			beginEditFromUri(editUri)
 		}
 

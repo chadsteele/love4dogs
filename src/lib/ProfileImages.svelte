@@ -28,6 +28,10 @@
 	const backgroundImageSrc = $derived(
 		backgroundPreviewUrl || currentBackgroundSrc || defaultBackgroundSrc,
 	)
+	const hasRenderableProfileImage = $derived(Boolean(profileImageSrc))
+	const hasRenderableBackgroundImage = $derived(
+		Boolean(backgroundPreviewUrl || currentBackgroundSrc),
+	)
 
 	function revokeObjectUrl(url) {
 		if (url) URL.revokeObjectURL(url)
@@ -65,6 +69,28 @@
 		revokeObjectUrl(backgroundPreviewUrl)
 		backgroundPreviewUrl = ""
 		backgroundUploadedMedia = []
+	}
+
+	function seedProfileSelection(file) {
+		profileUploadedMedia = [
+			{
+				kind: "image",
+				alt: file?.name || "Profile photo",
+				blob: null,
+				sourceName: file?.name || "profile",
+			},
+		]
+	}
+
+	function seedBackgroundSelection(file) {
+		backgroundUploadedMedia = [
+			{
+				kind: "image",
+				alt: file?.name || "Profile background",
+				blob: null,
+				sourceName: file?.name || "background",
+			},
+		]
 	}
 
 	function handleBannerClick(event) {
@@ -164,6 +190,7 @@
 		errorMessage = ""
 		uploadingProfile = true
 		setProfilePreview(file)
+		seedProfileSelection(file)
 
 		try {
 			const normalized = await normalizeImageForSlot(
@@ -172,15 +199,24 @@
 				NORMALIZED_IMAGE_MAX_DIM,
 			)
 			const uploaded = await uploadImage(normalized)
+			const cid = uploaded.blob?.ref?.$link || uploaded.blob?.cid || ""
+			const did = String(uploaded.did || "")
+			const bskyUrl =
+				uploaded.url ||
+				(cid && did
+					? `https://cdn.bsky.app/img/feed_fullsize/plain/${did}/${cid}@jpeg`
+					: "")
 			profileUploadedMedia = [
 				{
 					kind: "image",
 					alt: uploaded.alt || file.name || "Profile photo",
 					blob: uploaded.blob,
 					sourceName: file.name || "profile",
+					bskyUrl,
 				},
 			]
 		} catch (error) {
+			clearProfileImage()
 			errorMessage =
 				error?.message || "Failed to upload the profile image."
 		} finally {
@@ -195,6 +231,7 @@
 		errorMessage = ""
 		uploadingBackground = true
 		setBackgroundPreview(file)
+		seedBackgroundSelection(file)
 
 		try {
 			const normalized = await normalizeImageForSlot(
@@ -203,15 +240,24 @@
 				NORMALIZED_IMAGE_MAX_DIM,
 			)
 			const uploaded = await uploadImage(normalized)
+			const cid = uploaded.blob?.ref?.$link || uploaded.blob?.cid || ""
+			const did = String(uploaded.did || "")
+			const bskyUrl =
+				uploaded.url ||
+				(cid && did
+					? `https://cdn.bsky.app/img/feed_fullsize/plain/${did}/${cid}@jpeg`
+					: "")
 			backgroundUploadedMedia = [
 				{
 					kind: "image",
 					alt: uploaded.alt || file.name || "Profile background",
 					blob: uploaded.blob,
 					sourceName: file.name || "background",
+					bskyUrl,
 				},
 			]
 		} catch (error) {
+			clearBackgroundImage()
 			errorMessage =
 				error?.message || "Failed to upload the background image."
 		} finally {
@@ -258,7 +304,7 @@
 		aria-label="Upload background image"
 	>
 		<img src={backgroundImageSrc} alt="Profile background preview" />
-		{#if currentBackgroundSrc || backgroundPreviewUrl || backgroundUploadedMedia.length > 0}
+		{#if hasRenderableBackgroundImage}
 			<button
 				type="button"
 				class="pencil-bg"
@@ -282,7 +328,7 @@
 				<Pencil size={18} />
 			</button>
 		{/if}
-		{#if currentProfileSrc || profilePreviewUrl || profileUploadedMedia.length > 0}
+		{#if hasRenderableProfileImage}
 			<button
 				type="button"
 				class="clear-button clear-profile"

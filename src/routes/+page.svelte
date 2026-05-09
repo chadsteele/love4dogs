@@ -1,5 +1,6 @@
 <script>
 	import {onMount} from "svelte"
+	import {isLocalHost} from "$lib/utils"
 	import {CircleAlert, Map as MapIcon} from "lucide-svelte"
 	import About from "$lib/About.svelte"
 	import PostCard from "$lib/PostCard.svelte"
@@ -32,7 +33,6 @@
 	let loadingHistory = $state(false)
 	let showAboutModal = $state(false)
 	let searchSort = $state("latest")
-	let isLocalhost = $state(false)
 
 	let searchDebounceTimer = null
 	let lastFeedRequestId = 0
@@ -388,12 +388,6 @@
 	)
 
 	onMount(() => {
-		if (typeof window !== "undefined") {
-			const host = window.location.hostname
-			isLocalhost =
-				host === "localhost" || host === "127.0.0.1" || host === "::1"
-		}
-
 		loadLocalTagCounts()
 		bookmarkedUris = readStoredList(BOOKMARK_KEY)
 		trashedUris = readStoredList(TRASH_KEY)
@@ -454,7 +448,6 @@
 		{currentView}
 		bookmarkedCount={bookmarkedUris.length}
 		trashedCount={trashedUris.length}
-		showLocalDelete={isLocalhost}
 		onSetView={setView}
 		onSelectionAction={applySelectionAction}
 		onOpenAbout={openAboutModal}

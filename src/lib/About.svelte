@@ -12,6 +12,8 @@
 	const backgroundImageUrl = `${siteUrl}/background.jpg`
 	const aboutTitle = "About Love4Dogs"
 	const aboutParagraphs = [
+		"🛠️ WE'RE UNDER CONSTRUCTION! 🚜👷🏽",
+		"Please excuse our mess and come back soon for a better experience. In the meantime, feel free to explore the feed and share posts to help connect animals in need with loving homes.",
 		"Love4Dogs is a community-driven project built on the Bluesky social platform, dedicated to connecting ALL ANIMAL lovers, rescuers, fosters, adopters, shelters, and NGOs. Our mission is to create a safe and supportive space where people can share information about animals in need, rescue updates, and location-aware posts that help connect animals with loving homes.",
 		"The goal here is to consolidate all animal interests and organizations locally and globally, making it easier for people to find and share information about animals in their area and around the world. Whether you're looking to adopt, foster, volunteer, or simply connect with other animal enthusiasts, Love4Dogs is here to help you find your pack.",
 		"Use the feed to browse recent posts, favorites, and hidden items in your area or open the composer to publish posts with photos and map-linked locations.",

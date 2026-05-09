@@ -1,5 +1,6 @@
 <script>
 	import {goto} from "$app/navigation"
+	import {isLocalHost} from "$lib/utils"
 	import {
 		Menu,
 		History,
@@ -9,6 +10,7 @@
 		Settings,
 		Users,
 		AlertOctagon,
+		Shield,
 	} from "lucide-svelte"
 
 	let {
@@ -22,7 +24,6 @@
 		onSetView = () => {},
 		onSelectionAction = () => {},
 		onOpenAbout = () => {},
-		showLocalDelete = false,
 		showSearch = false,
 		onSearchSubmit = () => {},
 		onSearchInput = () => {},
@@ -66,6 +67,18 @@
 					{#if menu}
 						{@render menu()}
 					{:else}
+						{#if isLocalHost() && currentView !== "admin"}
+							<button
+								type="button"
+								class:is-active={currentView === "admin"}
+								onclick={() => {
+									onSetView("admin")
+									selectionMenuOpen = false
+								}}
+							>
+								<Shield size={16} /> Admin
+							</button>
+						{/if}
 						<button
 							type="button"
 							class:is-active={currentView === "feed"}
@@ -150,7 +163,7 @@
 							</button>
 						{/if}
 
-						{#if showLocalDelete && selectedCount > 0}
+						{#if isLocalHost() && selectedCount > 0}
 							<button
 								type="button"
 								onclick={() =>

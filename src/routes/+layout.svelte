@@ -6,6 +6,9 @@
 <div class="bg-overlay" aria-hidden="true"></div>
 
 <div class="app-shell">
+	<div class="construction-notice">
+		🛠️ WE'RE UNDER CONSTRUCTION! 🚜👷🏽 Please pardon our mess.
+	</div>
 	{@render children()}
 </div>
 
@@ -66,6 +69,16 @@
 	.app-shell {
 		position: relative;
 		z-index: 2;
+	}
+
+	.construction-notice {
+		text-align: center;
+		padding: 1rem;
+		box-sizing: border-box;
+		font-size: clamp(1rem, 2.5vw, 1.3rem);
+		color: #f7f2e8;
+		background-color: #10140f;
+		z-index: 3;
 	}
 
 	@keyframes ken-burns {
