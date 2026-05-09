@@ -1935,8 +1935,18 @@
 		width: auto;
 		height: auto;
 		max-width: min(90dvw, 100%);
+		max-height: 30dvh;
 		border-radius: 14px;
 		box-shadow: 0 14px 30px -18px rgba(20, 18, 14, 0.55);
+	}
+
+	@media (min-width: 900px) {
+		.pell-wrapper :global(.pell-content img),
+		.pell-wrapper :global(.pell-content video) {
+			float: left;
+			margin: 0.7rem 0.7rem 0.7rem 0;
+			margin-right: 50px;
+		}
 	}
 
 	.pell-wrapper :global(.pell-content iframe) {
