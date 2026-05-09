@@ -177,6 +177,7 @@ function getCachedReverseGeo(cacheKey, lat, lon) {
 
 	return {
 		city: cached.city || '',
+		state: cached.state || '',
 		country: cached.country || '',
 		zip: cached.zip || ''
 	};
@@ -189,6 +190,7 @@ function setCachedReverseGeo(cacheKey, maxEntries, lat, lon, value) {
 	const key = reverseGeoCacheKey(lat, lon);
 	cache[key] = {
 		city: value.city || '',
+		state: value.state || '',
 		country: value.country || '',
 		zip: value.zip || '',
 		savedAt: Date.now()
@@ -210,7 +212,9 @@ export function buildLocationBlock(location, mapBaseUrl = DEFAULT_MAP_BASE_URL) 
 	const hash = gpsToHash(Number(location.lat), Number(location.lon));
 	if (!hash) return '';
 
-	const details = [location.city, location.country, location.zip].filter(Boolean).join(', ');
+	const details = [location.city, location.state, location.country, location.zip]
+		.filter(Boolean)
+		.join(', ');
 	return `\n\n📍 ${mapBaseUrl}/${hash.path}\n${details}`;
 }
 
@@ -230,6 +234,7 @@ export async function lookupLocationDetails(lat, lon, options = {}) {
 	}
 
 	let city = '';
+	let state = '';
 	let country = '';
 	let zip = '';
 	let fromCache = false;
@@ -237,6 +242,7 @@ export async function lookupLocationDetails(lat, lon, options = {}) {
 	const reverseGeo = getCachedReverseGeo(reverseGeoCacheKeyName, nextLat, nextLon);
 	if (reverseGeo) {
 		city = reverseGeo.city;
+		state = reverseGeo.state;
 		country = reverseGeo.country;
 		zip = reverseGeo.zip;
 		fromCache = true;
@@ -248,16 +254,17 @@ export async function lookupLocationDetails(lat, lon, options = {}) {
 			);
 			const data = await res.json();
 			city = data?.address?.city || data?.address?.town || data?.address?.village || data?.address?.hamlet || '';
+			state = data?.address?.state || data?.address?.province || data?.address?.region || data?.address?.state_district || '';
 			country = data?.address?.country || '';
 			zip = data?.address?.postcode || '';
-			setCachedReverseGeo(reverseGeoCacheKeyName, reverseGeoMaxEntries, nextLat, nextLon, { city, country, zip });
+			setCachedReverseGeo(reverseGeoCacheKeyName, reverseGeoMaxEntries, nextLat, nextLon, { city, state, country, zip });
 		} catch {
 			// Keep coordinate updates working even if reverse geocoding fails.
 		}
 	}
 
 	return {
-		location: { lat: nextLat, lon: nextLon, city, country, zip },
+		location: { lat: nextLat, lon: nextLon, city, state, country, zip },
 		error: '',
 		fromCache
 	};

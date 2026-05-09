@@ -40,6 +40,8 @@
 	let addressText = $state("")
 	let locationConfirmed = $state(false)
 	let confirmedAddress = $state("")
+	let confirmedLocation = $state(null)
+	let locationError = $state("")
 	let showLocationModal = $state(false)
 	let pinMovedInModal = $state(false)
 	let modalLocation = $state(null)
@@ -71,6 +73,11 @@
 	let emailInputEl
 	let storageReady = $state(false)
 	let initialProfileSnapshot = null
+	let storedSnapshotByStamp = null
+	let hasChangedFromStoredSnapshot = $state(false)
+	let clearSnapshot = null
+	let showUndo = $state(false)
+	let clearUndoTimer = null
 	let suppressAutosave = false
 	let lastAutosaveSnapshot = ""
 
@@ -1617,6 +1624,17 @@
 		return JSON.parse(JSON.stringify(value))
 	}
 
+	function getProfileStamp(profile = {}) {
+		const stampUuid = String(profile?.uuid || "")
+		const stampVersion = String(profile?.primaryVersion || "")
+		return `${stampUuid}:${stampVersion}`
+	}
+
+	function setStoredSnapshotBaseline(profile = buildStoredProfileForStorage()) {
+		storedSnapshotByStamp = cloneStoredProfile(profile)
+		hasChangedFromStoredSnapshot = false
+	}
+
 	function buildStoredProfile() {
 		return {
 			uuid,
@@ -1838,21 +1856,57 @@
 		}
 	}
 
+	/**
+	 * Check if a new address preserves the location confirmation.
+	 * Only the beginning of the address can be edited; the ending must be identical.
+	 * This ensures city/country/zip (which correspond to the pin) remain unchanged.
+	 */
+	function hasRequiredLocationParts(location) {
+		if (!location || typeof location !== "object") return false
+		return [location.city, location.country, location.zip].every(
+			(value) => String(value || "").trim().length > 0,
+		)
+	}
+
+	function addressOkay(oldAddress, newAddress) {
+		if (!hasRequiredLocationParts(confirmedLocation)) return false
+		const old = oldAddress.trim().toLowerCase()
+		const neu = newAddress.trim().toLowerCase()
+		const required = [
+			confirmedLocation?.city,
+			confirmedLocation?.country,
+			confirmedLocation?.zip,
+		]
+
+		if (!old || !neu) return false
+
+		if (required.some((part) => !part || !neu.includes(part.toLowerCase())))
+			return false
+
+		return old[old.length - 1] === neu[old.length - 1]
+	}
+
 	$effect(() => {
-		if (locationConfirmed && addressText.trim() !== confirmedAddress) {
-			locationConfirmed = false
-		}
+		locationConfirmed =
+			locationConfirmed && addressOkay(confirmedAddress, addressText)
+		if (locationConfirmed) locationError = ""
 	})
 
 	async function handleModalConfirm() {
-		if (pinMovedInModal && modalLocation) {
+		locationError = ""
+		if (
+			modalLocation &&
+			(pinMovedInModal || !hasRequiredLocationParts(confirmedLocation))
+		) {
 			const {location} = await lookupLocationDetails(
 				modalLocation.lat,
 				modalLocation.lon,
 			)
 			if (location) {
+				confirmedLocation = location
 				const parts = [
 					location.city,
+					location.state,
 					location.country,
 					location.zip,
 				].filter(Boolean)
@@ -1860,14 +1914,24 @@
 				modalLocation = {...modalLocation, ...location}
 			}
 		}
+
+		if (!hasRequiredLocationParts(confirmedLocation)) {
+			locationConfirmed = false
+			locationError =
+				"Location must include city, country, and zip before it can be confirmed."
+			return
+		}
+
 		confirmedAddress = addressText.trim()
 		locationConfirmed = true
+		locationError = ""
 		showLocationModal = false
 	}
 
 	function handleModalCancel() {
 		showLocationModal = false
 		pinMovedInModal = false
+		locationError = ""
 	}
 
 	async function publishToBluesky() {
@@ -1903,7 +1967,16 @@
 				"Please wait for media uploads to finish before publishing."
 			return
 		}
-		showLocationModal = false
+
+		// Always require location confirmation before publishing.
+		if (!locationConfirmed) {
+			console.log("[profile] location not confirmed, showing modal")
+			locationError = ""
+			modalLocation = modalLocation // Use existing modal location if available
+			pinMovedInModal = false
+			showLocationModal = true
+			return
+		}
 
 		publishing = true
 
@@ -2320,13 +2393,8 @@
 
 	function clearProfileDraft() {
 		console.log("[profile] clearProfileDraft:start")
-		if (
-			typeof window !== "undefined" &&
-			!window.confirm("Clear all profile draft fields?")
-		) {
-			console.log("[profile] clearProfileDraft:cancelled")
-			return
-		}
+
+		clearSnapshot = buildStoredProfileForStorage()
 
 		suppressAutosave = true
 		uuid = generateShortUuid()
@@ -2349,7 +2417,48 @@
 		validationActive = false
 		suppressAutosave = false
 		saveProfile(false)
+		setStoredSnapshotBaseline(buildStoredProfileForStorage())
+
+		if (clearUndoTimer) clearTimeout(clearUndoTimer)
+		showUndo = true
+		clearUndoTimer = setTimeout(() => {
+			showUndo = false
+			clearSnapshot = null
+		}, 10000)
+
 		console.log("[profile] clearProfileDraft:done")
+	}
+
+	function undoProfileChanges() {
+		if (!clearSnapshot) return
+		if (clearUndoTimer) { clearTimeout(clearUndoTimer); clearUndoTimer = null }
+		showUndo = false
+		suppressAutosave = true
+		applyStoredProfile(clearSnapshot)
+		suppressAutosave = false
+		saveMessage = ""
+		publishMessage = ""
+		publishError = ""
+		uploadError = ""
+		locationError = ""
+		touchedName = false
+		touchedEmail = false
+		validationActive = false
+		clearSnapshot = null
+
+		const snapshot = JSON.stringify(buildStoredProfileForStorage())
+		lastAutosaveSnapshot = snapshot
+		if (typeof localStorage !== "undefined") {
+			localStorage.setItem(PROFILE_STORAGE_KEY, snapshot)
+		}
+	}
+
+	function handleClearOrUndo() {
+		if (showUndo) {
+			undoProfileChanges()
+			return
+		}
+		clearProfileDraft()
 	}
 
 	function cancelProfileEdit() {
@@ -2400,6 +2509,7 @@
 			primaryVersion = makeVersion()
 			priorVersion = primaryVersion
 			initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
+			setStoredSnapshotBaseline(buildStoredProfileForStorage())
 			storageReady = true
 			return () => {
 				if (intervalId) clearInterval(intervalId)
@@ -2415,6 +2525,7 @@
 			initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
 			storageReady = true
 			saveProfile(false)
+			setStoredSnapshotBaseline(buildStoredProfileForStorage())
 			return () => {
 				if (intervalId) clearInterval(intervalId)
 			}
@@ -2428,18 +2539,40 @@
 			})
 			applyStoredProfile(parsed)
 			initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
+			setStoredSnapshotBaseline(buildStoredProfileForStorage())
 		} catch {
 			console.warn("[profile] onMount:failed to parse stored profile")
 			uuid = generateShortUuid()
 			primaryVersion = makeVersion()
 			priorVersion = primaryVersion
 			initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
+			setStoredSnapshotBaseline(buildStoredProfileForStorage())
 		}
 
 		storageReady = true
 		console.log("[profile] onMount:ready")
 		return () => {
 			if (intervalId) clearInterval(intervalId)
+		}
+	})
+
+	$effect(() => {
+		if (!storageReady || !storedSnapshotByStamp) return
+		if (hasChangedFromStoredSnapshot) return
+
+		const currentSnapshot = buildStoredProfileForStorage()
+		if (
+			getProfileStamp(currentSnapshot) !==
+			getProfileStamp(storedSnapshotByStamp)
+		) {
+			return
+		}
+
+		if (
+			JSON.stringify(currentSnapshot) !==
+			JSON.stringify(storedSnapshotByStamp)
+		) {
+			hasChangedFromStoredSnapshot = true
 		}
 	})
 
@@ -2691,12 +2824,18 @@
 				type="text"
 				bind:value={addressText}
 				onfocus={activateValidation}
+				oninput={() => {
+					locationError = ""
+				}}
 				placeholder="Location is required, but exact address is not"
 			/>
 			{#if locationConfirmed}
 				<span class="address-confirmed-badge">✓ Confirmed</span>
 			{/if}
 		</div>
+		{#if locationError}
+			<p class="field-error">{locationError}</p>
+		{/if}
 
 		{#if imageUploadActive}
 			<div class="upload-progress-bar-wrap">
@@ -2721,9 +2860,9 @@
 					<Save size={16} aria-hidden="true" />
 					<span>draft</span>
 				</button>
-				<button type="button" onclick={clearProfileDraft}>
+				<button type="button" onclick={handleClearOrUndo}>
 					<Eraser size={16} aria-hidden="true" />
-					<span>Clear</span>
+					<span>{showUndo ? "Undo" : "Clear"}</span>
 				</button>
 				<button type="button" onclick={cancelProfileEdit}>
 					<X size={16} aria-hidden="true" />

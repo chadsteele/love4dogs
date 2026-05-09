@@ -354,6 +354,7 @@
 			if (location) {
 				const parts = [
 					location.city,
+					location.state,
 					location.country,
 					location.zip,
 				].filter(Boolean)

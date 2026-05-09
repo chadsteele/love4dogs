@@ -12,6 +12,8 @@
 		Image as ImageIcon,
 		Italic,
 		Link as LinkIcon,
+		Maximize2,
+		Minimize2,
 		Strikethrough,
 		Underline,
 		Video as VideoIcon,
@@ -57,6 +59,7 @@
 
 	let containerEl = $state(null)
 	let pellEditor = null
+	let fullPageMode = $state(false)
 	let suppressEffect = false
 	let htmlLength = $state(0)
 	let lastValidHtml = ""
@@ -1295,6 +1298,8 @@
 
 		const imageIcon = createElement(ImageIcon, iconProps).outerHTML
 		const videoIcon = createElement(VideoIcon, iconProps).outerHTML
+		const maximizeIcon = createElement(Maximize2, iconProps).outerHTML
+		const minimizeIcon = createElement(Minimize2, iconProps).outerHTML
 
 		const allActions = [
 			...resolvedActions,
@@ -1309,6 +1314,29 @@
 				icon: imageIcon,
 				title: "Insert image",
 				result: () => imageFileInputEl?.click(),
+			},
+			{
+				name: "fullPage",
+				icon: maximizeIcon,
+				title: "Full page",
+				result: () => {
+					fullPageMode = !fullPageMode
+					const btn = containerEl?.querySelector(
+						'[title="Full page"]',
+					)
+					if (btn) {
+						btn.innerHTML = fullPageMode
+							? minimizeIcon
+							: maximizeIcon
+						btn.title = fullPageMode
+							? "Exit full page"
+							: "Full page"
+						btn.classList.toggle(
+							"pell-button-selected",
+							fullPageMode,
+						)
+					}
+				},
 			},
 			// {
 			// 	name: "insertVideo",
@@ -1664,6 +1692,7 @@
 	class:is-dragging={isDragging}
 	class:content-dragging={contentDragging}
 	class:html-mode={htmlMode}
+	class:full-page={fullPageMode}
 	role="region"
 	aria-label="Rich text editor"
 	bind:this={containerEl}
@@ -1767,12 +1796,6 @@
 		display: none;
 	}
 
-	.pell-wrapper.html-mode {
-		height: auto;
-		min-height: 0;
-		resize: none;
-	}
-
 	.pell-wrapper.html-mode :global(.pell-content) {
 		display: none;
 	}
@@ -1819,6 +1842,11 @@
 		border-color: #c9bfb0;
 	}
 
+	.pell-wrapper :global(.pell-button[title="Full page"]),
+	.pell-wrapper :global(.pell-button[title="Exit full page"]) {
+		margin-left: auto;
+	}
+
 	.pell-wrapper :global(.pell-italic-icon) {
 		font-style: italic;
 		font-weight: 700;
@@ -1834,13 +1862,8 @@
 
 	.pell-wrapper :global(.pell-content) {
 		flex: 0 1 auto;
-		min-height: calc(
-			var(--editor-min-height) - var(--editor-chrome-height)
-		);
-		max-height: calc(
-			var(--editor-max-height) - var(--editor-chrome-height)
-		);
-		min-width: 0;
+
+		min-width: 100%;
 		overflow-y: auto;
 		overflow-x: auto;
 		overscroll-behavior-x: contain;
@@ -1855,6 +1878,24 @@
 		overflow-wrap: anywhere;
 		word-break: break-word;
 		word-wrap: break-word;
+	}
+	.pell-wrapper :global(.pell-content),
+	.pell-wrapper.html-mode {
+		height: 50dvh;
+		/* resize: none; */
+	}
+
+	.pell-wrapper.full-page {
+		position: fixed;
+		inset: 0;
+		z-index: 1000;
+		border-radius: 0;
+		max-height: 100dvh;
+	}
+
+	.pell-wrapper.full-page :global(.pell-content),
+	.pell-wrapper.full-page.html-mode {
+		height: calc(100dvh - 42px);
 	}
 
 	.pell-wrapper :global(.pell-content > *) {

@@ -102,6 +102,17 @@ function buildVideoEmbed(uploadedVideo) {
 	};
 }
 
+function isAuthLikeFailure(status, message = '') {
+	const value = String(message || '');
+	return (
+		status === 401 ||
+		status === 403 ||
+		/token\s+has\s+expired|expired\s+token|invalid\s+token|jwt|auth(entication)?\s+required|session\s+expired/i.test(
+			value
+		)
+	);
+}
+
 async function createSession() {
 	const { identifier, secret } = getCredentials();
 
@@ -524,21 +535,25 @@ export async function POST({ request }) {
 				})
 			});
 
-			if (!createRes.ok && (createRes.status === 401 || createRes.status === 403)) {
-				cachedSession = null;
-				cacheSession = await createSession();
-				createRes = await fetch(`${BSKY_XRPC}/com.atproto.repo.createRecord`, {
-					method: 'POST',
-					headers: {
-						authorization: `Bearer ${cacheSession.accessJwt}`,
-						'content-type': 'application/json'
-					},
-					body: JSON.stringify({
-						repo: cacheSession.did,
-						collection: 'app.bsky.feed.post',
-						record
-					})
-				});
+			if (!createRes.ok) {
+				const errBody = await createRes.json().catch(() => ({}));
+				const errMessage = String(errBody?.message || errBody?.error || '');
+				if (isAuthLikeFailure(createRes.status, errMessage)) {
+					cachedSession = null;
+					cacheSession = await createSession();
+					createRes = await fetch(`${BSKY_XRPC}/com.atproto.repo.createRecord`, {
+						method: 'POST',
+						headers: {
+							authorization: `Bearer ${cacheSession.accessJwt}`,
+							'content-type': 'application/json'
+						},
+						body: JSON.stringify({
+							repo: cacheSession.did,
+							collection: 'app.bsky.feed.post',
+							record
+						})
+					});
+				}
 			}
 
 			if (!createRes.ok) {
@@ -821,7 +836,7 @@ export async function POST({ request }) {
 				retriedWithoutFacets
 			});
 
-			if (!retriedAfterAuth && (createRecordRes.status === 401 || createRecordRes.status === 403)) {
+			if (!retriedAfterAuth && isAuthLikeFailure(createRecordRes.status, errMessage)) {
 				cachedSession = null;
 				createRecordSession = await createSession();
 				retriedAfterAuth = true;
@@ -920,7 +935,7 @@ export async function DELETE({ request, url }) {
 				error: errBody.message || errBody.error || `Bluesky error ${response.status}`
 			});
 
-			if (response.status === 401 || response.status === 403) {
+			if (isAuthLikeFailure(response.status, errBody?.message || errBody?.error || '')) {
 				cachedSession = null;
 			}
 		}
