@@ -33,6 +33,9 @@
 	let loadingHistory = $state(false)
 	let showAboutModal = $state(false)
 	let searchSort = $state("latest")
+	let loadingMore = $state(false)
+	let feedCursor = null
+	let hasMorePosts = $state(true)
 
 	let searchDebounceTimer = null
 	let lastFeedRequestId = 0
@@ -135,12 +138,15 @@
 		const requestId = ++lastFeedRequestId
 		loadingPosts = true
 		feedError = ""
+		feedCursor = null
+		hasMorePosts = true
 
 		try {
 			const query = searchTerm.trim()
 			const params = new URLSearchParams({
 				query,
 				sort: searchSort,
+				limit: 20,
 			})
 			const res = await fetch(`/api/feed?${params.toString()}`)
 			const json = await res.json()
@@ -153,11 +159,79 @@
 
 			posts = json.posts || []
 			recentTags = json.commonRecentTags || []
+			feedCursor = json.cursor || null
+			hasMorePosts = !!json.cursor
+			console.log(
+				"[loadFeed] loaded posts:",
+				posts.length,
+				"cursor:",
+				feedCursor,
+				"hasMorePosts:",
+				hasMorePosts,
+			)
 		} catch (error) {
 			if (requestId !== lastFeedRequestId) return
 			feedError = error.message || "Failed loading feed."
 		} finally {
 			if (requestId === lastFeedRequestId) loadingPosts = false
+		}
+	}
+
+	async function loadMorePosts() {
+		console.log("[loadMorePosts] check:", {
+			loadingMore,
+			feedCursor,
+			hasMorePosts,
+		})
+		if (loadingMore || !feedCursor || !hasMorePosts) {
+			console.log("[loadMorePosts] blocked by conditions")
+			return
+		}
+
+		console.log("[loadMorePosts] starting fetch")
+		loadingMore = true
+		const requestId = lastFeedRequestId
+
+		try {
+			const query = searchTerm.trim()
+			const params = new URLSearchParams({
+				query,
+				sort: searchSort,
+				limit: 20,
+				cursor: feedCursor,
+			})
+			console.log(
+				"[loadMorePosts] fetch url:",
+				`/api/feed?${params.toString()}`,
+			)
+			const res = await fetch(`/api/feed?${params.toString()}`)
+			const json = await res.json()
+
+			if (!res.ok) {
+				throw new Error(json.error || "Could not load more posts.")
+			}
+
+			if (requestId !== lastFeedRequestId) return
+
+			console.log(
+				"[loadMorePosts] success, got posts:",
+				json.posts?.length,
+			)
+			posts = [...posts, ...(json.posts || [])]
+			feedCursor = json.cursor || null
+			hasMorePosts = !!json.cursor
+			console.log("[loadMorePosts] updated cursor and hasMorePosts:", {
+				feedCursor,
+				hasMorePosts,
+				totalPosts: posts.length,
+			})
+		} catch (error) {
+			console.log("[loadMorePosts] error:", error.message)
+			if (requestId !== lastFeedRequestId) return
+			// Silently fail on load more, don't show error to user
+		} finally {
+			loadingMore = false
+			console.log("[loadMorePosts] finished, loadingMore set to false")
 		}
 	}
 
@@ -387,6 +461,8 @@
 			visiblePosts().length === 0,
 	)
 
+	let observer = null
+
 	onMount(() => {
 		loadLocalTagCounts()
 		bookmarkedUris = readStoredList(BOOKMARK_KEY)
@@ -398,7 +474,36 @@
 
 		return () => {
 			if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+			if (observer) observer.disconnect()
 		}
+	})
+
+	$effect(() => {
+		if (posts.length === 0) return
+
+		const postList = document.querySelector(".post-list")
+		console.log("[effect] postList element:", postList)
+
+		if (!postList) return
+
+		if (observer) observer.disconnect()
+
+		observer = new IntersectionObserver(
+			(entries) => {
+				console.log("[IntersectionObserver] triggered:", {
+					isIntersecting: entries[0].isIntersecting,
+					loadingMore,
+					hasMorePosts,
+				})
+				if (entries[0].isIntersecting && !loadingMore && hasMorePosts) {
+					console.log("[IntersectionObserver] calling loadMorePosts")
+					loadMorePosts()
+				}
+			},
+			{threshold: 0.1},
+		)
+		observer.observe(postList)
+		console.log("[effect] observer set up and observing postList")
 	})
 </script>
 

@@ -177,6 +177,8 @@ async function hydratePostComments(posts = []) {
 export async function GET({ url }) {
 	const query = url.searchParams.get('query')?.trim() || '';
 	const sort = url.searchParams.get('sort') === 'top' ? 'top' : 'latest';
+	const limit = Math.min(Math.max(1, Number(url.searchParams.get('limit')) || 20), 100);
+	const cursor = url.searchParams.get('cursor')?.trim() || '';
 	const publicFetchOptions = {
 		method: 'GET',
 		mode: 'cors',
@@ -186,30 +188,13 @@ export async function GET({ url }) {
 		}
 	};
 
-	const authorFeedPath = `app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(ACCOUNT_HANDLE)}&limit=20`;
-	const { response: authorFeedRes, failures: authorFeedFailures } = await xrpcGet(
-		authorFeedPath,
-		publicFetchOptions
-	);
-
-	if (!authorFeedRes) {
-		return new Response(
-			JSON.stringify({
-				error: 'Unable to load author feed from Bluesky public API.',
-				upstreamFailures: authorFeedFailures
-			}),
-			{ status: 502, headers: { 'content-type': 'application/json' } }
-		);
-	}
-
-	const authorFeedJson = await authorFeedRes.json();
-	const feedItems = (authorFeedJson.feed || []).filter((item) => !isReplyPost(item));
-	const commonRecentTags = countTopTags(feedItems, 20);
-
-	let posts = await hydratePostComments(feedItems.map(mapPost));
+	let nextCursor = null;
 
 	if (query) {
-		const searchPath = `app.bsky.feed.searchPosts?q=${encodeURIComponent(query)}&author=${encodeURIComponent(ACCOUNT_HANDLE)}&limit=30${sort === 'top' ? '&sort=top' : ''}`;
+		let searchPath = `app.bsky.feed.searchPosts?q=${encodeURIComponent(query)}&author=${encodeURIComponent(ACCOUNT_HANDLE)}&limit=${limit}${sort === 'top' ? '&sort=top' : ''}`;
+		if (cursor) {
+			searchPath += `&cursor=${encodeURIComponent(cursor)}`;
+		}
 		const { response: searchRes, failures: searchFailures } = await xrpcGet(
 			searchPath,
 			publicFetchOptions
@@ -226,16 +211,57 @@ export async function GET({ url }) {
 		}
 
 		const searchJson = await searchRes.json();
-		posts = (searchJson.posts || [])
+		nextCursor = searchJson.cursor || null;
+		let posts = (searchJson.posts || [])
 			.filter((post) => !isReplyPost(post))
 			.map((post) => mapPost({ post }));
 		posts = await hydratePostComments(posts);
+
+		return new Response(
+			JSON.stringify({
+				account: ACCOUNT_HANDLE,
+				posts,
+				cursor: nextCursor,
+				commonRecentTags: []
+			}),
+			{ headers: { 'content-type': 'application/json' } }
+		);
 	}
+
+	let authorFeedPath = `app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(ACCOUNT_HANDLE)}&limit=${limit}`;
+	if (cursor) {
+		authorFeedPath += `&cursor=${encodeURIComponent(cursor)}`;
+	}
+	const { response: authorFeedRes, failures: authorFeedFailures } = await xrpcGet(
+		authorFeedPath,
+		publicFetchOptions
+	);
+
+	if (!authorFeedRes) {
+		return new Response(
+			JSON.stringify({
+				error: 'Unable to load author feed from Bluesky public API.',
+				upstreamFailures: authorFeedFailures
+			}),
+			{ status: 502, headers: { 'content-type': 'application/json' } }
+		);
+	}
+
+	const authorFeedJson = await authorFeedRes.json();
+	nextCursor = authorFeedJson.cursor || null;
+	const feedItems = (authorFeedJson.feed || []).filter((item) => !isReplyPost(item));
+	console.log(
+		`[feed] author feed: ${authorFeedJson.feed.length} items, ${feedItems.length} non-replies, cursor: ${nextCursor}`
+	);
+	const commonRecentTags = countTopTags(feedItems, 20);
+
+	let posts = await hydratePostComments(feedItems.map(mapPost));
 
 	return new Response(
 		JSON.stringify({
 			account: ACCOUNT_HANDLE,
 			posts,
+			cursor: nextCursor,
 			commonRecentTags
 		}),
 		{ headers: { 'content-type': 'application/json' } }
