@@ -2,6 +2,7 @@
 	import {onMount} from "svelte"
 	import {goto} from "$app/navigation"
 	import {gpsToHash} from "$lib/utils"
+	import NavBar from "$lib/NavBar.svelte"
 
 	let status = $state("Getting your location...")
 	let error = $state("")
@@ -29,6 +30,12 @@
 		)
 	})
 </script>
+
+<svelte:head>
+	<title>Map | Love4Dogs</title>
+</svelte:head>
+
+<NavBar />
 
 <main class="container">
 	{#if error}

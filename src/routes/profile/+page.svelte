@@ -2,11 +2,15 @@
 	import {onMount} from "svelte"
 	import {Eraser, Save, X} from "lucide-svelte"
 	import Editor from "$lib/Editor.svelte"
+	import NavBar from "$lib/NavBar.svelte"
 	import ProfileImages from "$lib/ProfileImages.svelte"
+	import LocationPicker from "$lib/LocationPicker.svelte"
 	import {
+		buildLocationBlock,
 		CONTACT_LOCK_PREFIX,
 		encryptContact,
 		normalizeContactInput,
+		lookupLocationDetails,
 		mediaTokenFromBuffer,
 	} from "$lib/utils"
 
@@ -31,6 +35,12 @@
 	let profileName = $state("")
 	let profileDescription = $state("")
 	let contentHtml = $state("")
+	let addressText = $state("")
+	let locationConfirmed = $state(false)
+	let confirmedAddress = $state("")
+	let showLocationModal = $state(false)
+	let pinMovedInModal = $state(false)
+	let modalLocation = $state(null)
 
 	let profileUploadedMedia = $state([])
 	let backgroundUploadedMedia = $state([])
@@ -1652,6 +1662,7 @@
 			hasName: Boolean(profileName.trim()),
 			hasEmail: Boolean(email.trim()),
 			hasProfileImage: Boolean(uploadedProfileImage),
+			hasAddress: Boolean(addressText.trim()),
 			nameError,
 			emailError,
 			profileImageError,
@@ -1747,6 +1758,38 @@
 		}
 	}
 
+	$effect(() => {
+		if (locationConfirmed && addressText.trim() !== confirmedAddress) {
+			locationConfirmed = false
+		}
+	})
+
+	async function handleModalConfirm() {
+		if (pinMovedInModal && modalLocation) {
+			const {location} = await lookupLocationDetails(
+				modalLocation.lat,
+				modalLocation.lon,
+			)
+			if (location) {
+				const parts = [
+					location.city,
+					location.country,
+					location.zip,
+				].filter(Boolean)
+				if (parts.length) addressText = parts.join(", ")
+				modalLocation = {...modalLocation, ...location}
+			}
+		}
+		confirmedAddress = addressText.trim()
+		locationConfirmed = true
+		showLocationModal = false
+	}
+
+	function handleModalCancel() {
+		showLocationModal = false
+		pinMovedInModal = false
+	}
+
 	async function publishToBluesky() {
 		console.log("[profile] publishToBluesky:start", {
 			uuid,
@@ -1781,6 +1824,17 @@
 		console.log("[profile] publish validation passed")
 		publishError = ""
 		publishMessage = ""
+
+		const trimmedAddress = addressText.trim()
+		if (
+			trimmedAddress &&
+			(!locationConfirmed || trimmedAddress !== confirmedAddress)
+		) {
+			pinMovedInModal = false
+			showLocationModal = true
+			return
+		}
+
 		publishing = true
 
 		try {
@@ -2444,6 +2498,7 @@
 </svelte:head>
 
 <main class="page">
+	<NavBar />
 	<header class="topline">
 		<a class="back" href="/">&lt; Back home</a>
 		<h1>Profile</h1>
@@ -2547,6 +2602,18 @@
 		{#if touchedEmail && emailError}
 			<p class="field-error">{emailError}</p>
 		{/if}
+		<div class="address-row">
+			<input
+				class="address-input"
+				type="text"
+				bind:value={addressText}
+				placeholder="Address (required)"
+				required
+			/>
+			{#if locationConfirmed}
+				<span class="address-confirmed-badge">✓ Confirmed</span>
+			{/if}
+		</div>
 
 		<div class="actions-row">
 			<div aria-hidden="true"></div>
@@ -2590,6 +2657,48 @@
 			<p class="warning">{uploadError}</p>
 		{/if}
 	</section>
+
+	{#if showLocationModal}
+		<div
+			class="modal-overlay"
+			role="dialog"
+			aria-modal="true"
+			aria-label="Confirm location"
+		>
+			<div class="modal-panel">
+				<h2 class="modal-title">Confirm Location</h2>
+				<p class="modal-hint">
+					Search for your address or move the pin to the exact spot,
+					then confirm.
+				</p>
+				<LocationPicker
+					location={modalLocation}
+					height={300}
+					searchTerms={addressText}
+					showConfirmToggle={false}
+					autoSearch={true}
+					onChange={(loc) => {
+						modalLocation = loc
+					}}
+					onPinMoved={() => {
+						pinMovedInModal = true
+					}}
+				/>
+				<div class="modal-actions">
+					<button
+						class="modal-cancel-btn"
+						type="button"
+						onclick={handleModalCancel}>Cancel</button
+					>
+					<button
+						class="modal-confirm-btn"
+						type="button"
+						onclick={handleModalConfirm}>Confirm Location</button
+					>
+				</div>
+			</div>
+		</div>
+	{/if}
 
 	<section class="panel payloads">
 		<h2>Primary Payload Preview</h2>
@@ -2798,6 +2907,83 @@
 		.actions-right {
 			justify-self: start;
 		}
+	}
+
+	.address-row {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-top: 0.45rem;
+	}
+	.address-input {
+		flex: 1;
+		font: inherit;
+		border: 1px solid #d7c8b6;
+		border-radius: 12px;
+		padding: 0.65rem 0.75rem;
+		box-sizing: border-box;
+	}
+	.address-confirmed-badge {
+		flex-shrink: 0;
+		font-size: 0.85rem;
+		color: #24633f;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+
+	.modal-overlay {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.55);
+		z-index: 1000;
+		display: flex;
+		align-items: flex-start;
+		justify-content: center;
+		padding: 1rem;
+		overflow-y: auto;
+	}
+	.modal-panel {
+		background: rgba(255, 250, 241, 0.98);
+		border: 1px solid rgba(58, 91, 65, 0.18);
+		border-radius: 16px;
+		padding: 1.25rem;
+		box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+		width: 100%;
+		max-width: 640px;
+		margin-top: 2rem;
+	}
+	.modal-title {
+		margin: 0 0 0.4rem;
+		font-size: 1.1rem;
+	}
+	.modal-hint {
+		margin: 0 0 0.85rem;
+		font-size: 0.9rem;
+		color: #5f665f;
+	}
+	.modal-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: 0.55rem;
+		margin-top: 0.85rem;
+	}
+	.modal-cancel-btn {
+		border: 1px solid #bdad9e;
+		background: #fff;
+		border-radius: 999px;
+		padding: 0.5rem 1rem;
+		font: inherit;
+		cursor: pointer;
+	}
+	.modal-confirm-btn {
+		border: 1px solid #305741;
+		background: #3b6e4f;
+		color: #fff;
+		border-radius: 999px;
+		padding: 0.5rem 1rem;
+		font: inherit;
+		font-weight: 600;
+		cursor: pointer;
 	}
 
 	/*

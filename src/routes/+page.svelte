@@ -3,7 +3,7 @@
 	import {CircleAlert, Map as MapIcon} from "lucide-svelte"
 	import About from "$lib/About.svelte"
 	import PostCard from "$lib/PostCard.svelte"
-	import TopBar from "$lib/TopBar.svelte"
+	import NavBar from "$lib/NavBar.svelte"
 
 	const ACCOUNT_HANDLE = "love4dogs.club"
 	const LOCAL_TAG_KEY = "love4dogs.tag-counts"
@@ -445,18 +445,16 @@
 		</div>
 	{/if}
 
-	<TopBar
+	<NavBar
 		bind:searchTerm
-		{recentTags}
-		{tagCloudSignal}
+		bind:selectionMenuOpen
+		showSearch={true}
 		historyCount={myPostUris.length}
 		selectedCount={selectedUris.length}
-		{selectionMenuOpen}
 		{currentView}
 		bookmarkedCount={bookmarkedUris.length}
 		trashedCount={trashedUris.length}
 		showLocalDelete={isLocalhost}
-		onToggleMenu={() => (selectionMenuOpen = !selectionMenuOpen)}
 		onSetView={setView}
 		onSelectionAction={applySelectionAction}
 		onOpenAbout={openAboutModal}

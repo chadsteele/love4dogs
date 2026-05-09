@@ -470,6 +470,7 @@
 			"img",
 			"video",
 			"source",
+			"iframe",
 			"span",
 			"div",
 			"blockquote",
@@ -630,6 +631,22 @@
 						(attr.name === "src" || attr.name === "srcset") &&
 						!SAFE_SRC.test(attr.value)
 					) {
+						node.removeAttribute(attr.name)
+					}
+					continue
+				}
+				if (
+					tag === "iframe" &&
+					(attr.name === "src" ||
+						attr.name === "width" ||
+						attr.name === "height" ||
+						attr.name === "title" ||
+						attr.name === "frameborder" ||
+						attr.name === "allow" ||
+						attr.name === "referrerpolicy" ||
+						attr.name === "allowfullscreen")
+				) {
+					if (attr.name === "src" && !SAFE_SRC.test(attr.value)) {
 						node.removeAttribute(attr.name)
 					}
 					continue
@@ -806,6 +823,19 @@
 		const sel = window.getSelection()
 		const safeText = normalizePastedText(text)
 
+		// Detect if text looks like HTML (contains tags like <iframe>, <div>, etc.)
+		const looksLikeHtml = /<[a-z][\w-]*[^>]*>/i.test(safeText)
+
+		if (looksLikeHtml) {
+			// Try to insert as sanitized HTML instead of plain text
+			const cleanHtml = sanitizePastedHtml(safeText)
+			if (cleanHtml.trim()) {
+				insertHtmlAtCaret(contentEl, cleanHtml)
+				return
+			}
+		}
+
+		// Fall back to plain text insertion
 		if (sel && sel.rangeCount > 0) {
 			const range = sel.getRangeAt(0)
 			range.deleteContents()
@@ -1500,7 +1530,7 @@
 		function onContentPointerMove(e) {
 			const target =
 				e.target instanceof Element
-					? e.target.closest("img,video")
+					? e.target.closest("img,video,iframe")
 					: null
 			if (target && content.contains(target)) {
 				showMediaDeleteButton(target, content)
@@ -1518,7 +1548,7 @@
 			}
 			const target =
 				e.target instanceof Element
-					? e.target.closest("img,video")
+					? e.target.closest("img,video,iframe")
 					: null
 			if (target && content.contains(target)) {
 				showMediaDeleteButton(target, content)
@@ -1899,6 +1929,16 @@
 		margin: 0.7rem auto;
 		width: auto;
 		height: auto;
+		max-width: min(90dvw, 100%);
+		border-radius: 14px;
+		box-shadow: 0 14px 30px -18px rgba(20, 18, 14, 0.55);
+	}
+
+	.pell-wrapper :global(.pell-content iframe) {
+		display: block;
+		margin: 0.7rem auto;
+		/* width: 900px;
+		aspect-ratio: 560 / 315; */
 		max-width: min(90dvw, 100%);
 		border-radius: 14px;
 		box-shadow: 0 14px 30px -18px rgba(20, 18, 14, 0.55);

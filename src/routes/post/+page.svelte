@@ -29,6 +29,7 @@
 	import LocationPicker from "$lib/LocationPicker.svelte"
 	import PostCard from "$lib/PostCard.svelte"
 	import Editor from "$lib/Editor.svelte"
+	import NavBar from "$lib/NavBar.svelte"
 
 	const LOCAL_TAG_KEY = "love4dogs.tag-counts"
 	const LOCAL_OLD_POSTS_KEY = "love4dogs.my-post-uris"
@@ -692,6 +693,7 @@
 </svelte:head>
 
 <main class="page">
+	<NavBar />
 	<nav class="topline">
 		<a class="back" href="/">＜ Back home</a>
 		<h1>Create a post</h1>

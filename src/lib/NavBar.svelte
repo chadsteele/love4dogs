@@ -10,49 +10,34 @@
 		Users,
 		AlertOctagon,
 	} from "lucide-svelte"
-	import {slide} from "svelte/transition"
-	import HashTagCloud from "$lib/HashTagCloud.svelte"
 
 	let {
 		searchTerm = $bindable(""),
 		selectedCount = 0,
-		selectionMenuOpen = false,
+		selectionMenuOpen = $bindable(false),
 		currentView = "feed",
-		recentTags = [],
-		tagCloudSignal = 0,
 		historyCount = 0,
 		bookmarkedCount = 0,
 		trashedCount = 0,
-		onToggleMenu = () => {},
 		onSetView = () => {},
 		onSelectionAction = () => {},
 		onOpenAbout = () => {},
 		showLocalDelete = false,
+		showSearch = false,
 		onSearchSubmit = () => {},
 		onSearchInput = () => {},
+		menu,
 	} = $props()
 
 	let logoLoaded = $state(true)
-	let searchFocused = $state(false)
-	let cloudPinnedBySignal = $state(false)
-	let cloudHadSearchFocus = $state(false)
-	let lastTagCloudSignal = 0
 	let selectionMenuEl = $state(null)
-	let searchBlurTimer = null
-
-	$effect(() => {
-		if (tagCloudSignal === lastTagCloudSignal) return
-		lastTagCloudSignal = tagCloudSignal
-		cloudPinnedBySignal = true
-		cloudHadSearchFocus = false
-	})
 
 	$effect(() => {
 		if (!selectionMenuOpen) return
 
 		const onPointerDown = (event) => {
 			if (!selectionMenuEl?.contains(event.target)) {
-				onToggleMenu()
+				selectionMenuOpen = false
 			}
 		}
 
@@ -69,7 +54,7 @@
 			<button
 				class="selection-menu-btn"
 				type="button"
-				onclick={onToggleMenu}
+				onclick={() => (selectionMenuOpen = !selectionMenuOpen)}
 			>
 				<Menu size={18} />
 				{#if selectedCount > 0}
@@ -78,100 +63,117 @@
 			</button>
 			{#if selectionMenuOpen}
 				<div class="selection-menu">
-					<button
-						type="button"
-						class:is-active={currentView === "feed"}
-						onclick={() => onSetView("feed")}
-					>
-						<Search size={16} /> Show feed
-					</button>
-					{#if historyCount > 0}
+					{#if menu}
+						{@render menu()}
+					{:else}
 						<button
 							type="button"
-							class:is-active={currentView === "history"}
-							onclick={() => onSetView("history")}
+							class:is-active={currentView === "feed"}
+							onclick={() => {
+								onSetView("feed")
+								selectionMenuOpen = false
+							}}
 						>
-							<History size={16} /> Show history
+							<Search size={16} /> Show feed
 						</button>
-					{/if}
-					{#if bookmarkedCount > 0}
-						<button
-							type="button"
-							class:is-active={currentView === "bookmarks"}
-							onclick={() => onSetView("bookmarks")}
-						>
-							<PawPrint size={16} /> Show favorites
-						</button>
-					{/if}
-					{#if trashedCount > 0}
-						<button
-							type="button"
-							class:is-active={currentView === "trash"}
-							onclick={() => onSetView("trash")}
-						>
-							<Trash2 size={16} /> Show trash
-						</button>
-					{/if}
+						{#if historyCount > 0}
+							<button
+								type="button"
+								class:is-active={currentView === "history"}
+								onclick={() => {
+									onSetView("history")
+									selectionMenuOpen = false
+								}}
+							>
+								<History size={16} /> Show history
+							</button>
+						{/if}
+						{#if bookmarkedCount > 0}
+							<button
+								type="button"
+								class:is-active={currentView === "bookmarks"}
+								onclick={() => {
+									onSetView("bookmarks")
+									selectionMenuOpen = false
+								}}
+							>
+								<PawPrint size={16} /> Show favorites
+							</button>
+						{/if}
+						{#if trashedCount > 0}
+							<button
+								type="button"
+								class:is-active={currentView === "trash"}
+								onclick={() => {
+									onSetView("trash")
+									selectionMenuOpen = false
+								}}
+							>
+								<Trash2 size={16} /> Show trash
+							</button>
+						{/if}
 
-					{#if selectedCount > 0}
+						{#if selectedCount > 0}
+							<div class="menu-sep"></div>
+						{/if}
+
+						{#if selectedCount > 0 && currentView === "feed"}
+							<button
+								type="button"
+								onclick={() => onSelectionAction("bookmark")}
+							>
+								<PawPrint size={16} /> Favorite selected
+							</button>
+							<button
+								type="button"
+								onclick={() => onSelectionAction("trash")}
+							>
+								<Trash2 size={16} /> Delete selected
+							</button>
+						{/if}
+
+						{#if selectedCount > 0 && currentView === "trash"}
+							<button
+								type="button"
+								onclick={() => onSelectionAction("restore")}
+							>
+								<Trash2 size={16} /> Restore selected
+							</button>
+						{/if}
+
+						{#if selectedCount > 0 && currentView === "bookmarks"}
+							<button
+								type="button"
+								onclick={() => onSelectionAction("unbookmark")}
+							>
+								<PawPrint size={16} /> Remove favorite
+							</button>
+						{/if}
+
+						{#if showLocalDelete && selectedCount > 0}
+							<button
+								type="button"
+								onclick={() =>
+									onSelectionAction("deleteRemote")}
+							>
+								<AlertOctagon size={16} /> Remove permanently
+							</button>
+						{/if}
+
 						<div class="menu-sep"></div>
-					{/if}
-
-					{#if selectedCount > 0 && currentView === "feed"}
 						<button
 							type="button"
-							onclick={() => onSelectionAction("bookmark")}
+							onclick={() => {
+								onOpenAbout()
+								selectionMenuOpen = false
+							}}
 						>
-							<PawPrint size={16} /> Favorite selected
-						</button>
-						<button
-							type="button"
-							onclick={() => onSelectionAction("trash")}
+							<Users size={16} />About Us</button
 						>
-							<Trash2 size={16} /> Delete selected
-						</button>
+						<button type="button" onclick={() => goto("/settings")}
+							><Settings size={16} />Settings</button
+						>
 					{/if}
-
-					{#if selectedCount > 0 && currentView === "trash"}
-						<button
-							type="button"
-							onclick={() => onSelectionAction("restore")}
-						>
-							<Trash2 size={16} /> Restore selected
-						</button>
-					{/if}
-
-					{#if selectedCount > 0 && currentView === "bookmarks"}
-						<button
-							type="button"
-							onclick={() => onSelectionAction("unbookmark")}
-						>
-							<PawPrint size={16} /> Remove favorite
-						</button>
-					{/if}
-
-					{#if showLocalDelete && selectedCount > 0}
-						<button
-							type="button"
-							onclick={() => onSelectionAction("deleteRemote")}
-						>
-							<AlertOctagon size={16} /> Remove permanently
-						</button>
-					{/if}
-
-					<div class="menu-sep"></div>
-					<button
-						type="button"
-						onclick={() => {
-							onOpenAbout()
-							onToggleMenu()
-						}}
-					>
-						<Users size={16} />About Us</button
-					>
-					<button type="button" onclick={() => goto("/settings")}
-						><Settings size={16} />Settings</button
-					>
 				</div>
 			{/if}
 		</div>
@@ -198,57 +200,31 @@
 		</div>
 	</div>
 
-	<form
-		class="search"
-		onsubmit={(event) => {
-			event.preventDefault()
-			onSearchSubmit()
-		}}
-		onfocusin={() => {
-			if (searchBlurTimer) {
-				clearTimeout(searchBlurTimer)
-				searchBlurTimer = null
-			}
-			searchFocused = true
-			cloudHadSearchFocus = true
-		}}
-		onfocusout={(event) => {
-			const nextTarget = event.relatedTarget
-			if (nextTarget && event.currentTarget.contains(nextTarget)) return
-			const searchForm = event.currentTarget
-			if (searchBlurTimer) clearTimeout(searchBlurTimer)
-			searchBlurTimer = setTimeout(() => {
-				if (searchForm?.contains(document.activeElement)) return
-				searchFocused = false
-				if (cloudHadSearchFocus) {
-					cloudPinnedBySignal = false
-					cloudHadSearchFocus = false
-				}
-				searchBlurTimer = null
-			}, 0)
-		}}
-	>
-		<Search size={18} />
-		<input
-			type="search"
-			bind:value={searchTerm}
-			oninput={onSearchInput}
-			onsearch={onSearchInput}
-			placeholder="Search"
-		/>
-		<button type="submit">Search</button>
-	</form>
+	{#if showSearch}
+		<form
+			class="search"
+			onsubmit={(event) => {
+				event.preventDefault()
+				onSearchSubmit()
+			}}
+		>
+			<Search size={18} />
+			<input
+				type="search"
+				bind:value={searchTerm}
+				oninput={onSearchInput}
+				onsearch={onSearchInput}
+				placeholder="Search"
+			/>
+			<button type="submit">Search</button>
+		</form>
+	{/if}
 
 	<div class="topbar-links">
 		<a class="post-route-btn" href="/post" aria-label="Create Post"
 			>+ Create</a
 		>
 	</div>
-	{#if searchFocused || cloudPinnedBySignal}
-		<div class="topnav-cloud" transition:slide={{duration: 170, axis: "y"}}>
-			<HashTagCloud bind:draft={searchTerm} feedTags={recentTags} />
-		</div>
-	{/if}
 </nav>
 
 <style>
@@ -417,24 +393,6 @@
 		flex: 1 1 375px;
 		max-width: 100%;
 		box-sizing: border-box;
-	}
-
-	.topnav-cloud {
-		order: 4;
-		flex-basis: 100%;
-		width: 100%;
-		margin-top: -0.45rem;
-		padding: 0.55rem 0.65rem 0.65rem;
-		max-height: 33vh;
-		overflow-y: auto;
-		/* border-radius: 12px;
-		border: 1px solid rgba(151, 120, 71, 0.25);
-		background: linear-gradient(180deg, #fffdf9 0%, #f7f0e5 100%);
-		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55); */
-	}
-
-	.topnav-cloud :global(.tag-cloud) {
-		margin-top: 0;
 	}
 
 	.search input {
