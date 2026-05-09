@@ -19,11 +19,8 @@
 		bookmarked = false,
 		selectable = true,
 		onToggleSelect = () => {},
-		onToggleSearchTag = () => {},
 	} = $props()
 
-	let postTextEl = $state(null)
-	let postTitleEl = $state(null)
 	let isMyPost = $state(false)
 
 	const MY_POSTS_KEY = "love4dogs.my-post-uris"
@@ -102,72 +99,6 @@
 			.replace(/>/g, "&gt;")
 	}
 
-	function hashtagButton(tag = "") {
-		return `<button type="button" class="inline-token inline-hashtag" data-token="${escapeAttr(`#${tag}`)}">#${escapeHtml(tag)}</button>`
-	}
-
-	function wordButton(word = "") {
-		return `<button type="button" class="inline-token inline-word" data-token="${escapeAttr(word)}">${escapeHtml(word)}</button>`
-	}
-
-	function renderInteractiveText(text = "") {
-		if (!text) return ""
-		const tokenRegex = /#?[\p{L}\p{N}_-]+/gu
-		let html = ""
-		let cursor = 0
-
-		for (const match of text.matchAll(tokenRegex)) {
-			const token = match[0]
-			const start = match.index ?? 0
-			html += escapeHtml(text.slice(cursor, start))
-			if (token.startsWith("#") && token.length > 1) {
-				html += hashtagButton(token.slice(1))
-			} else {
-				html += wordButton(token)
-			}
-			cursor = start + token.length
-		}
-
-		html += escapeHtml(text.slice(cursor))
-		return html
-	}
-
-	function handlePostTextClick(event) {
-		const tokenButton = event.target?.closest?.(".inline-token")
-		if (!tokenButton) return
-		event.preventDefault()
-		event.stopPropagation()
-		const token = tokenButton.getAttribute("data-token") || ""
-		if (!token) return
-		onToggleSearchTag(token)
-	}
-
-	function handlePostTextMouseDown(event) {
-		const tokenButton = event.target?.closest?.(".inline-token")
-		if (!tokenButton) return
-		// Keep search input focus while clicking words/hashtags.
-		event.preventDefault()
-	}
-
-	$effect(() => {
-		const clickableEls = [postTitleEl, postTextEl].filter(Boolean)
-		if (clickableEls.length === 0) return
-
-		const onClick = (event) => handlePostTextClick(event)
-		const onMouseDown = (event) => handlePostTextMouseDown(event)
-		for (const el of clickableEls) {
-			el.addEventListener("click", onClick)
-			el.addEventListener("mousedown", onMouseDown)
-		}
-
-		return () => {
-			for (const el of clickableEls) {
-				el?.removeEventListener("click", onClick)
-				el?.removeEventListener("mousedown", onMouseDown)
-			}
-		}
-	})
-
 	function byteOffsetToJsIndex(text, byteOffset) {
 		let totalBytes = 0
 		let jsIndex = 0
@@ -192,12 +123,12 @@
 			for (const match of plainText.matchAll(urlRegex)) {
 				const url = match[0]
 				const start = match.index ?? 0
-				html += renderInteractiveText(plainText.slice(cursor, start))
+				html += escapeHtml(plainText.slice(cursor, start))
 				html += `<a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`
 				cursor = start + url.length
 			}
 
-			html += renderInteractiveText(plainText.slice(cursor))
+			html += escapeHtml(plainText.slice(cursor))
 			return html
 		}
 
@@ -227,7 +158,7 @@
 		}
 
 		if (linkFacets.length === 0) {
-			return renderInteractiveText(text)
+			return escapeHtml(text)
 		}
 
 		linkFacets.sort((a, b) => a.byteStart - b.byteStart)
@@ -239,12 +170,12 @@
 			const end = byteOffsetToJsIndex(text, facet.byteEnd)
 			if (start < cursor || end <= start) continue
 
-			html += renderInteractiveText(text.slice(cursor, start))
+			html += escapeHtml(text.slice(cursor, start))
 			html += `<a href="${escapeAttr(facet.uri)}" target="_blank" rel="noopener noreferrer">${escapeHtml(text.slice(start, end))}</a>`
 			cursor = end
 		}
 
-		html += renderInteractiveText(text.slice(cursor))
+		html += escapeHtml(text.slice(cursor))
 		return html
 	}
 
@@ -378,8 +309,66 @@
 		return {title, body, bodyFacets}
 	}
 
+	function cleanExtractedUrl(raw = "") {
+		return String(raw || "").replace(/[),.!?:;]+$/g, "")
+	}
+
+	function extractCanonicalUrl(inputPost = {}) {
+		for (const facet of inputPost?.facets || []) {
+			for (const feature of facet?.features || []) {
+				if (feature?.$type !== "app.bsky.richtext.facet#link") continue
+				const uri = String(feature?.uri || "").trim()
+				if (!uri) continue
+				if (/\/profile\/view\//i.test(uri)) {
+					return cleanExtractedUrl(uri)
+				}
+			}
+		}
+
+		const text = String(inputPost?.text || "")
+		const canonicalPattern =
+			/https?:\/\/(?:www\.)?(?:love4dogs\.club|localhost(?::\d+)?)\/profile\/view\/[^\s"'<>]+/i
+		const canonicalMatch = text.match(canonicalPattern)
+		if (canonicalMatch?.[0]) {
+			return cleanExtractedUrl(canonicalMatch[0])
+		}
+
+		const keyValuePattern = /canonicalurl\s*[:=]\s*(https?:\/\/\S+)/i
+		const keyValueMatch = text.match(keyValuePattern)
+		if (keyValueMatch?.[1]) {
+			return cleanExtractedUrl(keyValueMatch[1])
+		}
+
+		return ""
+	}
+
+	function resolveCanonicalUrlForCurrentHost(url = "") {
+		const canonical = String(url || "").trim()
+		if (!canonical) return ""
+		if (typeof window === "undefined") return canonical
+		if (window.location.hostname !== "localhost") return canonical
+
+		try {
+			const parsed = new URL(canonical)
+			if (/^(?:www\.)?love4dogs\.club$/i.test(parsed.hostname)) {
+				return `${window.location.origin}${parsed.pathname}${parsed.search}${parsed.hash}`
+			}
+			if (parsed.hostname === "localhost") {
+				return `${window.location.origin}${parsed.pathname}${parsed.search}${parsed.hash}`
+			}
+			return canonical
+		} catch {
+			return canonical.replace(
+				/^https?:\/\/(?:www\.)?love4dogs\.club/i,
+				window.location.origin,
+			)
+		}
+	}
+
 	const parts = $derived(getPostParts(post))
-	const titleHtml = $derived(renderInteractiveText(parts.title))
+	const canonicalUrl = $derived(extractCanonicalUrl(post))
+	const titleHref = $derived(resolveCanonicalUrlForCurrentHost(canonicalUrl))
+	const titleHtml = $derived(escapeHtml(parts.title))
 	const bodyLines = $derived(
 		buildBodyLines(parts.body, parts.bodyFacets, unlockedBodyLines),
 	)
@@ -481,10 +470,22 @@
 	{/if}
 
 	{#if parts.title}
-		<h3 class="post-title" bind:this={postTitleEl}>{@html titleHtml}</h3>
+		<h3 class="post-title">
+			{#if titleHref}
+				<a
+					class="post-title-link"
+					href={titleHref}
+					onclick={(event) => event.stopPropagation()}
+				>
+					{@html titleHtml}
+				</a>
+			{:else}
+				{@html titleHtml}
+			{/if}
+		</h3>
 	{/if}
 	{#if parts.body}
-		<div class="post-text" bind:this={postTextEl}>
+		<div class="post-text">
 			{#each bodyLines as line (line.index)}
 				{#if line.locked && !line.unlocked}
 					<button
@@ -708,6 +709,17 @@
 		line-height: 1.3;
 	}
 
+	.post-title-link {
+		color: inherit;
+		text-decoration: none;
+		cursor: pointer;
+	}
+
+	.post-title-link:hover,
+	.post-title-link:focus-visible {
+		text-decoration: underline;
+	}
+
 	.post-text {
 		margin: 0.35rem 0 0;
 		line-height: 1.35;
@@ -738,54 +750,6 @@
 	.post-text :global(a) {
 		color: #2d5f9a;
 		text-decoration: underline;
-	}
-
-	.post-title :global(.inline-token),
-	.post-text :global(.inline-token) {
-		border: none;
-		padding: 0;
-		margin: 0;
-		background: transparent;
-		font: inherit;
-		cursor: pointer;
-	}
-
-	.post-title :global(.inline-hashtag),
-	.post-text :global(.inline-hashtag) {
-		color: #2d5f9a;
-		text-decoration: none;
-	}
-
-	.post-title :global(.inline-hashtag:hover),
-	.post-text :global(.inline-hashtag:hover) {
-		text-decoration: underline;
-	}
-
-	.post-title :global(.inline-word),
-	.post-text :global(.inline-word) {
-		color: inherit;
-		text-decoration: none;
-	}
-
-	.post-title :global(.inline-word:hover),
-	.post-text :global(.inline-word:hover) {
-		text-decoration: underline;
-	}
-
-	.post-images {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 0.35rem;
-		margin-top: 0.65rem;
-	}
-
-	.post-images.single-image,
-	.post-images.two-images {
-		grid-template-columns: 1fr;
-	}
-
-	.post-images.three-images {
-		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
 
 	.post-image-btn {

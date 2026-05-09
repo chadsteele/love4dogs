@@ -71,7 +71,8 @@ export function buildCanonicalUrl(uuid = '', stamp = '', name = '', baseUrl = DE
 	const trimmedName = String(name || '').trim();
 	if (!trimmedName) return '';
 
-	const cleaned = cleanCanonicalName(trimmedName);
+	// remove spaces around /
+	const cleaned = cleanCanonicalName(trimmedName).split('/').map(segment => segment.trim()).filter(Boolean).join('/');
 	if (!cleaned) return '';
 
 	const safeUuid = String(uuid || '').trim();

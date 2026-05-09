@@ -15,6 +15,7 @@
 	const ABOUT_PAGE_VISIT_KEY = "love4dogs.about-page-visited-at"
 	const ABOUT_MODAL_WINDOW_MS = 36 * 60 * 60 * 1000
 	const MAX_SAVED_ITEMS = 100
+	const BSKY_REQUIRED_QUERY_TERM = "canonicalurl"
 
 	let posts = $state([])
 	let recentTags = $state([])
@@ -113,27 +114,6 @@
 		}
 	}
 
-	function storeRecentTag(tag) {
-		if (typeof window === "undefined") return
-		const normalized = String(tag || "")
-			.trim()
-			.toLowerCase()
-			.replace(/^#/, "")
-			.replace(/[^\p{L}\p{N}_-]+/gu, "")
-		if (!normalized) return
-
-		try {
-			const counts = JSON.parse(
-				localStorage.getItem(LOCAL_TAG_KEY) || "{}",
-			)
-			counts[normalized] = (Number(counts[normalized]) || 0) + 1
-			localStorage.setItem(LOCAL_TAG_KEY, JSON.stringify(counts))
-			loadLocalTagCounts()
-		} catch {
-			// Ignore storage errors.
-		}
-	}
-
 	async function loadFeed() {
 		const requestId = ++lastFeedRequestId
 		loadingPosts = true
@@ -142,7 +122,7 @@
 		hasMorePosts = true
 
 		try {
-			const query = searchTerm.trim()
+			const query = buildFeedQuery(searchTerm)
 			const params = new URLSearchParams({
 				query,
 				sort: searchSort,
@@ -193,7 +173,7 @@
 		const requestId = lastFeedRequestId
 
 		try {
-			const query = searchTerm.trim()
+			const query = buildFeedQuery(searchTerm)
 			const params = new URLSearchParams({
 				query,
 				sort: searchSort,
@@ -244,6 +224,13 @@
 	function loadMyPostUris() {
 		const uris = readStoredList(LOCAL_MY_POSTS_KEY)
 		return uris.filter((uri) => isValidAtUri(uri))
+	}
+
+	function buildFeedQuery(rawQuery = "") {
+		const base = String(rawQuery || "").trim()
+		return base
+			? `${base} ${BSKY_REQUIRED_QUERY_TERM}`
+			: BSKY_REQUIRED_QUERY_TERM
 	}
 
 	async function fetchPostByUri(uri = "") {
@@ -433,26 +420,6 @@
 
 		selectedUris = []
 		selectionMenuOpen = false
-	}
-
-	function toggleSearchTag(tag) {
-		const normalized = String(tag || "")
-			.trim()
-			.replace(/^#/, "")
-			.toLowerCase()
-		if (!normalized) return
-
-		storeRecentTag(normalized)
-
-		const current = searchTerm.split(/\s+/).filter(Boolean)
-		const next = current.filter(
-			(token) => token.toLowerCase().replace(/^#/, "") !== normalized,
-		)
-
-		if (next.length === current.length) next.push(normalized)
-
-		searchTerm = next.join(" ")
-		tagCloudSignal += 1
 	}
 
 	const isSearchResultsEmpty = $derived(
@@ -648,7 +615,6 @@
 							selected={selectedUris.includes(post.uri)}
 							bookmarked={bookmarkedUris.includes(post.uri)}
 							onToggleSelect={toggleCardSelection}
-							onToggleSearchTag={toggleSearchTag}
 						/>
 					{/each}
 				</div>
