@@ -540,7 +540,7 @@ export async function GET({ url }) {
 		if (shouldOpenThrottleWindow(allFailures)) {
 			upstreamThrottleUntil = Date.now() + THROTTLE_COOLDOWN_MS;
 			upstreamThrottleReason =
-				'Received 403 administrative blocks from all Bluesky public hosts.';
+				'Received 403 administrative blocks from all public hosts.';
 			const remainingMs = getThrottleRemainingMs();
 			console.log('[map-posts] opening throttle cooldown window', {
 				approximate,
@@ -565,7 +565,7 @@ export async function GET({ url }) {
 
 		console.log('[map-posts] search failed', { approximate, failureCount: allFailures.length });
 		const errorPayload = JSON.stringify({
-			error: 'Unable to search Bluesky posts.',
+			error: 'Unable to search posts using public API.',
 			upstreamFailures: allFailures
 		});
 		writeCache(approximate, {

@@ -168,7 +168,7 @@
 	async function deletePost() {
 		if (!editingPostUri) return
 		const confirmed = window.confirm(
-			"Permanently delete this post from Bluesky? This cannot be undone.",
+			"Permanently delete this post? This cannot be undone.",
 		)
 		if (!confirmed) return
 

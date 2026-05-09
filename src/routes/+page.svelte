@@ -276,7 +276,7 @@
 				return (
 					myPostsByUri[uri] || {
 						uri,
-						text: "Post unavailable. It may have been deleted from Bluesky.",
+						text: "Post not found.",
 						createdAt: null,
 						images: [],
 						video: null,
@@ -349,7 +349,7 @@
 		if (action === "deleteRemote") {
 			const urisToDelete = [...selectedUris]
 			const confirmed = window.confirm(
-				`Delete ${urisToDelete.length} selected post(s) from Bluesky? This cannot be undone.`,
+				`Delete ${urisToDelete.length} selected post(s)? This cannot be undone.`,
 			)
 			if (!confirmed) return
 
@@ -363,8 +363,7 @@
 
 				if (!res.ok || !json.ok) {
 					throw new Error(
-						json.error ||
-							"Failed to delete selected posts from Bluesky.",
+						json.error || "Failed to delete selected posts.",
 					)
 				}
 
@@ -382,8 +381,7 @@
 				saveStoredList(BOOKMARK_KEY, bookmarkedUris)
 				saveStoredList(TRASH_KEY, trashedUris)
 			} catch (error) {
-				feedError =
-					error.message || "Failed deleting posts from Bluesky."
+				feedError = error.message || "Failed deleting posts."
 			}
 
 			selectedUris = []
@@ -475,7 +473,7 @@
 </script>
 
 <svelte:head>
-	<title>Love4Dogs on Bluesky</title>
+	<title>Love4Dogs</title>
 </svelte:head>
 
 <main class="page">

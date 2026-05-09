@@ -203,7 +203,7 @@ export async function GET({ url }) {
 		if (!searchRes) {
 			return new Response(
 				JSON.stringify({
-					error: 'Search failed using Bluesky public API.',
+					error: 'Search failed using public API.',
 					upstreamFailures: searchFailures
 				}),
 				{ status: 502, headers: { 'content-type': 'application/json' } }
@@ -240,7 +240,7 @@ export async function GET({ url }) {
 	if (!authorFeedRes) {
 		return new Response(
 			JSON.stringify({
-				error: 'Unable to load author feed from Bluesky public API.',
+				error: 'Unable to load author feed from public API.',
 				upstreamFailures: authorFeedFailures
 			}),
 			{ status: 502, headers: { 'content-type': 'application/json' } }
