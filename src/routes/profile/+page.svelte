@@ -1230,8 +1230,8 @@
 		version: primaryVersion,
 		canonicalurl,
 		email: encryptEmailForPayload(email),
-		profilePic: uploadedProfileImage?.blob || null,
-		backgroundPic: uploadedBackgroundImage?.blob || null,
+		profilePic: uploadedProfileImage?.bskyUrl || null,
+		backgroundPic: uploadedBackgroundImage?.bskyUrl || null,
 		name: profileName,
 		description: profileDescription,
 	})
@@ -1652,8 +1652,8 @@
 				version: publishedPrimaryVersion,
 				canonicalurl: publishedCanonicalUrl,
 				email: encryptEmailForPayload(email),
-				profilePic: uploadedProfileImage?.blob || null,
-				backgroundPic: uploadedBackgroundImage?.blob || null,
+				profilePic: uploadedProfileImage?.bskyUrl || null,
+				backgroundPic: uploadedBackgroundImage?.bskyUrl || null,
 				name: profileName,
 				description: profileDescription,
 			}
