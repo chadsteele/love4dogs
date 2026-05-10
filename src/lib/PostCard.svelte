@@ -313,19 +313,10 @@
 		return String(raw || "").replace(/[),.!?:;]+$/g, "")
 	}
 
-	function extractCanonicalUrl(inputPost = {}) {
-		for (const facet of inputPost?.facets || []) {
-			for (const feature of facet?.features || []) {
-				if (feature?.$type !== "app.bsky.richtext.facet#link") continue
-				const uri = String(feature?.uri || "").trim()
-				if (!uri) continue
-				if (/\/profile\/view\//i.test(uri)) {
-					return cleanExtractedUrl(uri)
-				}
-			}
-		}
+	function extractCanonicalUrlFromText(source = "") {
+		const text = String(source || "")
+		if (!text) return ""
 
-		const text = String(inputPost?.text || "")
 		const canonicalPattern =
 			/https?:\/\/(?:www\.)?(?:love4dogs\.club|localhost(?::\d+)?)\/profile\/view\/[^\s"'<>]+/i
 		const canonicalMatch = text.match(canonicalPattern)
@@ -339,35 +330,157 @@
 			return cleanExtractedUrl(keyValueMatch[1])
 		}
 
+		const genericUrlPattern = /https?:\/\/[^\s"'<>]+/i
+		const genericMatch = text.match(genericUrlPattern)
+		if (genericMatch?.[0]) {
+			return cleanExtractedUrl(genericMatch[0])
+		}
+
 		return ""
 	}
 
-	function resolveCanonicalUrlForCurrentHost(url = "") {
-		const canonical = String(url || "").trim()
-		if (!canonical) return ""
-		if (typeof window === "undefined") return canonical
-		if (window.location.hostname !== "localhost") return canonical
+	function normalizeEscapedUrl(value = "") {
+		const raw = String(value || "").trim()
+		if (!raw) return ""
+		return cleanExtractedUrl(raw.replace(/\\\//g, "/"))
+	}
+
+	function extractCanonicalUrlFromAltPayload(alt = "") {
+		const source = String(alt || "").trim()
+		if (!source) return ""
+
+		const fromText = extractCanonicalUrlFromText(source)
+		if (fromText) return fromText
 
 		try {
-			const parsed = new URL(canonical)
-			if (/^(?:www\.)?love4dogs\.club$/i.test(parsed.hostname)) {
-				return `${window.location.origin}${parsed.pathname}${parsed.search}${parsed.hash}`
-			}
-			if (parsed.hostname === "localhost") {
-				return `${window.location.origin}${parsed.pathname}${parsed.search}${parsed.hash}`
-			}
-			return canonical
-		} catch {
-			return canonical.replace(
-				/^https?:\/\/(?:www\.)?love4dogs\.club/i,
-				window.location.origin,
+			const parsed = JSON.parse(source)
+			const direct = normalizeEscapedUrl(
+				parsed?.canonicalurl || parsed?.primary?.canonicalurl || "",
 			)
+			if (direct) return direct
+
+			if (typeof parsed?.h === "string" && parsed.h.trim()) {
+				const fromHText = extractCanonicalUrlFromText(parsed.h)
+				if (fromHText) return fromHText
+				try {
+					const inner = JSON.parse(parsed.h)
+					const nested = normalizeEscapedUrl(
+						inner?.canonicalurl ||
+							inner?.primary?.canonicalurl ||
+							"",
+					)
+					if (nested) return nested
+				} catch {
+					// Continue with regex fallback below.
+				}
+			}
+		} catch {
+			// Not JSON alt payload; continue with escaped regex fallback.
+		}
+
+		const escapedPattern = new RegExp(
+			"https?:\\\\/\\\\/(?:www\\\\.)?(?:love4dogs\\\\.club|localhost(?::\\\\d+)?)\\\\/profile\\\\/view\\\\/[^\\\\s\"'<>]+",
+			"i",
+		)
+		const escapedMatch = source.match(escapedPattern)
+		if (escapedMatch?.[0]) {
+			return normalizeEscapedUrl(escapedMatch[0])
+		}
+
+		return ""
+	}
+
+	function extractCanonicalUrl(inputPost = {}) {
+		for (const facet of inputPost?.facets || []) {
+			for (const feature of facet?.features || []) {
+				if (feature?.$type !== "app.bsky.richtext.facet#link") continue
+				const uri = String(feature?.uri || "").trim()
+				if (!uri) continue
+				if (/\/profile\/view\//i.test(uri)) {
+					return cleanExtractedUrl(uri)
+				}
+			}
+		}
+
+		for (const alt of inputPost?.imageAlts || []) {
+			const fromAlt = extractCanonicalUrlFromAltPayload(alt)
+			if (fromAlt) return fromAlt
+		}
+
+		const fromVideoAlt = extractCanonicalUrlFromAltPayload(
+			inputPost?.video?.alt || "",
+		)
+		if (fromVideoAlt) return fromVideoAlt
+
+		return ""
+	}
+
+	function collectCanonicalDebug(inputPost = {}) {
+		const facetLinks = []
+		for (const facet of inputPost?.facets || []) {
+			for (const feature of facet?.features || []) {
+				if (feature?.$type !== "app.bsky.richtext.facet#link") continue
+				const uri = String(feature?.uri || "").trim()
+				if (uri) facetLinks.push(uri)
+			}
+		}
+
+		const imageAltSamples = (inputPost?.imageAlts || [])
+			.filter((entry) => typeof entry === "string")
+			.slice(0, 2)
+			.map((entry) => entry.slice(0, 200))
+
+		return {
+			uri: String(inputPost?.uri || ""),
+			title: getPostParts(inputPost).title,
+			textSnippet: String(inputPost?.text || "").slice(0, 200),
+			facetLinks,
+			imageAltsCount: Array.isArray(inputPost?.imageAlts)
+				? inputPost.imageAlts.length
+				: 0,
+			imageAltSamples,
+			videoAltSnippet: String(inputPost?.video?.alt || "").slice(0, 200),
+		}
+	}
+
+	function extractUuidStampFromCanonical(url = "") {
+		const canonical = String(url || "").trim()
+		if (!canonical) return null
+
+		const match = canonical.match(/profile\/view\/([^/]+)\/([^/]+)/i)
+		if (match) {
+			return {
+				uuid: match[1],
+				stamp: match[2],
+			}
+		}
+
+		return null
+	}
+
+	async function resolveTitleClick() {
+		if (!canonicalUrl) return
+
+		const parsed = extractUuidStampFromCanonical(canonicalUrl)
+		if (!parsed) {
+			console.warn(
+				"[PostCard] Could not parse UUID/stamp from canonical URL",
+				canonicalUrl,
+			)
+			return
+		}
+
+		try {
+			// Navigate to profile view with uuid and stamp
+			window.location.href = `/profile/view/${encodeURIComponent(parsed.uuid)}/${encodeURIComponent(parsed.stamp)}/`
+		} catch (err) {
+			console.error("[PostCard] Error resolving title click", err)
 		}
 	}
 
 	const parts = $derived(getPostParts(post))
 	const canonicalUrl = $derived(extractCanonicalUrl(post))
-	const titleHref = $derived(resolveCanonicalUrlForCurrentHost(canonicalUrl))
+	const titleHref = $derived(canonicalUrl)
 	const titleHtml = $derived(escapeHtml(parts.title))
 	const bodyLines = $derived(
 		buildBodyLines(parts.body, parts.bodyFacets, unlockedBodyLines),
@@ -392,6 +505,22 @@
 			return false
 		}
 		return firstWidth >= secondWidth && firstWidth >= thirdWidth
+	})
+
+	$effect(() => {
+		if (!parts.title) return
+		if (titleHref) {
+			console.log("[PostCard] canonical URL resolved", {
+				uri: post?.uri || "",
+				title: parts.title,
+				titleHref,
+			})
+			return
+		}
+
+		console.warn("[PostCard] missing canonical URL", {
+			...collectCanonicalDebug(post),
+		})
 	})
 
 	$effect(() => {
@@ -475,7 +604,16 @@
 				<a
 					class="post-title-link"
 					href={titleHref}
-					onclick={(event) => event.stopPropagation()}
+					onclick={(event) => {
+						event.preventDefault()
+						event.stopPropagation()
+						console.log("[PostCard] title link click", {
+							uri: post?.uri || "",
+							title: parts.title,
+							titleHref,
+						})
+						resolveTitleClick()
+					}}
 				>
 					{@html titleHtml}
 				</a>

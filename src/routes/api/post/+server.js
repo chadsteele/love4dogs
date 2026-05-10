@@ -295,6 +295,7 @@ function mapSinglePostFromThread(threadPost) {
 
 	const record = post.record || {};
 	const images = [];
+	const imageAlts = [];
 	let video = null;
 
 	const embedView = post.embed;
@@ -303,7 +304,10 @@ function mapSinglePostFromThread(threadPost) {
 
 	if (mediaView?.$type === 'app.bsky.embed.images#view') {
 		for (const image of mediaView.images || []) {
-			if (image.fullsize) images.push(image.fullsize);
+			if (image.fullsize) {
+				images.push(image.fullsize);
+				imageAlts.push(String(image.alt || ''));
+			}
 		}
 	}
 
@@ -322,6 +326,7 @@ function mapSinglePostFromThread(threadPost) {
 		facets: Array.isArray(record.facets) ? record.facets : [],
 		createdAt: record.createdAt || null,
 		images,
+		imageAlts,
 		video
 	};
 }
