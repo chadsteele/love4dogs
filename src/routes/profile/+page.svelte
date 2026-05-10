@@ -8,6 +8,7 @@
 	import {
 		buildCanonicalUrl,
 		buildLocationBlock,
+		cleanCanonicalName,
 		CONTACT_LOCK_PREFIX,
 		encryptContact,
 		normalizeContactInput,
@@ -1628,13 +1629,28 @@
 			debugProfile("[profile] saving draft before publish")
 			saveProfile(false)
 
+			const publishedPriorVersion = primaryVersion
+			const publishedPrimaryVersion = makeVersion()
+			const publishedCanonicalUrl = buildCanonicalUrl(
+				uuid,
+				publishedPrimaryVersion,
+				profileName,
+			)
+			const publishedSlugPath = cleanCanonicalName(profileName)
+				.split("/")
+				.map((segment) => segment.trim())
+				.filter(Boolean)
+				.map((segment) => encodeURIComponent(segment))
+				.join("/")
+			const publishedViewUrl = `/profile/view/${encodeURIComponent(uuid)}/${encodeURIComponent(publishedPrimaryVersion)}/${publishedSlugPath || "profile"}`
+
 			const subsequentPayloadForBundle = mapSubsequentPayloadForBundle(
 				subsequentPostsPayload,
 			)
 			const primaryPayloadForBundle = {
 				uuid,
-				version: primaryVersion,
-				canonicalurl,
+				version: publishedPrimaryVersion,
+				canonicalurl: publishedCanonicalUrl,
 				email: encryptEmailForPayload(email),
 				profilePic: uploadedProfileImage?.blob || null,
 				backgroundPic: uploadedBackgroundImage?.blob || null,
@@ -1647,7 +1663,9 @@
 				{
 					uuid: String(primaryPayloadForBundle?.uuid || uuid || ""),
 					version: String(
-						priorVersion || primaryPayloadForBundle?.version || "",
+						publishedPrimaryVersion ||
+							primaryPayloadForBundle?.version ||
+							"",
 					),
 					maxPayloadChars: CHUNK_ALT_PAYLOAD_TARGET_CHARS,
 				},
@@ -1724,7 +1742,7 @@
 					entry?.bundleFragment || "",
 					{
 						uuid,
-						version: priorVersion,
+						version: publishedPrimaryVersion,
 						index: index + 1,
 						total: chunks.length,
 						forceCompression: Boolean(entry?.forceCompression),
@@ -1737,7 +1755,7 @@
 				fetchImpl: fetch,
 				endpoint: "/api/post",
 				uuid,
-				priorVersion,
+				priorVersion: publishedPrimaryVersion,
 				postText,
 				chunks,
 				primaryMedia,
@@ -1745,10 +1763,24 @@
 				videoAttachments,
 			})
 
+			priorVersion = publishedPriorVersion
+			primaryVersion = publishedPrimaryVersion
+
 			publishMessage = `Published profile + ${publishResult.totalChunkPosts} chunk${publishResult.totalChunkPosts === 1 ? "" : "s"} at ${new Date().toLocaleTimeString()}`
 			debugProfile("[profile] publishToBluesky:success", {
 				message: publishMessage,
+				publishedPrimaryVersion,
+				publishedPriorVersion,
+				canonicalUrl: publishedCanonicalUrl,
+				viewUrl: publishedViewUrl,
+				nextPrimaryVersion: publishedPrimaryVersion,
+				priorVersion,
 			})
+
+			if (typeof window !== "undefined") {
+				window.location.href = publishedViewUrl
+				return
+			}
 		} catch (err) {
 			console.error("[profile] publishToBluesky:exception", err)
 			publishError = err?.message || "Unexpected error while publishing."

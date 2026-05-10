@@ -1,11 +1,10 @@
 <script>
 	import {onMount} from "svelte"
+	import {page} from "$app/state"
 	import {
 		collectLinksFromValue,
 		loadProfileBundleFromPublicBsky,
 	} from "$lib/bskyChunkStore"
-
-	let {data: pageData = {}} = $props()
 
 	let jsonData = $state(null)
 	let jsonLinks = $state([])
@@ -14,18 +13,37 @@
 
 	onMount(async () => {
 		try {
-			const uuid = String(pageData.uuid || "")
-			const stamp = String(pageData.stamp || "")
+			const uuid = String(page.params?.uuid || "")
+			const stamp = String(page.params?.stamp || "")
+			console.log("[profile/view] load:start", {uuid, stamp})
 			const loaded = await loadProfileBundleFromPublicBsky({
 				fetchImpl: fetch,
 				uuid,
 				version: stamp,
 				author: "love4dogs.club",
+				debug: true,
 			})
 			jsonData = loaded?.combined || null
 			jsonLinks = Array.from(collectLinksFromValue(jsonData))
+			console.log("[profile/view] load:success", {
+				uuid,
+				stamp,
+				postCount: Array.isArray(loaded?.posts)
+					? loaded.posts.length
+					: 0,
+				chunkCount: Array.isArray(loaded?.payloads)
+					? loaded.payloads.length
+					: 0,
+				linkCount: jsonLinks.length,
+			})
 		} catch (e) {
-			console.error("[profile/view] error:", e)
+			console.error("[profile/view] error", {
+				uuid: String(page.params?.uuid || ""),
+				stamp: String(page.params?.stamp || ""),
+				message: e?.message || String(e),
+				details: e?.details || null,
+				error: e,
+			})
 			error = e.message || "Failed to load profile"
 		} finally {
 			loading = false
