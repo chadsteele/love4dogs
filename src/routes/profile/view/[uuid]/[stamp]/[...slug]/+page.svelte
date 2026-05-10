@@ -1,6 +1,7 @@
 <script>
 	import {onMount} from "svelte"
 	import {page} from "$app/state"
+	import NavBar from "$lib/NavBar.svelte"
 	import {
 		collectLinksFromValue,
 		loadProfileBundleFromPublicBsky,
@@ -13,9 +14,14 @@
 	let jsonLinks = $state([])
 	let loading = $state(true)
 	let error = $state("")
+	let currentView = $state("feed")
 
 	function asUrl(value) {
 		return typeof value === "string" ? value : ""
+	}
+
+	function setView(view = "feed") {
+		currentView = String(view || "feed")
 	}
 
 	function buildCacheKey(uuid = "", stamp = "") {
@@ -120,81 +126,27 @@
 </svelte:head>
 
 <main class="page">
+	<NavBar {currentView} onSetView={setView} />
+
 	{#if loading}
 		<p class="loading">Loading profile...</p>
 	{:else if error}
 		<p class="error">{error}</p>
 	{:else if jsonData}
 		<section class="panel hero">
-			{#if asUrl(jsonData?.backgroundPic)}
+			<img class="hero-bg" src="/background.jpg" alt="Background" />
+
+			{#if asUrl(jsonData?.profilePic)}
 				<img
-					class="hero-bg"
-					src={asUrl(jsonData?.backgroundPic)}
-					alt="Background"
+					class="avatar"
+					src={asUrl(jsonData?.profilePic)}
+					alt="Profile"
 				/>
-			{:else}
-				<div class="hero-bg placeholder"></div>
 			{/if}
-			<div class="hero-overlay"></div>
-			<div class="hero-content">
-				{#if asUrl(jsonData?.profilePic)}
-					<img
-						class="avatar"
-						src={asUrl(jsonData?.profilePic)}
-						alt="Profile"
-					/>
-				{/if}
-				<div>
-					<h1 class="profile-name">{jsonData?.name || "Profile"}</h1>
-					<p class="profile-description">
-						{jsonData?.description || ""}
-					</p>
-				</div>
+
+			<div class="hero-body">
+				<div class="content-html">{@html jsonData?.html || ""}</div>
 			</div>
-		</section>
-
-		<section class="panel details">
-			<p><strong>UUID:</strong> {jsonData?.uuid || ""}</p>
-			<p><strong>Version:</strong> {jsonData?.version || ""}</p>
-			{#if jsonData?.canonicalurl}
-				<p>
-					<strong>Canonical URL:</strong>
-					<a href={jsonData.canonicalurl}>{jsonData.canonicalurl}</a>
-				</p>
-			{/if}
-			{#if jsonData?.email}
-				<p>
-					<strong>Private Email (Encrypted):</strong>
-					{jsonData.email}
-				</p>
-			{/if}
-		</section>
-
-		{#if jsonLinks.length > 0}
-			<section class="panel links">
-				<h2>Links</h2>
-				<ul>
-					{#each jsonLinks as link}
-						<li>
-							<a
-								href={link}
-								target="_blank"
-								rel="noopener noreferrer">{link}</a
-							>
-						</li>
-					{/each}
-				</ul>
-			</section>
-		{/if}
-
-		<section class="panel content">
-			<h2>Profile Content</h2>
-			<div class="content-html">{@html jsonData?.html || ""}</div>
-		</section>
-
-		<section class="panel payload">
-			<h2>Payload</h2>
-			<pre>{JSON.stringify(jsonData, null, 2)}</pre>
 		</section>
 	{/if}
 </main>
@@ -219,8 +171,9 @@
 	.hero {
 		position: relative;
 		overflow: hidden;
-		min-height: 240px;
 		padding: 0;
+		border-radius: 16px;
+		box-shadow: 0 8px 20px rgba(65, 42, 20, 0.1);
 	}
 
 	.hero-bg {
@@ -230,48 +183,21 @@
 		object-fit: cover;
 	}
 
-	.hero-bg.placeholder {
-		background: linear-gradient(135deg, #dfe8df, #f6f0e7 60%, #d8e1d6);
-	}
-
-	.hero-overlay {
-		position: absolute;
-		inset: 0;
-		background: linear-gradient(
-			to top,
-			rgba(0, 0, 0, 0.45),
-			transparent 55%
-		);
-	}
-
-	.hero-content {
-		position: absolute;
-		inset: auto 0 0;
-		padding: 1rem;
-		display: flex;
-		gap: 0.8rem;
-		align-items: end;
-		color: #fff;
-	}
-
 	.avatar {
-		width: 96px;
-		height: 96px;
+		position: absolute;
+		left: 1rem;
+		top: calc(260px - 5rem);
+		z-index: 1;
+		width: 10rem;
+		height: 10rem;
 		object-fit: cover;
 		border-radius: 50%;
 		border: 3px solid rgba(255, 255, 255, 0.85);
 		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-		background: #fff;
 	}
 
-	.profile-name {
-		margin: 0;
-		font-size: 1.45rem;
-	}
-
-	.profile-description {
-		margin: 0.25rem 0 0;
-		line-height: 1.4;
+	.hero-body {
+		padding-top: 5.5rem;
 	}
 
 	.loading,
@@ -283,67 +209,89 @@
 		color: #8e2f21;
 	}
 
-	.details p {
-		margin: 0.3rem 0;
-	}
-
-	.details a {
-		word-break: break-all;
-	}
-
-	pre {
-		white-space: pre-wrap;
-		word-break: break-word;
-		background: #fffdf8;
-		border: 1px solid #e4d8c9;
-		border-radius: 8px;
-		padding: 1rem;
-	}
-
-	.links h2 {
-		margin: 0 0 0.35rem;
-		font-size: 1rem;
-	}
-
-	.links ul {
-		margin: 0 0 0.8rem;
-		padding-left: 1.25rem;
-	}
-
-	.links a {
-		word-break: break-all;
-	}
-
-	.content h2,
-	.payload h2 {
-		margin: 0 0 0.5rem;
-		font-size: 1rem;
-	}
-
 	.content-html {
-		line-height: 1.5;
+		padding: 1rem;
+		margin-top: 0;
+		line-height: 1.55;
 		word-break: break-word;
 	}
 
-	.content-html :global(img),
-	.content-html :global(video),
-	.content-html :global(iframe) {
-		max-width: 100%;
+	.content-html :global(img) {
+		display: block;
+		width: auto;
+		max-width: 720px;
 		height: auto;
+		margin: 1rem auto;
+		border-radius: 14px;
+		box-shadow: 0 12px 28px rgba(65, 42, 20, 0.18);
+		background: #fff;
+	}
+
+	.content-html :global(video) {
+		display: block;
+		width: 100%;
+		max-width: 720px;
+		height: auto;
+		margin: 1rem auto;
+		border-radius: 14px;
+		box-shadow: 0 12px 28px rgba(65, 42, 20, 0.18);
+		background: #fff;
+	}
+
+	.content-html :global(iframe) {
+		display: block;
+		width: 100%;
+		max-width: 900px;
+		min-height: 320px;
+		aspect-ratio: 16 / 9;
+		margin: 1rem auto;
+		border: 0;
+		border-radius: 14px;
+		box-shadow: 0 12px 28px rgba(65, 42, 20, 0.18);
+		background: #fff;
+	}
+
+	.content-html :global(p:first-child),
+	.content-html :global(h1:first-child),
+	.content-html :global(h2:first-child),
+	.content-html :global(h3:first-child) {
+		margin-top: 0;
+	}
+
+	.content-html :global(p:last-child) {
+		margin-bottom: 0;
+	}
+
+	.content-html :global(a) {
+		word-break: break-all;
+	}
+
+	.content-html :global(figure) {
+		margin: 1rem auto;
+		max-width: 720px;
+	}
+
+	.content-html :global(figcaption) {
+		margin-top: 0.4rem;
+		text-align: center;
+		font-size: 0.85rem;
+		color: #5f665f;
 	}
 
 	@media (max-width: 768px) {
-		.hero-content {
-			align-items: center;
-		}
-
 		.avatar {
 			width: 78px;
 			height: 78px;
+			top: calc(220px - 39px);
+			left: 0.8rem;
 		}
 
-		.profile-name {
-			font-size: 1.2rem;
+		.hero-body {
+			padding-top: 4.4rem;
+		}
+
+		.hero-bg {
+			height: 220px;
 		}
 	}
 </style>
