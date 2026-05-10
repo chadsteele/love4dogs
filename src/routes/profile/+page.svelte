@@ -14,6 +14,13 @@
 		lookupLocationDetails,
 		mediaTokenFromBuffer,
 	} from "$lib/utils"
+	import {
+		buildCombinedPayloadBundle as buildBskyCombinedPayloadBundle,
+		buildChunkEntriesFromBundle,
+		chunkHtmlByAltPayload,
+		measureChunkAltPayloadLength as measureBskyChunkAltPayloadLength,
+		publishChunkBundleToBsky,
+	} from "$lib/bskyChunkStore"
 	import ShowAdmin from "$lib/ShowAdmin.svelte"
 
 	const PROFILE_STORAGE_KEY = "love4dogs.profile-v2"
@@ -28,6 +35,7 @@
 	const EDITOR_MAX_HTML_CHARS = 300000
 	// Set to false only when debugging paste rendering without Bluesky uploads.
 	const ENABLE_EDITOR_MEDIA_UPLOADS = true
+	const DEBUG_PROFILE = false
 
 	let uuid = $state("")
 	let primaryVersion = $state("")
@@ -87,6 +95,14 @@
 	const editorUploadCache = new Map()
 	let failedCdnUrls = $state(new Set())
 
+	function debugProfile(...args) {
+		if (DEBUG_PROFILE) console.log(...args)
+	}
+
+	function warnProfile(...args) {
+		if (DEBUG_PROFILE) console.warn(...args)
+	}
+
 	function generateShortUuid() {
 		return Math.random().toString(36).slice(2, 10)
 	}
@@ -95,419 +111,8 @@
 		return Date.now().toString(36)
 	}
 
-	function chunkHtmlByNodes(html = "", maxChars = CONTENT_CHUNK_SIZE) {
-		const source = String(html || "")
-		if (!source) return []
-		if (typeof document === "undefined") {
-			const fallback = []
-			for (let i = 0; i < source.length; i += maxChars) {
-				fallback.push(source.slice(i, i + maxChars))
-			}
-			return fallback
-		}
-
-		const root = document.createElement("div")
-		root.innerHTML = source
-
-		const chunks = []
-		let current = ""
-
-		for (const node of root.childNodes) {
-			const next =
-				node.nodeType === Node.TEXT_NODE
-					? node.textContent || ""
-					: node.outerHTML || ""
-			if (!next) continue
-
-			if ((current + next).length <= maxChars) {
-				current += next
-				continue
-			}
-
-			if (current) {
-				chunks.push(current)
-				current = ""
-			}
-
-			if (next.length <= maxChars) {
-				current = next
-				continue
-			}
-
-			for (let i = 0; i < next.length; i += maxChars) {
-				chunks.push(next.slice(i, i + maxChars))
-			}
-		}
-
-		if (current) chunks.push(current)
-		return chunks
-	}
-
 	function measureChunkAltPayloadLength(htmlFragment = "", meta = {}) {
-		const payload = buildChunkAltPayload(
-			{
-				uuid: String(meta?.uuid || "u"),
-				version: String(meta?.version || "v"),
-				index: Number(meta?.index || 1),
-				total: Number(meta?.total || 1),
-			},
-			htmlFragment,
-			{forceCompression: Boolean(meta?.forceCompression)},
-		)
-		return JSON.stringify(payload).length
-	}
-
-	function splitFragmentByAltPayload(
-		fragment = "",
-		maxPayloadChars = CHUNK_ALT_PAYLOAD_TARGET_CHARS,
-		meta = {},
-	) {
-		const source = String(fragment || "")
-		if (!source) return []
-		const parts = []
-		let start = 0
-		while (start < source.length) {
-			let low = 1
-			let high = source.length - start
-			let best = 0
-			while (low <= high) {
-				const mid = Math.floor((low + high) / 2)
-				const candidate = source.slice(start, start + mid)
-				const payloadLength = measureChunkAltPayloadLength(
-					candidate,
-					meta,
-				)
-				if (payloadLength <= maxPayloadChars) {
-					best = mid
-					low = mid + 1
-				} else {
-					high = mid - 1
-				}
-			}
-			if (best <= 0) best = 1
-			parts.push(source.slice(start, start + best))
-			start += best
-		}
-		return parts
-	}
-
-	function enforceAltPayloadLimit(
-		fragments = [],
-		maxPayloadChars = CHUNK_ALT_PAYLOAD_TARGET_CHARS,
-		meta = {},
-	) {
-		let working = [...fragments]
-		let changed = true
-		let guard = 0
-		while (changed && guard < 12) {
-			guard += 1
-			changed = false
-			const total = working.length
-			const next = []
-			for (let i = 0; i < total; i += 1) {
-				const fragment = String(working[i] || "")
-				const payloadLength = measureChunkAltPayloadLength(fragment, {
-					uuid: meta?.uuid,
-					version: meta?.version,
-					index: i + 1,
-					total,
-					forceCompression: meta?.forceCompression,
-				})
-				if (payloadLength <= maxPayloadChars) {
-					next.push(fragment)
-					continue
-				}
-				const parts = splitFragmentByAltPayload(
-					fragment,
-					maxPayloadChars,
-					{
-						uuid: meta?.uuid,
-						version: meta?.version,
-						index: i + 1,
-						total,
-						forceCompression: meta?.forceCompression,
-					},
-				)
-				if (parts.length > 1) changed = true
-				next.push(...parts)
-			}
-			working = next
-		}
-		return working
-	}
-
-	function coalesceAltPayloadChunks(
-		fragments = [],
-		maxPayloadChars = CHUNK_ALT_PAYLOAD_TARGET_CHARS,
-		meta = {},
-	) {
-		const source = fragments
-			.map((entry) => String(entry || ""))
-			.filter(Boolean)
-		if (source.length < 2) return source
-
-		const merged = []
-		let i = 0
-		while (i < source.length) {
-			let current = source[i]
-			let nextIndex = i + 1
-			while (nextIndex < source.length) {
-				const candidate = `${current}${source[nextIndex]}`
-				const remainingAfterMerge = source.length - (nextIndex - i)
-				const payloadLength = measureChunkAltPayloadLength(candidate, {
-					uuid: meta?.uuid,
-					version: meta?.version,
-					index: merged.length + 1,
-					total: remainingAfterMerge,
-					forceCompression: meta?.forceCompression,
-				})
-				if (payloadLength > maxPayloadChars) break
-				current = candidate
-				nextIndex += 1
-			}
-			merged.push(current)
-			i = nextIndex
-		}
-
-		return merged
-	}
-
-	function chunkHtmlByAltPayload(
-		html = "",
-		maxPayloadChars = CHUNK_ALT_PAYLOAD_TARGET_CHARS,
-		meta = {},
-	) {
-		const source = String(html || "")
-		if (!source) return []
-		if (typeof document === "undefined") {
-			const fallback = chunkHtmlByNodes(source, CONTENT_CHUNK_SIZE)
-			const limited = enforceAltPayloadLimit(
-				fallback,
-				maxPayloadChars,
-				meta,
-			)
-			return coalesceAltPayloadChunks(limited, maxPayloadChars, meta)
-		}
-
-		const root = document.createElement("div")
-		root.innerHTML = source
-		const nodeFragments = Array.from(root.childNodes)
-			.map((node) =>
-				node.nodeType === Node.TEXT_NODE
-					? node.textContent || ""
-					: node.outerHTML || "",
-			)
-			.filter(Boolean)
-
-		const chunks = []
-		let current = ""
-		for (const next of nodeFragments) {
-			const candidate = `${current}${next}`
-			const estimatedIndex = chunks.length + 1
-			const candidateLength = measureChunkAltPayloadLength(candidate, {
-				uuid: meta?.uuid,
-				version: meta?.version,
-				index: estimatedIndex,
-				total: estimatedIndex,
-				forceCompression: meta?.forceCompression,
-			})
-			if (candidateLength <= maxPayloadChars) {
-				current = candidate
-				continue
-			}
-
-			if (current) {
-				chunks.push(current)
-				current = ""
-			}
-
-			const nextLength = measureChunkAltPayloadLength(next, {
-				uuid: meta?.uuid,
-				version: meta?.version,
-				index: chunks.length + 1,
-				total: chunks.length + 1,
-				forceCompression: meta?.forceCompression,
-			})
-			if (nextLength <= maxPayloadChars) {
-				current = next
-				continue
-			}
-
-			const splitNext = splitFragmentByAltPayload(next, maxPayloadChars, {
-				uuid: meta?.uuid,
-				version: meta?.version,
-				index: chunks.length + 1,
-				total: chunks.length + 1,
-				forceCompression: meta?.forceCompression,
-			})
-			chunks.push(...splitNext)
-		}
-		if (current) chunks.push(current)
-
-		const limited = enforceAltPayloadLimit(chunks, maxPayloadChars, meta)
-		return coalesceAltPayloadChunks(limited, maxPayloadChars, meta)
-	}
-
-	async function minifyHtmlForChunking(html = "") {
-		const source = String(html || "")
-		if (!source.trim()) return ""
-		try {
-			const response = await fetch("/api/minify-html", {
-				method: "POST",
-				headers: {"content-type": "application/json"},
-				body: JSON.stringify({html: source}),
-			})
-			const json = await response.json().catch(() => ({}))
-			if (
-				!response.ok ||
-				!json?.ok ||
-				typeof json.minifiedHtml !== "string"
-			) {
-				return source
-			}
-			return json.minifiedHtml
-		} catch {
-			return source
-		}
-	}
-
-	function buildChunkAltPayload(meta, htmlFragment = "", options = {}) {
-		const sourceHtml = String(htmlFragment || "")
-		const compressed = compressChunkHtmlForAlt(sourceHtml, options)
-		// Use compact keys to maximize useful HTML inside alt text size limits.
-		const payload = {
-			u: String(meta?.uuid || ""),
-			v: String(meta?.version || ""),
-			i: Number(meta?.index || 0),
-			t: Number(meta?.total || 0),
-			h: compressed.html,
-		}
-		if (compressed.prefix) {
-			payload.p = compressed.prefix
-			payload.f = 1
-		}
-		if (compressed.dict?.length) {
-			payload.d = compressed.dict
-			payload.f = 2
-		}
-		return payload
-	}
-
-	function findCommonPrefix(values = []) {
-		if (!values.length) return ""
-		let prefix = String(values[0] || "")
-		for (let i = 1; i < values.length && prefix; i += 1) {
-			const next = String(values[i] || "")
-			let j = 0
-			const max = Math.min(prefix.length, next.length)
-			while (j < max && prefix[j] === next[j]) j += 1
-			prefix = prefix.slice(0, j)
-		}
-		return prefix
-	}
-
-	function compressChunkHtmlForAlt(html = "", options = {}) {
-		const source = String(html || "")
-		if (!source) return {html: "", prefix: "", dict: []}
-
-		let packed = source
-		let prefix = ""
-		const urlMatches = [
-			...packed.matchAll(
-				/https:\/\/cdn\.bsky\.app\/img\/feed_fullsize\/plain\/[^\s"'<>)]+/g,
-			),
-		].map((match) => match[0])
-		const uniqueUrls = [...new Set(urlMatches)]
-		if (uniqueUrls.length >= 2) {
-			const rawPrefix = findCommonPrefix(uniqueUrls)
-			const slashIndex = rawPrefix.lastIndexOf("/")
-			if (slashIndex > 0) {
-				const candidatePrefix = rawPrefix.slice(0, slashIndex + 1)
-				if (candidatePrefix.length >= 40) {
-					const token = "~c~"
-					const escapedPrefix = candidatePrefix.replace(
-						/[.*+?^${}()|[\]\\]/g,
-						"\\$&",
-					)
-					let replacements = 0
-					const replaced = packed.replace(
-						new RegExp(escapedPrefix, "g"),
-						() => {
-							replacements += 1
-							return token
-						},
-					)
-					if (replacements >= 2) {
-						packed = replaced
-						prefix = candidatePrefix
-					}
-				}
-			}
-		}
-
-		const dictCompression = compressCommonHtmlSubstrings(packed)
-		const withDict = dictCompression.html
-		const dict = dictCompression.dict
-
-		const baselinePayloadLength = JSON.stringify({h: source}).length
-		const candidatePayload = {h: withDict}
-		if (prefix) {
-			candidatePayload.p = prefix
-			candidatePayload.f = 1
-		}
-		if (dict.length > 0) {
-			candidatePayload.d = dict
-			candidatePayload.f = 2
-		}
-		if (JSON.stringify(candidatePayload).length >= baselinePayloadLength) {
-			return {html: source, prefix: "", dict: []}
-		}
-
-		return {html: withDict, prefix, dict}
-	}
-
-	function compressCommonHtmlSubstrings(html = "") {
-		let working = String(html || "")
-		if (!working) return {html: "", dict: []}
-
-		const candidates = [
-			"<figure><img src=",
-			"></figcaption></figure>",
-			"><figcaption>",
-			"</figcaption></figure>",
-			"</figure><figure>",
-			"<figcaption>",
-			"</figcaption>",
-			" referrerpolicy=no-referrer",
-			" fetchpriority=high",
-			" loading=lazy",
-			" decoding=async",
-			"<p><strong>",
-			"</strong></p>",
-			"<strong>",
-			"</strong>",
-			"<figure>",
-			"</figure>",
-			"<p>",
-			"</p>",
-			" alt=",
-			" src=",
-		]
-
-		const dict = []
-		for (const needle of candidates) {
-			if (!needle || needle.length < 8) continue
-			const count = working.split(needle).length - 1
-			if (count < 2) continue
-			const token = `~${dict.length}~`
-			if (token.length >= needle.length) continue
-			working = working.split(needle).join(token)
-			dict.push(needle)
-			if (dict.length >= 12) break
-		}
-
-		if (!dict.length) return {html: html, dict: []}
-		return {html: working, dict}
+		return measureBskyChunkAltPayloadLength(htmlFragment, meta)
 	}
 
 	function extractChunkBodyText(html = "", maxChars = CHUNK_BODY_TEXT_SIZE) {
@@ -938,7 +543,7 @@
 				meta.nextAt = Date.now() + delay
 				meta.inFlight = false
 				cdnPromotionMeta.set(key, meta)
-				console.log("[profile] CDN not ready, will retry", {
+				debugProfile("[profile] CDN not ready, will retry", {
 					fromUrl: entry.url,
 					bskyUrl: entry.bskyUrl,
 					attempts: meta.attempts,
@@ -959,7 +564,7 @@
 			if (promoted.changed) {
 				html = promoted.html
 				anyChanged = true
-				console.log("[profile] promoted media URL to CDN", {
+				debugProfile("[profile] promoted media URL to CDN", {
 					fromUrl,
 					sourceUrl,
 					bskyUrl,
@@ -976,7 +581,7 @@
 				if (fallbackPromoted.changed) {
 					html = fallbackPromoted.html
 					anyChanged = true
-					console.log("[profile] promoted media URL to CDN", {
+					debugProfile("[profile] promoted media URL to CDN", {
 						fromUrl,
 						sourceUrl,
 						bskyUrl,
@@ -1086,6 +691,15 @@
 			const token = await mediaTokenFromBuffer(
 				await normalized.arrayBuffer(),
 			)
+			if (editorUploadCache.has(token)) {
+				const cached = editorUploadCache.get(token)
+				editorUploadCache.set(resolvedSourceUrl, cached)
+				if (sourceUrl && sourceUrl !== resolvedSourceUrl) {
+					editorUploadCache.set(sourceUrl, cached)
+				}
+				return cached
+			}
+			const uploaded = await cacheMediaUrlInBsky(token, normalized)
 			const result = {
 				...uploaded,
 				sourceUrl: token,
@@ -1095,7 +709,7 @@
 			if (sourceUrl) editorUploadCache.set(sourceUrl, result)
 			if (resolvedSourceUrl !== sourceUrl)
 				editorUploadCache.set(resolvedSourceUrl, result)
-			console.log("[profile] inline image uploaded to bsky", {
+			debugProfile("[profile] inline image uploaded to bsky", {
 				token,
 				bskyUrl: result?.bskyUrl || "",
 			})
@@ -1110,7 +724,7 @@
 		if (!wantsImage && !wantsVideo) return null
 
 		if (wantsImage) {
-			console.log("[profile] download image for upload", {
+			debugProfile("[profile] download image for upload", {
 				sourceUrl: resolvedSourceUrl,
 			})
 			const upstream = await fetch(
@@ -1143,7 +757,7 @@
 				return cached
 			}
 			const uploaded = await cacheMediaUrlInBsky(token, normalized)
-			console.log("[profile] image uploaded to bsky", {
+			debugProfile("[profile] image uploaded to bsky", {
 				sourceUrl: resolvedSourceUrl,
 				bskyUrl: uploaded?.bskyUrl || "",
 				cached: Boolean(uploaded?.cached),
@@ -1171,7 +785,7 @@
 			type: videoBlob.type || "video/mp4",
 		})
 		const uploaded = await uploadMediaFile(videoFile)
-		console.log("[profile] video uploaded to bsky", {
+		debugProfile("[profile] video uploaded to bsky", {
 			sourceUrl: resolvedSourceUrl,
 			bskyUrl: uploaded?.bskyUrl || "",
 		})
@@ -1192,7 +806,7 @@
 			return source
 		}
 		if (typeof document === "undefined") return source
-		console.log("[profile] normalizeEditorMediaHtml:start", {
+		debugProfile("[profile] normalizeEditorMediaHtml:start", {
 			sourceLength: source.length,
 		})
 
@@ -1203,13 +817,42 @@
 		changed = normalizeThirdPartyMediaUrlsInRoot(root) || changed
 		changed = proxyExternalImageUrlsInRoot(root) || changed
 
+		const pickUploadUrlFromSrcset = (value = "") => {
+			const source = String(value || "").trim()
+			if (!source) return ""
+			const entries = source
+				.split(",")
+				.map(
+					(part) =>
+						String(part || "")
+							.trim()
+							.split(/\s+/)[0],
+				)
+				.filter(Boolean)
+			const absolute = entries.filter((entry) =>
+				/^https?:\/\//i.test(entry),
+			)
+			return absolute.length > 0 ? absolute[absolute.length - 1] : ""
+		}
+
 		const candidates = []
 		for (const node of root.querySelectorAll(
 			"img[src],video[src],source[src],a[href]",
 		)) {
-			const url =
+			const rawUrl =
 				node.getAttribute("src") || node.getAttribute("href") || ""
-			if (!url) continue
+			if (!rawUrl) continue
+			let url = rawUrl
+			if (node.tagName === "IMG" && !/^https?:\/\//i.test(url)) {
+				const srcsetUrl = pickUploadUrlFromSrcset(
+					node.getAttribute("srcset") ||
+						node.getAttribute("data-srcset") ||
+						"",
+				)
+				if (srcsetUrl) {
+					url = srcsetUrl
+				}
+			}
 			const tag = node.tagName
 			const mediaType =
 				tag === "IMG"
@@ -1230,7 +873,22 @@
 			if (!mediaType) continue
 			candidates.push({node, url, mediaType})
 		}
-		console.log("[profile] normalizeEditorMediaHtml:candidates", {
+
+		for (const img of root.querySelectorAll("img")) {
+			if (img.hasAttribute("srcset")) {
+				img.removeAttribute("srcset")
+				changed = true
+			}
+			if (img.hasAttribute("sizes")) {
+				img.removeAttribute("sizes")
+				changed = true
+			}
+			if (img.hasAttribute("data-srcset")) {
+				img.removeAttribute("data-srcset")
+				changed = true
+			}
+		}
+		debugProfile("[profile] normalizeEditorMediaHtml:candidates", {
 			candidateCount: candidates.length,
 		})
 
@@ -1240,7 +898,7 @@
 			mediaUploadTotal = 0
 			mediaUploadCompleted = 0
 			mediaUploadActive = false
-			console.log("[profile] editor media uploads paused", {
+			debugProfile("[profile] editor media uploads paused", {
 				candidateCount: candidates.length,
 			})
 		} else {
@@ -1290,7 +948,7 @@
 									entry.mediaType,
 								)
 								if (uploaded) {
-									console.log(
+									debugProfile(
 										"[profile] normalizeEditorMediaHtml:uploaded",
 										{
 											url: entry.url,
@@ -1309,7 +967,7 @@
 									}
 								}
 							} catch (error) {
-								console.warn(
+								warnProfile(
 									"[profile] editor media upload failed",
 									{
 										url: entry.url,
@@ -1329,7 +987,6 @@
 		for (const entry of candidates) {
 			const uploaded = uploadedByUrl.get(entry.url)
 			if (!uploaded?.bskyUrl) continue
-			if (!isInlineMediaDataUrl(entry.url)) continue
 			if (uploaded.bskyUrl === entry.url) continue
 			if (entry.node.tagName === "A") {
 				if (entry.node.getAttribute("href") !== uploaded.bskyUrl) {
@@ -1342,14 +999,31 @@
 				entry.node.setAttribute("src", uploaded.bskyUrl)
 				changed = true
 			}
+			if (entry.node.tagName === "IMG") {
+				if (entry.node.hasAttribute("srcset")) {
+					entry.node.removeAttribute("srcset")
+					changed = true
+				}
+				if (entry.node.hasAttribute("sizes")) {
+					entry.node.removeAttribute("sizes")
+					changed = true
+				}
+				if (entry.node.hasAttribute("data-srcset")) {
+					entry.node.removeAttribute("data-srcset")
+					changed = true
+				}
+			}
 		}
 
 		const pendingPromotionCount = candidates.filter((entry) => {
 			const uploaded = uploadedByUrl.get(entry.url)
-			if (isInlineMediaDataUrl(entry.url)) return false
-			return Boolean(uploaded?.bskyUrl)
+			if (!uploaded?.bskyUrl) return false
+			if (entry.node.tagName === "A") {
+				return entry.node.getAttribute("href") !== uploaded.bskyUrl
+			}
+			return entry.node.getAttribute("src") !== uploaded.bskyUrl
 		}).length
-		console.log("[profile] normalizeEditorMediaHtml:replacement", {
+		debugProfile("[profile] normalizeEditorMediaHtml:replacement", {
 			uploadedCount: uploadedByUrl.size,
 			pendingPromotionCount,
 			changed,
@@ -1411,13 +1085,13 @@
 		if (ENABLE_EDITOR_MEDIA_UPLOADS) {
 			queueMicrotask(() => {
 				maybePromoteCdnUrls().catch((error) => {
-					console.warn("[profile] CDN promotion pass failed", {
+					warnProfile("[profile] CDN promotion pass failed", {
 						error: error?.message || String(error),
 					})
 				})
 			})
 		}
-		console.log("[profile] normalizeEditorMediaHtml:done", {
+		debugProfile("[profile] normalizeEditorMediaHtml:done", {
 			extractedCount: extractedMedia.length,
 			visibleImageCount: root.querySelectorAll("img[src]").length,
 			visibleVideoCount: root.querySelectorAll(
@@ -1574,12 +1248,9 @@
 	)
 
 	function mapSubsequentPayloadForBundle(entries = []) {
-		return entries.map((entry) => ({
-			index: entry.index,
-			total: entry.total,
-			htmlFragment: entry.htmlFragment,
-			postBody: entry.postBody,
-		}))
+		return entries
+			.map((entry) => String(entry?.htmlFragment || ""))
+			.filter(Boolean)
 	}
 
 	const subsequentPayloadForBundlePreview = $derived(
@@ -1587,9 +1258,14 @@
 	)
 
 	const combinedPayloadBundlePreview = $derived(
-		buildCombinedPayloadBundle(
+		buildBskyCombinedPayloadBundle(
 			primaryPostPayload,
 			subsequentPayloadForBundlePreview,
+			{
+				uuid,
+				version: priorVersion,
+				maxPayloadChars: CHUNK_ALT_PAYLOAD_TARGET_CHARS,
+			},
 		),
 	)
 
@@ -1630,7 +1306,9 @@
 		return `${stampUuid}:${stampVersion}`
 	}
 
-	function setStoredSnapshotBaseline(profile = buildStoredProfileForStorage()) {
+	function setStoredSnapshotBaseline(
+		profile = buildStoredProfileForStorage(),
+	) {
 		storedSnapshotByStamp = cloneStoredProfile(profile)
 		hasChangedFromStoredSnapshot = false
 	}
@@ -1754,7 +1432,7 @@
 				? "Profile picture is still uploading. Please wait."
 				: "Profile picture is required."
 			: ""
-		console.log("[profile] validateRequiredFields", {
+		debugProfile("[profile] validateRequiredFields", {
 			hasName: Boolean(profileName.trim()),
 			hasEmail: Boolean(email.trim()),
 			hasProfileImage: Boolean(uploadedProfileImage),
@@ -1769,25 +1447,25 @@
 	}
 
 	function activateValidation() {
-		console.log("[profile] activateValidation")
+		debugProfile("[profile] activateValidation")
 		validationActive = true
 	}
 
 	function handleFieldBlur(field) {
-		console.log("[profile] handleFieldBlur", {field})
+		debugProfile("[profile] handleFieldBlur", {field})
 		activateValidation()
 		if (field === "name") touchedName = true
 		if (field === "email") touchedEmail = true
 	}
 
 	function focusFirstInvalidField() {
-		console.log("[profile] focusFirstInvalidField", {
+		debugProfile("[profile] focusFirstInvalidField", {
 			profileImageError,
 			nameError,
 			emailError,
 		})
 		if (profileImageError) {
-			console.log("[profile] focusing profile image section")
+			debugProfile("[profile] focusing profile image section")
 			profileImageWrapEl?.focus()
 			profileImageWrapEl?.scrollIntoView({
 				behavior: "smooth",
@@ -1796,12 +1474,12 @@
 			return
 		}
 		if (nameError) {
-			console.log("[profile] focusing name input")
+			debugProfile("[profile] focusing name input")
 			profileNameInputEl?.focus()
 			return
 		}
 		if (emailError) {
-			console.log("[profile] focusing email input")
+			debugProfile("[profile] focusing email input")
 			emailInputEl?.focus()
 		}
 	}
@@ -1820,40 +1498,6 @@
 			count = nextCount
 		}
 		return result
-	}
-
-	function buildCombinedPayloadBundle(
-		primaryPayload = {},
-		subsequentPayload = [],
-	) {
-		const combinedJson = JSON.stringify({
-			primary: primaryPayload,
-			subsequent: subsequentPayload,
-		})
-		const forceCompression = true
-		const limited = enforceAltPayloadLimit(
-			[combinedJson],
-			CHUNK_ALT_PAYLOAD_TARGET_CHARS,
-			{
-				uuid: String(primaryPayload?.uuid || uuid || ""),
-				version: String(primaryPayload?.version || priorVersion || ""),
-				forceCompression,
-			},
-		)
-		const fragments = coalesceAltPayloadChunks(
-			limited,
-			CHUNK_ALT_PAYLOAD_TARGET_CHARS,
-			{
-				uuid: String(primaryPayload?.uuid || uuid || ""),
-				version: String(primaryPayload?.version || priorVersion || ""),
-				forceCompression,
-			},
-		)
-		return {
-			combinedJson,
-			forceCompression,
-			fragments,
-		}
 	}
 
 	/**
@@ -1935,7 +1579,7 @@
 	}
 
 	async function publishToBluesky() {
-		console.log("[profile] publishToBluesky:start", {
+		debugProfile("[profile] publishToBluesky:start", {
 			uuid,
 			primaryVersion,
 			priorVersion,
@@ -1947,7 +1591,7 @@
 		touchedEmail = true
 		const validationError = validateRequiredFields()
 		if (validationError) {
-			console.warn("[profile] publish blocked by validation", {
+			warnProfile("[profile] publish blocked by validation", {
 				validationError,
 				nameError,
 				emailError,
@@ -1958,7 +1602,7 @@
 			focusFirstInvalidField()
 			return
 		}
-		console.log("[profile] publish validation passed")
+		debugProfile("[profile] publish validation passed")
 		publishError = ""
 		publishMessage = ""
 		if (publishBlockedByMedia) {
@@ -1970,7 +1614,7 @@
 
 		// Always require location confirmation before publishing.
 		if (!locationConfirmed) {
-			console.log("[profile] location not confirmed, showing modal")
+			debugProfile("[profile] location not confirmed, showing modal")
 			locationError = ""
 			modalLocation = modalLocation // Use existing modal location if available
 			pinMovedInModal = false
@@ -1981,7 +1625,7 @@
 		publishing = true
 
 		try {
-			console.log("[profile] saving draft before publish")
+			debugProfile("[profile] saving draft before publish")
 			saveProfile(false)
 
 			const subsequentPayloadForBundle = mapSubsequentPayloadForBundle(
@@ -1997,18 +1641,18 @@
 				name: profileName,
 				description: profileDescription,
 			}
-			const combinedBundle = buildCombinedPayloadBundle(
+			const combinedBundle = buildBskyCombinedPayloadBundle(
 				primaryPayloadForBundle,
 				subsequentPayloadForBundle,
+				{
+					uuid: String(primaryPayloadForBundle?.uuid || uuid || ""),
+					version: String(
+						priorVersion || primaryPayloadForBundle?.version || "",
+					),
+					maxPayloadChars: CHUNK_ALT_PAYLOAD_TARGET_CHARS,
+				},
 			)
-			const chunks = combinedBundle.fragments.map(
-				(fragment, index, all) => ({
-					index: index + 1,
-					total: all.length,
-					bundleFragment: fragment,
-					forceCompression: combinedBundle.forceCompression,
-				}),
-			)
+			const chunks = buildChunkEntriesFromBundle(combinedBundle)
 
 			// Build post text: name + description (≤300 chars enforced by the form)
 			const postText = clampPostTextForApi(
@@ -2016,7 +1660,7 @@
 					.filter(Boolean)
 					.join("\n"),
 			)
-			console.log("[profile] primary post text prepared", {
+			debugProfile("[profile] primary post text prepared", {
 				textLength: [...postText].length,
 				textPreview: postText.slice(0, 80),
 			})
@@ -2072,64 +1716,6 @@
 						? primaryMedia
 						: fallbackImage
 
-			const primaryMediaForPost = primaryMedia.map((entry) => ({
-				...entry,
-			}))
-			const primaryChunkCapacity = Math.min(4, chunks.length)
-			const primaryChunks = chunks.slice(0, primaryChunkCapacity)
-			if (primaryChunks.length > 0) {
-				if (primaryMediaForPost.length === 0) {
-					publishError =
-						"Unable to attach payload chunks on the primary post: at least one profile/background image is required."
-					return
-				}
-				const primaryCarrierSeed = primaryMediaForPost.map((entry) => ({
-					...entry,
-				}))
-				while (primaryMediaForPost.length < primaryChunks.length) {
-					const seed =
-						primaryCarrierSeed[
-							primaryMediaForPost.length %
-								primaryCarrierSeed.length
-						]
-					primaryMediaForPost.push({...seed})
-				}
-				for (let i = 0; i < primaryChunks.length; i += 1) {
-					const chunkEntry = primaryChunks[i]
-					const meta = {
-						uuid,
-						version: priorVersion,
-						index: chunkEntry.index,
-						total: chunks.length,
-					}
-					const altPayload = buildChunkAltPayload(
-						meta,
-						chunkEntry?.bundleFragment || "",
-						{
-							forceCompression: Boolean(
-								chunkEntry?.forceCompression,
-							),
-						},
-					)
-					primaryMediaForPost[i] = {
-						...primaryMediaForPost[i],
-						alt: JSON.stringify(altPayload),
-					}
-				}
-			}
-			console.log("[profile] primary media prepared", {
-				mediaCount: primaryMediaForPost.length,
-				kinds: primaryMediaForPost.map(
-					(entry) => entry?.kind || "unknown",
-				),
-				primaryChunkCapacity,
-				primaryChunkUsed: primaryChunks.length,
-				remainingChunkCount: Math.max(
-					0,
-					chunks.length - primaryChunks.length,
-				),
-			})
-
 			const chunkDiagnostics = chunks.map((entry, index) => ({
 				index: index + 1,
 				bundleFragmentLength: String(entry?.bundleFragment || "")
@@ -2145,217 +1731,29 @@
 					},
 				),
 			}))
-			console.log("[profile] chunk diagnostics", chunkDiagnostics)
+			debugProfile("[profile] chunk diagnostics", chunkDiagnostics)
 
-			const primaryFd = new FormData()
-			primaryFd.append("text", postText)
-			if (primaryMediaForPost.length) {
-				primaryFd.append(
-					"uploadedMedia",
-					JSON.stringify(primaryMediaForPost),
-				)
-			}
-			console.log("[profile] posting primary profile to /api/post", {
-				hasUploadedMedia: primaryMediaForPost.length > 0,
+			const publishResult = await publishChunkBundleToBsky({
+				fetchImpl: fetch,
+				endpoint: "/api/post",
+				uuid,
+				priorVersion,
+				postText,
+				chunks,
+				primaryMedia,
+				replyAttachmentPool: attachmentPool,
+				videoAttachments,
 			})
 
-			const primaryRes = await fetch("/api/post", {
-				method: "POST",
-				body: primaryFd,
-			})
-			const primaryJson = await primaryRes.json().catch(() => ({}))
-			console.log("[profile] primary publish response", {
-				status: primaryRes.status,
-				ok: primaryRes.ok,
-				json: primaryJson,
-			})
-			if (!primaryRes.ok || !primaryJson?.ok) {
-				console.error("[profile] primary publish failed", {
-					status: primaryRes.status,
-					json: primaryJson,
-				})
-				publishError =
-					primaryJson?.error ||
-					"Failed to publish primary profile post."
-				return
-			}
-
-			const primaryUri = primaryJson?.result?.uri || ""
-			const primaryCid = primaryJson?.result?.cid || ""
-			const replyRef =
-				primaryUri && primaryCid
-					? JSON.stringify({
-							root: {uri: primaryUri, cid: primaryCid},
-							parent: {uri: primaryUri, cid: primaryCid},
-						})
-					: null
-			console.log("[profile] primary post ref for replies", {
-				primaryUri,
-				primaryCid,
-				hasReplyRef: Boolean(replyRef),
-			})
-
-			if (videoAttachments.length > 0) {
-				const videoFd = new FormData()
-				videoFd.append("text", "Video")
-				videoFd.append(
-					"uploadedMedia",
-					JSON.stringify([videoAttachments[0]]),
-				)
-				if (replyRef) {
-					videoFd.append("reply", replyRef)
-				}
-				console.log("[profile] posting video reply", {
-					hasReplyRef: Boolean(replyRef),
-					alt: videoAttachments[0]?.alt || "Video",
-				})
-				const videoRes = await fetch("/api/post", {
-					method: "POST",
-					body: videoFd,
-				})
-				const videoJson = await videoRes.json().catch(() => ({}))
-				if (!videoRes.ok || !videoJson?.ok) {
-					console.error("[profile] video publish failed", {
-						status: videoRes.status,
-						videoJson,
-					})
-					publishError =
-						videoJson?.error ||
-						"Failed to publish video attachment post."
-					return
-				}
-			}
-
-			const chunksForReplies = chunks.slice(primaryChunks.length)
-			const replyAttachmentPool = attachmentPool
-			const chunkTotal = chunksForReplies.length
-			const chunkGroups = []
-			for (let i = 0; i < chunkTotal; i += 4) {
-				chunkGroups.push(chunksForReplies.slice(i, i + 4))
-			}
-			const attachmentTotal = replyAttachmentPool.length
-			const totalPosts = chunkGroups.length
-			console.log("[profile] chunk publish plan", {
-				chunkTotal,
-				chunkGroupCount: chunkGroups.length,
-				attachmentTotal,
-				totalPosts,
-				hasFallbackImage: fallbackImage.length > 0,
-				hasVideoAttachment: videoAttachments.length > 0,
-				primaryChunkUsed: primaryChunks.length,
-			})
-
-			for (let i = 0; i < totalPosts; i += 1) {
-				const chunkGroup = chunkGroups[i] || []
-				const text = `Payload ${i + 1}/${totalPosts}`
-
-				const mediaForPost = []
-				if (replyAttachmentPool.length > 0) {
-					for (let j = 0; j < chunkGroup.length; j += 1) {
-						const chunkEntry = chunkGroup[j]
-						const meta = {
-							uuid,
-							version: priorVersion,
-							index: chunkEntry.index,
-							total: chunks.length,
-						}
-						const attachment =
-							replyAttachmentPool[
-								(chunkEntry.index - 1) %
-									replyAttachmentPool.length
-							]
-						const chunkAltPayload = buildChunkAltPayload(
-							meta,
-							chunkEntry?.bundleFragment || "",
-							{
-								forceCompression: Boolean(
-									chunkEntry?.forceCompression,
-								),
-							},
-						)
-						mediaForPost.push({
-							...attachment,
-							alt: JSON.stringify(chunkAltPayload),
-						})
-					}
-				} else if (
-					videoAttachments.length > 0 &&
-					chunkGroup.length === 1
-				) {
-					const chunkEntry = chunkGroup[0]
-					const meta = {
-						uuid,
-						version: priorVersion,
-						index: chunkEntry.index,
-						total: chunks.length,
-					}
-					mediaForPost.push({
-						...videoAttachments[0],
-						alt: JSON.stringify(
-							buildChunkAltPayload(
-								meta,
-								chunkEntry?.bundleFragment || "",
-								{
-									forceCompression: Boolean(
-										chunkEntry?.forceCompression,
-									),
-								},
-							),
-						),
-					})
-				}
-				if (!mediaForPost.length && chunkGroup.length > 0) {
-					publishError =
-						"Unable to attach payload chunks: add at least one image carrier (profile, background, or editor image)."
-					return
-				}
-
-				const chunkFd = new FormData()
-				chunkFd.append("text", text)
-				if (mediaForPost.length > 0) {
-					chunkFd.append(
-						"uploadedMedia",
-						JSON.stringify(mediaForPost),
-					)
-				}
-				if (replyRef) {
-					chunkFd.append("reply", replyRef)
-				}
-
-				console.log("[profile] posting chunk", {
-					index: i + 1,
-					total: totalPosts,
-					chunkCountInPost: chunkGroup.length,
-					textPreview: text.slice(0, 80),
-					mediaKinds: mediaForPost.map((entry) => entry.kind),
-				})
-				const chunkRes = await fetch("/api/post", {
-					method: "POST",
-					body: chunkFd,
-				})
-				const chunkJson = await chunkRes.json().catch(() => ({}))
-				if (!chunkRes.ok || !chunkJson?.ok) {
-					console.error("[profile] chunk publish failed", {
-						index: i + 1,
-						status: chunkRes.status,
-						chunkJson,
-					})
-					publishError =
-						chunkJson?.error ||
-						`Failed to publish chunk ${i + 1} of ${totalPosts}.`
-					return
-				}
-			}
-
-			publishMessage = `Published profile + ${totalPosts} chunk${totalPosts === 1 ? "" : "s"} at ${new Date().toLocaleTimeString()}`
-			console.log("[profile] publishToBluesky:success", {
+			publishMessage = `Published profile + ${publishResult.totalChunkPosts} chunk${publishResult.totalChunkPosts === 1 ? "" : "s"} at ${new Date().toLocaleTimeString()}`
+			debugProfile("[profile] publishToBluesky:success", {
 				message: publishMessage,
 			})
 		} catch (err) {
 			console.error("[profile] publishToBluesky:exception", err)
 			publishError = err?.message || "Unexpected error while publishing."
 		} finally {
-			console.log("[profile] publishToBluesky:finally", {
+			debugProfile("[profile] publishToBluesky:finally", {
 				publishingBeforeReset: publishing,
 			})
 			publishing = false
@@ -2363,13 +1761,13 @@
 	}
 
 	function saveProfile(showMessage = true) {
-		console.log("[profile] saveProfile", {showMessage})
+		debugProfile("[profile] saveProfile", {showMessage})
 		if (typeof localStorage === "undefined") return
 		const warning = getDraftSaveWarning()
 		if (warning) {
 			saveWarning = warning
 			if (showMessage) saveMessage = ""
-			console.warn("[profile] saveProfile skipped", {
+			warnProfile("[profile] saveProfile skipped", {
 				reason: warning,
 			})
 			return
@@ -2388,11 +1786,11 @@
 	}
 
 	function setPriorVersionFromPrimary() {
-		priorVersion = ""
+		priorVersion = primaryVersion
 	}
 
 	function clearProfileDraft() {
-		console.log("[profile] clearProfileDraft:start")
+		debugProfile("[profile] clearProfileDraft:start")
 
 		clearSnapshot = buildStoredProfileForStorage()
 
@@ -2426,12 +1824,15 @@
 			clearSnapshot = null
 		}, 10000)
 
-		console.log("[profile] clearProfileDraft:done")
+		debugProfile("[profile] clearProfileDraft:done")
 	}
 
 	function undoProfileChanges() {
 		if (!clearSnapshot) return
-		if (clearUndoTimer) { clearTimeout(clearUndoTimer); clearUndoTimer = null }
+		if (clearUndoTimer) {
+			clearTimeout(clearUndoTimer)
+			clearUndoTimer = null
+		}
 		showUndo = false
 		suppressAutosave = true
 		applyStoredProfile(clearSnapshot)
@@ -2489,11 +1890,11 @@
 	}
 
 	onMount(() => {
-		console.log("[profile] onMount:start")
+		debugProfile("[profile] onMount:start")
 		const intervalId = ENABLE_EDITOR_MEDIA_UPLOADS
 			? setInterval(() => {
 					maybePromoteCdnUrls().catch((error) => {
-						console.warn(
+						warnProfile(
 							"[profile] scheduled CDN promotion failed",
 							{
 								error: error?.message || String(error),
@@ -2504,7 +1905,7 @@
 			: null
 
 		if (typeof localStorage === "undefined") {
-			console.log("[profile] onMount:no localStorage")
+			debugProfile("[profile] onMount:no localStorage")
 			uuid = generateShortUuid()
 			primaryVersion = makeVersion()
 			priorVersion = primaryVersion
@@ -2518,7 +1919,7 @@
 
 		const raw = localStorage.getItem(PROFILE_STORAGE_KEY)
 		if (!raw) {
-			console.log("[profile] onMount:no stored profile")
+			debugProfile("[profile] onMount:no stored profile")
 			uuid = generateShortUuid()
 			primaryVersion = makeVersion()
 			priorVersion = primaryVersion
@@ -2533,7 +1934,7 @@
 
 		try {
 			const parsed = JSON.parse(raw)
-			console.log("[profile] onMount:loaded stored profile", {
+			debugProfile("[profile] onMount:loaded stored profile", {
 				hasUuid: Boolean(parsed?.uuid),
 				hasContentHtml: Boolean(parsed?.contentHtml),
 			})
@@ -2541,7 +1942,7 @@
 			initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
 			setStoredSnapshotBaseline(buildStoredProfileForStorage())
 		} catch {
-			console.warn("[profile] onMount:failed to parse stored profile")
+			warnProfile("[profile] onMount:failed to parse stored profile")
 			uuid = generateShortUuid()
 			primaryVersion = makeVersion()
 			priorVersion = primaryVersion
@@ -2550,7 +1951,7 @@
 		}
 
 		storageReady = true
-		console.log("[profile] onMount:ready")
+		debugProfile("[profile] onMount:ready")
 		return () => {
 			if (intervalId) clearInterval(intervalId)
 		}
@@ -2587,7 +1988,7 @@
 		const snapshot = JSON.stringify(buildStoredProfileForStorage())
 		if (snapshot === lastAutosaveSnapshot) return
 		lastAutosaveSnapshot = snapshot
-		console.log("[profile] autosave effect triggered")
+		debugProfile("[profile] autosave effect triggered")
 		if (typeof localStorage !== "undefined") {
 			localStorage.setItem(PROFILE_STORAGE_KEY, snapshot)
 		}
@@ -2606,7 +2007,7 @@
 				const runSource = String(queuedEditorMediaSource || "")
 				const normalized = await normalizeEditorMediaHtml(runSource)
 				if (normalized !== runSource) {
-					console.log("[profile] editor media html normalized", {
+					debugProfile("[profile] editor media html normalized", {
 						beforeLength: runSource.length,
 						afterLength: normalized.length,
 					})
@@ -2616,7 +2017,7 @@
 			}
 		})()
 			.catch((error) => {
-				console.warn("[profile] editor media normalization failed", {
+				warnProfile("[profile] editor media normalization failed", {
 					error: error?.message || String(error),
 				})
 			})
@@ -2628,16 +2029,15 @@
 	$effect(() => {
 		const source = String(contentHtml || "")
 		const currentBuild = ++chunkBuildVersion
-		console.log("[profile] chunk effect:start", {
+		debugProfile("[profile] chunk effect:start", {
 			currentBuild,
 			sourceLength: source.length,
 		})
 		;(async () => {
-			const minifiedHtml = await minifyHtmlForChunking(source)
 			if (currentBuild !== chunkBuildVersion) return
 			const forceCompression = true
 			const fragments = chunkHtmlByAltPayload(
-				minifiedHtml,
+				source,
 				CHUNK_ALT_PAYLOAD_TARGET_CHARS,
 				{uuid, version: priorVersion, forceCompression},
 			)
@@ -2658,7 +2058,7 @@
 					CHUNK_BODY_TEXT_SIZE,
 				),
 			}))
-			console.log("[profile] chunk effect:success", {
+			debugProfile("[profile] chunk effect:success", {
 				currentBuild,
 				forceCompression,
 				fragmentCount: fragments.length,
@@ -2690,7 +2090,7 @@
 					CHUNK_BODY_TEXT_SIZE,
 				),
 			}))
-			console.warn("[profile] chunk effect:fallback", {
+			warnProfile("[profile] chunk effect:fallback", {
 				currentBuild,
 				forceCompression,
 				fragmentCount: fragments.length,
