@@ -11,6 +11,8 @@
 		Users,
 		AlertOctagon,
 		Shield,
+		Pencil,
+		Plus,
 	} from "lucide-svelte"
 
 	let {
@@ -28,6 +30,8 @@
 		onSearchSubmit = () => {},
 		onSearchInput = () => {},
 		menu,
+		editProfileUrl = "",
+		hideCreateButton = false,
 	} = $props()
 
 	let logoLoaded = $state(true)
@@ -234,9 +238,19 @@
 	{/if}
 
 	<div class="topbar-links">
-		<a class="post-route-btn" href="/post" aria-label="Create Post"
-			>+ Create</a
-		>
+		{#if editProfileUrl}
+			<a
+				class="edit-profile-btn"
+				href={editProfileUrl}
+				aria-label="Edit Profile"
+			>
+				<Pencil size={16} /> &nbsp; Edit
+			</a>
+		{:else if !hideCreateButton}
+			<a class="post-route-btn" href="/post" aria-label="Create Post">
+				<Plus size={16} /> &nbsp; Create
+			</a>
+		{/if}
 	</div>
 </nav>
 
@@ -440,6 +454,20 @@
 		text-decoration: none;
 	}
 
+	.edit-profile-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		height: 40px;
+		padding: 0 1rem;
+		border-radius: 999px;
+		border: 1px solid #305741;
+		background: #3b6e4f;
+		color: #fff;
+		font-weight: 600;
+		text-decoration: none;
+	}
+
 	.topbar-links {
 		display: flex;
 		align-items: center;
@@ -494,6 +522,19 @@
 			font-size: 1.45rem;
 			line-height: 1;
 			font-weight: 700;
+		}
+
+		.edit-profile-btn {
+			width: 40px;
+			height: 40px;
+			padding: 0;
+			font-size: 0;
+		}
+
+		.edit-profile-btn::before {
+			content: "✎";
+			font-size: 1.2rem;
+			line-height: 1;
 		}
 	}
 </style>

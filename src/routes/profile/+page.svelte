@@ -1,5 +1,6 @@
 <script>
 	import {onMount} from "svelte"
+	import {page} from "$app/state"
 	import {Eraser, Save, Send, X} from "lucide-svelte"
 	import Editor from "$lib/Editor.svelte"
 	import NavBar from "$lib/NavBar.svelte"
@@ -10,7 +11,9 @@
 		buildLocationBlock,
 		cleanCanonicalName,
 		CONTACT_LOCK_PREFIX,
+		decryptContact,
 		encryptContact,
+		isContactEncrypted,
 		normalizeContactInput,
 		lookupLocationDetails,
 		mediaTokenFromBuffer,
@@ -25,6 +28,8 @@
 	import ShowAdmin from "$lib/ShowAdmin.svelte"
 
 	const PROFILE_STORAGE_KEY = "love4dogs.profile-v2"
+	const PROFILE_VIEW_CACHE_PREFIX = "love4dogs.profile-view-cache"
+	const SESSION_BUNDLE_CACHE_PREFIX = "love4dogs.bundle-session"
 	const NORMALIZED_IMAGE_MAX_DIM = 1800
 	const CONTENT_CHUNK_SIZE = 1800
 	const CHUNK_ALT_PAYLOAD_TARGET_CHARS = 2000
@@ -1119,6 +1124,11 @@
 		profileUploadedMedia.find((entry) => entry?.kind === "image") || null,
 	)
 
+	const selectedBackgroundImage = $derived(
+		backgroundUploadedMedia.find((entry) => entry?.kind === "image") ||
+			null,
+	)
+
 	const uploadedProfileImage = $derived(
 		profileUploadedMedia.find(
 			(entry) =>
@@ -1135,10 +1145,16 @@
 
 	// Display URLs derived from stored bskyUrl so saved images are always visible.
 	const storedProfileImageSrc = $derived(
-		String(uploadedProfileImage?.bskyUrl || ""),
+		String(
+			selectedProfileImage?.bskyUrl || selectedProfileImage?.url || "",
+		),
 	)
 	const storedBackgroundImageSrc = $derived(
-		String(uploadedBackgroundImage?.bskyUrl || ""),
+		String(
+			selectedBackgroundImage?.bskyUrl ||
+				selectedBackgroundImage?.url ||
+				"",
+		),
 	)
 
 	const nameError = $derived(!profileName.trim() ? "Name is required." : "")
@@ -1290,11 +1306,132 @@
 			}))
 			.filter((entry) => {
 				const blob = entry?.blob
+				const bskyUrl = String(entry?.bskyUrl || "").trim()
+				const url = String(entry?.url || "").trim()
 				return Boolean(
-					blob &&
-						(typeof blob === "object" || typeof blob === "string"),
+					(blob &&
+						(typeof blob === "object" ||
+							typeof blob === "string")) ||
+						bskyUrl ||
+						url,
 				)
 			})
+	}
+
+	function decodePayloadEmail(value = "") {
+		const raw = String(value || "").trim()
+		if (!raw) return ""
+		if (!isContactEncrypted(raw)) return normalizeContactInput(raw)
+		try {
+			return decryptContact(raw.slice(CONTACT_LOCK_PREFIX.length))
+		} catch {
+			return ""
+		}
+	}
+
+	function buildMediaFromUrl(url = "", alt = "") {
+		const cleanedUrl = String(url || "").trim()
+		if (!cleanedUrl) return null
+		return {
+			kind: "image",
+			alt: String(alt || "Image"),
+			blob: null,
+			url: cleanedUrl,
+			bskyUrl: cleanedUrl,
+			sourceUrl: cleanedUrl,
+			sourceName: "remote",
+		}
+	}
+
+	function buildBundleCacheKey(uuid = "", stamp = "") {
+		return `${SESSION_BUNDLE_CACHE_PREFIX}:${uuid}:${stamp}`
+	}
+
+	function readBundleSessionCache(uuid = "", stamp = "") {
+		if (typeof sessionStorage === "undefined") return null
+		const cacheKey = buildBundleCacheKey(uuid, stamp)
+		const raw = sessionStorage.getItem(cacheKey)
+		if (!raw) return null
+		try {
+			return JSON.parse(raw)
+		} catch {
+			return null
+		}
+	}
+
+	function buildProfileViewCacheKey(uuid = "", stamp = "") {
+		return `${PROFILE_VIEW_CACHE_PREFIX}:${uuid}:${stamp}`
+	}
+
+	function readProfileViewCache(uuid = "", stamp = "") {
+		if (typeof localStorage === "undefined") return null
+		const cacheKey = buildProfileViewCacheKey(uuid, stamp)
+		const raw = localStorage.getItem(cacheKey)
+		if (!raw) return null
+		try {
+			const parsed = JSON.parse(raw)
+			const data = parsed?.data
+			if (!data || typeof data !== "object") return null
+			return data
+		} catch {
+			return null
+		}
+	}
+
+	function applyBundleToEditor(
+		bundle = null,
+		fallbackUuid = "",
+		fallbackVersion = "",
+	) {
+		const combined =
+			bundle && typeof bundle === "object" && bundle.combined
+				? bundle.combined
+				: bundle?.parsed && typeof bundle.parsed === "object"
+					? bundle.parsed
+					: null
+		const primary = combined?.primary || {}
+		const subsequent = Array.isArray(combined?.subsequent)
+			? combined.subsequent
+			: []
+
+		uuid =
+			String(primary?.uuid || fallbackUuid || "") || generateShortUuid()
+		primaryVersion =
+			String(primary?.version || fallbackVersion || "") || makeVersion()
+		priorVersion = primaryVersion
+		email = decodePayloadEmail(primary?.email)
+		profileName = String(primary?.name || "")
+		profileDescription = String(primary?.description || "")
+		contentHtml = subsequent.map((entry) => String(entry || "")).join("")
+		profileUploadedMedia = normalizeStoredMedia([
+			buildMediaFromUrl(primary?.profilePic, "Profile image"),
+		])
+		backgroundUploadedMedia = normalizeStoredMedia([
+			buildMediaFromUrl(primary?.backgroundPic, "Profile background"),
+		])
+		editorMediaList = []
+	}
+
+	function applyViewCacheToEditor(
+		data = {},
+		fallbackUuid = "",
+		fallbackVersion = "",
+	) {
+		uuid = String(data?.uuid || fallbackUuid || "") || generateShortUuid()
+		primaryVersion =
+			String(data?.version || fallbackVersion || "") || makeVersion()
+		priorVersion = primaryVersion
+		email = decodePayloadEmail(data?.email)
+		profileName = String(data?.name || "")
+		profileDescription = String(data?.description || "")
+		contentHtml = String(data?.html || "")
+		profileUploadedMedia = normalizeStoredMedia([
+			buildMediaFromUrl(data?.profilePic, "Profile image"),
+		])
+		backgroundUploadedMedia = normalizeStoredMedia([
+			buildMediaFromUrl(data?.backgroundPic, "Profile background"),
+		])
+		editorMediaList = []
 	}
 
 	function cloneStoredProfile(value) {
@@ -1428,11 +1565,16 @@
 	}
 
 	function validateRequiredFields() {
-		const submitProfileImageError = !uploadedProfileImage
-			? selectedProfileImage
-				? "Profile picture is still uploading. Please wait."
-				: "Profile picture is required."
-			: ""
+		const hasProfileImage = Boolean(
+			selectedProfileImage?.blob ||
+				selectedProfileImage?.bskyUrl ||
+				selectedProfileImage?.url,
+		)
+		const submitProfileImageError = !hasProfileImage
+			? "Profile picture is required."
+			: !uploadedProfileImage
+				? "Profile picture is loaded from CDN. Re-upload it before publishing."
+				: ""
 		debugProfile("[profile] validateRequiredFields", {
 			hasName: Boolean(profileName.trim()),
 			hasEmail: Boolean(email.trim()),
@@ -1923,6 +2065,8 @@
 
 	onMount(() => {
 		debugProfile("[profile] onMount:start")
+		const routeUuid = String(page.params?.uuid || "").trim()
+		const routeStamp = String(page.params?.stamp || "").trim()
 		const intervalId = ENABLE_EDITOR_MEDIA_UPLOADS
 			? setInterval(() => {
 					maybePromoteCdnUrls().catch((error) => {
@@ -1935,6 +2079,42 @@
 					})
 				}, CDN_PROMOTION_TICK_MS)
 			: null
+
+		if (routeUuid && routeStamp && typeof localStorage !== "undefined") {
+			const sessionBundle = readBundleSessionCache(routeUuid, routeStamp)
+			if (sessionBundle) {
+				debugProfile("[profile] onMount:loaded session bundle", {
+					routeUuid,
+					routeStamp,
+				})
+				applyBundleToEditor(sessionBundle, routeUuid, routeStamp)
+				initialProfileSnapshot =
+					cloneStoredProfile(buildStoredProfile())
+				setStoredSnapshotBaseline(buildStoredProfileForStorage())
+				storageReady = true
+				saveProfile(false)
+				return () => {
+					if (intervalId) clearInterval(intervalId)
+				}
+			}
+
+			const viewCacheData = readProfileViewCache(routeUuid, routeStamp)
+			if (viewCacheData) {
+				debugProfile("[profile] onMount:loaded profile view cache", {
+					routeUuid,
+					routeStamp,
+				})
+				applyViewCacheToEditor(viewCacheData, routeUuid, routeStamp)
+				initialProfileSnapshot =
+					cloneStoredProfile(buildStoredProfile())
+				setStoredSnapshotBaseline(buildStoredProfileForStorage())
+				storageReady = true
+				saveProfile(false)
+				return () => {
+					if (intervalId) clearInterval(intervalId)
+				}
+			}
+		}
 
 		if (typeof localStorage === "undefined") {
 			debugProfile("[profile] onMount:no localStorage")

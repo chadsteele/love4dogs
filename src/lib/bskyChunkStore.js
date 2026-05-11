@@ -1118,6 +1118,117 @@ export async function loadProfileBundleFromPublicBsky({
 	throw new Error("Profile not found")
 }
 
+function sortVersionsMostRecentFirst(versions = []) {
+	const unique = [...new Set(versions.map((value) => String(value || "").trim()).filter(Boolean))]
+	return unique.sort((a, b) => {
+		const aNum = Number.parseInt(a, 36)
+		const bNum = Number.parseInt(b, 36)
+		if (Number.isFinite(aNum) && Number.isFinite(bNum) && aNum !== bNum) {
+			return bNum - aNum
+		}
+		if (a.length !== b.length) return b.length - a.length
+		return b.localeCompare(a)
+	})
+}
+
+export async function loadMostRecentProfileBundleFromPublicBsky({
+	fetchImpl = fetch,
+	uuid,
+	author = "love4dogs.club",
+	debug = false,
+	maxPages = 8,
+	pageLimit = 100,
+} = {}) {
+	const debugLog = (...args) => {
+		if (debug) console.log("[bskyChunkStore]", ...args)
+	}
+	const warnLog = (...args) => {
+		if (debug) console.warn("[bskyChunkStore]", ...args)
+	}
+
+	const id = String(uuid || "").trim()
+	if (!id) throw new Error("Missing uuid route param")
+
+	const posts = await fetchAuthorFeedPostsFromPublicBsky(
+		fetchImpl,
+		author,
+		{maxPages, pageLimit},
+		debugLog,
+		warnLog,
+	)
+
+	debugLog("latest-by-uuid author feed scan", {
+		uuid: id,
+		postCount: posts.length,
+	})
+
+	const payloadsByVersion = new Map()
+
+	for (const post of posts) {
+		const embed = post?.embed
+		const media =
+			embed?.$type === "app.bsky.embed.recordWithMedia#view"
+				? embed.media
+				: embed
+		const images =
+			media?.$type === "app.bsky.embed.images#view" ? media.images || [] : []
+
+		for (const image of images) {
+			const payload = parseChunkPayloadFromAlt(image?.alt || "")
+			if (!payload) continue
+			const payloadUuid = String(payload?.u || payload?.uuid || "")
+			if (payloadUuid !== id) continue
+			const payloadVersion = String(payload?.v || payload?.version || "")
+			if (!payloadVersion) continue
+
+			if (!payloadsByVersion.has(payloadVersion)) {
+				payloadsByVersion.set(payloadVersion, new Map())
+			}
+			const byIndex = payloadsByVersion.get(payloadVersion)
+			const index = Number(payload?.i || 0)
+			if (!Number.isFinite(index) || index <= 0) continue
+			if (!byIndex.has(index)) byIndex.set(index, payload)
+		}
+	}
+
+	const versions = sortVersionsMostRecentFirst(Array.from(payloadsByVersion.keys()))
+	debugLog("latest-by-uuid candidate versions", {
+		uuid: id,
+		versions,
+	})
+
+	for (const version of versions) {
+		const byIndex = payloadsByVersion.get(version)
+		const payloads = Array.from(byIndex.entries())
+			.sort((a, b) => a[0] - b[0])
+			.map((entry) => entry[1])
+		try {
+			const reconstructed = reconstructBundleFromChunkPayloads(payloads)
+			debugLog("latest-by-uuid reconstruction success", {
+				uuid: id,
+				version,
+				chunkCount: payloads.length,
+			})
+			return {
+				uuid: id,
+				version,
+				posts,
+				payloads,
+				...reconstructed,
+			}
+		} catch (error) {
+			warnLog("latest-by-uuid reconstruction failed", {
+				uuid: id,
+				version,
+				error: error?.message || String(error),
+				details: error?.details || null,
+			})
+		}
+	}
+
+	throw new Error("Profile not found")
+}
+
 export function collectLinksFromValue(value, links = new Set()) {
 	if (typeof value === "string") {
 		const matches = value.match(/https?:\/\/[^\s"'<>]+/g) || []
