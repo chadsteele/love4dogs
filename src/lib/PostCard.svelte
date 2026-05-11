@@ -443,15 +443,14 @@
 		}
 	}
 
-	function extractUuidStampFromCanonical(url = "") {
+	function extractUuidFromCanonical(url = "") {
 		const canonical = String(url || "").trim()
 		if (!canonical) return null
 
-		const match = canonical.match(/profile\/view\/([^/]+)\/([^/]+)/i)
+		const match = canonical.match(/profile\/view\/([^/]+)/i)
 		if (match) {
 			return {
 				uuid: match[1],
-				stamp: match[2],
 			}
 		}
 
@@ -461,18 +460,18 @@
 	async function resolveTitleClick() {
 		if (!canonicalUrl) return
 
-		const parsed = extractUuidStampFromCanonical(canonicalUrl)
+		const parsed = extractUuidFromCanonical(canonicalUrl)
 		if (!parsed) {
 			console.warn(
-				"[PostCard] Could not parse UUID/stamp from canonical URL",
+				"[PostCard] Could not parse UUID from canonical URL",
 				canonicalUrl,
 			)
 			return
 		}
 
 		try {
-			// Navigate to profile view with uuid and stamp
-			window.location.href = `/profile/view/${encodeURIComponent(parsed.uuid)}/${encodeURIComponent(parsed.stamp)}/`
+			// Navigate to profile view with uuid
+			window.location.href = `/profile/view/${encodeURIComponent(parsed.uuid)}/`
 		} catch (err) {
 			console.error("[PostCard] Error resolving title click", err)
 		}

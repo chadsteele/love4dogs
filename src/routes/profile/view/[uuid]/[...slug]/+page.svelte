@@ -2,11 +2,7 @@
 	import {onMount} from "svelte"
 	import {page} from "$app/state"
 	import NavBar from "$lib/NavBar.svelte"
-	import {
-		collectLinksFromValue,
-		loadProfileBundleFromPublicBsky,
-		loadMostRecentProfileBundleFromPublicBsky,
-	} from "$lib/bskyChunkStore"
+	import {collectLinksFromValue} from "$lib/bskyChunkStore"
 
 	const PROFILE_VIEW_CACHE_PREFIX = "love4dogs.profile-view-cache"
 	const PROFILE_VIEW_CACHE_TTL_MS = 5 * 60 * 1000
@@ -23,13 +19,13 @@
 		return typeof value === "string" ? value : ""
 	}
 
-	function buildBundleCacheKey(uuid = "", stamp = "") {
-		return `${SESSION_BUNDLE_CACHE_PREFIX}:${uuid}:${stamp}`
+	function buildBundleCacheKey(uuid = "") {
+		return `${SESSION_BUNDLE_CACHE_PREFIX}:${uuid}`
 	}
 
-	function readBundleSessionCache(uuid = "", stamp = "") {
+	function readBundleSessionCache(uuid = "") {
 		if (typeof sessionStorage === "undefined") return null
-		const cacheKey = buildBundleCacheKey(uuid, stamp)
+		const cacheKey = buildBundleCacheKey(uuid)
 		const raw = sessionStorage.getItem(cacheKey)
 		if (!raw) return null
 		try {
@@ -39,10 +35,10 @@
 		}
 	}
 
-	function writeBundleSessionCache(uuid = "", stamp = "", bundle = null) {
+	function writeBundleSessionCache(uuid = "", bundle = null) {
 		if (typeof sessionStorage === "undefined") return
 		if (!bundle || typeof bundle !== "object") return
-		const cacheKey = buildBundleCacheKey(uuid, stamp)
+		const cacheKey = buildBundleCacheKey(uuid)
 		sessionStorage.setItem(cacheKey, JSON.stringify(bundle))
 	}
 
@@ -50,13 +46,13 @@
 		currentView = String(view || "feed")
 	}
 
-	function buildCacheKey(uuid = "", stamp = "") {
-		return `${PROFILE_VIEW_CACHE_PREFIX}:${uuid}:${stamp}`
+	function buildCacheKey(uuid = "") {
+		return `${PROFILE_VIEW_CACHE_PREFIX}:${uuid}`
 	}
 
-	function readCachedProfile(uuid = "", stamp = "") {
+	function readCachedProfile(uuid = "") {
 		if (typeof localStorage === "undefined") return null
-		const cacheKey = buildCacheKey(uuid, stamp)
+		const cacheKey = buildCacheKey(uuid)
 		const raw = localStorage.getItem(cacheKey)
 		if (!raw) return null
 
@@ -79,10 +75,10 @@
 		}
 	}
 
-	function writeCachedProfile(uuid = "", stamp = "", data = null) {
+	function writeCachedProfile(uuid = "", data = null) {
 		if (typeof localStorage === "undefined") return
 		if (!data || typeof data !== "object") return
-		const cacheKey = buildCacheKey(uuid, stamp)
+		const cacheKey = buildCacheKey(uuid)
 		localStorage.setItem(
 			cacheKey,
 			JSON.stringify({
@@ -96,7 +92,6 @@
 		try {
 			const uuid = String(page.params?.uuid || "")
 			const slug = String(page.params?.slug || "")
-			let stamp = String(page.params?.stamp || "").trim()
 			const slugPath = slug ? `/${slug}` : ""
 
 			if (!uuid) {
@@ -105,92 +100,64 @@
 
 			console.log("[profile/view] load:start", {
 				uuid,
-				stamp: stamp || "(none)",
+				slugPath,
 			})
 
-			// Try session cache first (with or without stamp)
-			if (stamp) {
-				const sessionBundle = readBundleSessionCache(uuid, stamp)
-				if (sessionBundle) {
-					const {primary, subsequent} = sessionBundle?.combined || {}
-					jsonData = {...primary, html: subsequent?.join("")}
-					jsonLinks = Array.from(collectLinksFromValue(jsonData))
-					editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}/${encodeURIComponent(stamp)}${slugPath}`
-					console.log("[profile/view] load:session-cache-hit", {
-						uuid,
-						stamp,
-						linkCount: jsonLinks.length,
-					})
-					return
-				}
-			}
-
-			// Try localStorage cache (with or without stamp)
-			if (stamp) {
-				const cached = readCachedProfile(uuid, stamp)
-				if (cached) {
-					jsonData = cached
-					jsonLinks = Array.from(collectLinksFromValue(jsonData))
-					editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}/${encodeURIComponent(stamp)}${slugPath}`
-					console.log("[profile/view] load:cache-hit", {
-						uuid,
-						stamp,
-						linkCount: jsonLinks.length,
-					})
-					return
-				}
-			}
-
-			let loaded
-			let resolvedStamp = stamp
-
-			// If stamp is provided, try loading that specific version
-			if (stamp) {
-				try {
-					loaded = await loadProfileBundleFromPublicBsky({
-						fetchImpl: fetch,
-						uuid,
-						version: stamp,
-						author: "love4dogs.club",
-						debug: true,
-					})
-					console.log("[profile/view] load:specific-stamp-success", {
-						uuid,
-						stamp,
-					})
-				} catch (err) {
-					console.log("[profile/view] load:specific-stamp-failed", {
-						uuid,
-						stamp,
-						error: err?.message,
-					})
-					loaded = null
-				}
-			}
-
-			// If no stamp or specific version failed, load the most recent
-			if (!loaded) {
-				loaded = await loadMostRecentProfileBundleFromPublicBsky({
-					fetchImpl: fetch,
+			const sessionBundle = readBundleSessionCache(uuid)
+			if (sessionBundle) {
+				const {primary, subsequent} = sessionBundle?.combined || {}
+				jsonData = {...primary, html: subsequent?.join("")}
+				jsonLinks = Array.from(collectLinksFromValue(jsonData))
+				editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`
+				console.log("[profile/view] load:session-cache-hit", {
 					uuid,
-					debug: true,
+					linkCount: jsonLinks.length,
 				})
-				resolvedStamp = String(loaded?.version || "").trim()
-				console.log("[profile/view] load:latest-fallback", {
-					uuid,
-					resolvedStamp,
-				})
+				return
 			}
+
+			const cached = readCachedProfile(uuid)
+			if (cached) {
+				jsonData = cached
+				jsonLinks = Array.from(collectLinksFromValue(jsonData))
+				editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`
+				console.log("[profile/view] load:cache-hit", {
+					uuid,
+					linkCount: jsonLinks.length,
+				})
+				return
+			}
+
+			const bundleRes = await fetch(
+				`/api/profile-bundle?uuid=${encodeURIComponent(uuid)}`,
+			)
+			const bundleJson = await bundleRes.json().catch(() => ({}))
+			if (
+				!bundleRes.ok ||
+				!bundleJson ||
+				typeof bundleJson !== "object"
+			) {
+				const message = String(
+					bundleJson?.error || "Failed to load profile bundle",
+				)
+				const err = new Error(message)
+				err.details = bundleJson?.details || null
+				throw err
+			}
+			const loaded = bundleJson
+
+			console.log("[profile/view] load:latest", {
+				uuid,
+			})
 
 			const {primary, subsequent} = loaded?.combined || {}
 			jsonData = {...primary, html: subsequent?.join("")}
-			writeCachedProfile(uuid, resolvedStamp, jsonData)
-			writeBundleSessionCache(uuid, resolvedStamp, loaded)
-			editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}/${encodeURIComponent(resolvedStamp)}${slugPath}`
+			writeCachedProfile(uuid, jsonData)
+			writeBundleSessionCache(uuid, loaded)
+			editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`
 			jsonLinks = Array.from(collectLinksFromValue(jsonData))
 			console.log("[profile/view] load:success", {
 				uuid,
-				stamp: resolvedStamp,
 				postCount: Array.isArray(loaded?.posts)
 					? loaded.posts.length
 					: 0,
@@ -202,7 +169,6 @@
 		} catch (e) {
 			console.error("[profile/view] error", {
 				uuid: String(page.params?.uuid || ""),
-				stamp: String(page.params?.stamp || ""),
 				message: e?.message || String(e),
 				details: e?.details || null,
 				error: e,

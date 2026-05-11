@@ -67,7 +67,7 @@ export function isLocalHost() {
 	return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
 }
 
-export function buildCanonicalUrl(uuid = '', stamp = '', name = '', baseUrl = DEFAULT_SITE_BASE_URL) {
+export function buildCanonicalUrl(uuid = '', name = '', baseUrl = DEFAULT_SITE_BASE_URL) {
 	const trimmedName = String(name || '').trim();
 	if (!trimmedName) return '';
 
@@ -76,10 +76,9 @@ export function buildCanonicalUrl(uuid = '', stamp = '', name = '', baseUrl = DE
 	if (!cleaned) return '';
 
 	const safeUuid = String(uuid || '').trim();
-	const safeStamp = String(stamp || '').trim();
 	const safeBaseUrl = String(baseUrl || DEFAULT_SITE_BASE_URL).replace(/\/+$/, '');
 
-	return `${safeBaseUrl}/${safeUuid}/${safeStamp}/${cleaned}`;
+	return `${safeBaseUrl}/${safeUuid}/${cleaned}`;
 }
 
 export function encryptContact(input = '') {

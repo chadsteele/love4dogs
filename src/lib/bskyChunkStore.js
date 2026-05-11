@@ -123,7 +123,6 @@ export function buildChunkAltPayload(meta = {}, htmlFragment = "") {
 	const compressed = compressChunkHtmlForAlt(sourceHtml)
 	const payload = {
 		u: String(meta?.uuid || ""),
-		v: String(meta?.version || ""),
 		i: Number(meta?.index || 0),
 		t: Number(meta?.total || 0),
 		h: compressed.html,
@@ -159,7 +158,6 @@ export function measureChunkAltPayloadLength(htmlFragment = "", meta = {}) {
 	const payload = buildChunkAltPayload(
 		{
 			uuid: String(meta?.uuid || "u"),
-			version: String(meta?.version || "v"),
 			index: Number(meta?.index || 1),
 			total: Number(meta?.total || 1),
 		},
@@ -264,7 +262,6 @@ function enforceAltPayloadLimit(
 			const fragment = String(working[i] || "")
 			const payloadLength = measureChunkAltPayloadLength(fragment, {
 				uuid: meta?.uuid,
-				version: meta?.version,
 				index: i + 1,
 				total,
 			})
@@ -274,7 +271,6 @@ function enforceAltPayloadLimit(
 			}
 			const parts = splitFragmentByAltPayload(fragment, maxPayloadChars, {
 				uuid: meta?.uuid,
-				version: meta?.version,
 				index: i + 1,
 				total,
 			})
@@ -304,7 +300,6 @@ function coalesceAltPayloadChunks(
 			const remainingAfterMerge = source.length - (nextIndex - i)
 			const payloadLength = measureChunkAltPayloadLength(candidate, {
 				uuid: meta?.uuid,
-				version: meta?.version,
 				index: merged.length + 1,
 				total: remainingAfterMerge,
 			})
@@ -349,7 +344,6 @@ export function chunkHtmlByAltPayload(
 		const estimatedIndex = chunks.length + 1
 		const candidateLength = measureChunkAltPayloadLength(candidate, {
 			uuid: meta?.uuid,
-			version: meta?.version,
 			index: estimatedIndex,
 			total: estimatedIndex,
 			forceCompression: meta?.forceCompression,
@@ -366,7 +360,6 @@ export function chunkHtmlByAltPayload(
 
 		const nextLength = measureChunkAltPayloadLength(next, {
 			uuid: meta?.uuid,
-			version: meta?.version,
 			index: chunks.length + 1,
 			total: chunks.length + 1,
 			forceCompression: meta?.forceCompression,
@@ -378,7 +371,6 @@ export function chunkHtmlByAltPayload(
 
 		const splitNext = splitFragmentByAltPayload(next, maxPayloadChars, {
 			uuid: meta?.uuid,
-			version: meta?.version,
 			index: chunks.length + 1,
 			total: chunks.length + 1,
 			forceCompression: meta?.forceCompression,
@@ -406,12 +398,10 @@ export function buildCombinedPayloadBundle(
 	})
 	const limited = enforceAltPayloadLimit([combinedJson], maxPayloadChars, {
 		uuid: String(options?.uuid || primaryPayload?.uuid || ""),
-		version: String(options?.version || primaryPayload?.version || ""),
 		forceCompression,
 	})
 	const fragments = coalesceAltPayloadChunks(limited, maxPayloadChars, {
 		uuid: String(options?.uuid || primaryPayload?.uuid || ""),
-		version: String(options?.version || primaryPayload?.version || ""),
 		forceCompression,
 	})
 	return {
@@ -444,7 +434,6 @@ export async function publishChunkBundleToBsky({
 	fetchImpl = fetch,
 	endpoint = "/api/post",
 	uuid = "",
-	priorVersion = "",
 	postText = "",
 	chunks = [],
 	primaryMedia = [],
@@ -481,7 +470,6 @@ export async function publishChunkBundleToBsky({
 			const altPayload = buildChunkAltPayload(
 				{
 					uuid,
-					version: priorVersion,
 					index: chunkEntry.index,
 					total: normalizedChunks.length,
 				},
@@ -537,7 +525,6 @@ export async function publishChunkBundleToBsky({
 				const chunkAltPayload = buildChunkAltPayload(
 					{
 						uuid,
-						version: priorVersion,
 						index: chunkEntry.index,
 						total: normalizedChunks.length,
 					},
@@ -557,7 +544,6 @@ export async function publishChunkBundleToBsky({
 			const chunkAltPayload = buildChunkAltPayload(
 				{
 					uuid,
-					version: priorVersion,
 					index: chunkEntry.index,
 					total: normalizedChunks.length,
 				},
@@ -754,9 +740,8 @@ async function fetchAuthorFeedPostsFromPublicBsky(
 	return Array.from(postsByUri.values())
 }
 
-export function collectChunkPayloadsFromPosts(posts = [], {uuid, version} = {}) {
+export function collectChunkPayloadsFromPosts(posts = [], {uuid} = {}) {
 	const expectedUuid = String(uuid || "")
-	const expectedVersion = String(version || "")
 	const byIndex = new Map()
 
 	for (const post of Array.isArray(posts) ? posts : []) {
@@ -771,8 +756,7 @@ export function collectChunkPayloadsFromPosts(posts = [], {uuid, version} = {}) 
 			const payload = parseChunkPayloadFromAlt(image?.alt || "")
 			if (!payload) continue
 			const payloadUuid = String(payload?.u || payload?.uuid || "")
-			const payloadVersion = String(payload?.v || payload?.version || "")
-			if (payloadUuid !== expectedUuid || payloadVersion !== expectedVersion) {
+			if (payloadUuid !== expectedUuid) {
 				continue
 			}
 			const index = Number(payload?.i || 0)
@@ -841,14 +825,34 @@ export function reconstructBundleFromChunkPayloads(payloads = []) {
 	}
 }
 
-export async function loadProfileBundleFromPublicBsky({
+function resolvePostThreadRootUri(post = {}) {
+	const explicitRoot = String(
+		post?.reply?.root?.uri || post?.record?.reply?.root?.uri || "",
+	).trim()
+	if (explicitRoot) return explicitRoot
+	return String(post?.uri || "").trim()
+}
+
+function resolvePostTimestampMs(post = {}) {
+	const candidates = [
+		post?.indexedAt,
+		post?.record?.createdAt,
+		post?.value?.createdAt,
+	]
+	for (const candidate of candidates) {
+		const ms = Date.parse(String(candidate || ""))
+		if (Number.isFinite(ms) && ms > 0) return ms
+	}
+	return 0
+}
+
+export async function loadMostRecentProfileBundleFromPublicBsky({
 	fetchImpl = fetch,
 	uuid,
-	version,
 	author = "love4dogs.club",
-	querySuffix = "canonicalurl",
-	limit = 100,
 	debug = false,
+	maxPages = 8,
+	pageLimit = 100,
 } = {}) {
 	const debugLog = (...args) => {
 		if (debug) console.log("[bskyChunkStore]", ...args)
@@ -857,146 +861,126 @@ export async function loadProfileBundleFromPublicBsky({
 		if (debug) console.warn("[bskyChunkStore]", ...args)
 	}
 
-	const id = String(uuid || "")
-	const stamp = String(version || "")
-	const queryVariants = [
-		`${id} ${stamp} ${querySuffix}`.trim(),
-		`${id} ${stamp}`.trim(),
-	].filter(Boolean)
-	const searchAttempts = 4
-	const searchDelayMs = 700
-	const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-	const computeChunkTotal = (chunkPayloads = []) =>
-		Array.isArray(chunkPayloads) && chunkPayloads.length > 0
-			? Math.max(...chunkPayloads.map((payload) => Number(payload?.t || 0), 0))
-			: 0
-
-	debugLog("loadProfileBundleFromPublicBsky:start", {
-		uuid: id,
-		version: stamp,
-		author,
-		limit,
-		queryVariants,
-		searchAttempts,
-	})
-	if (!id || !stamp) throw new Error("Missing uuid/stamp route params")
-
-	let query = queryVariants[0] || `${id} ${stamp}`.trim()
-	let searchUrl = ""
+	const id = String(uuid || "").trim()
+	if (!id) throw new Error("Missing uuid route param")
 	const postsByUri = new Map()
-
-	for (let attempt = 1; attempt <= searchAttempts; attempt += 1) {
-		for (const candidateQuery of queryVariants) {
-			const candidateSearchUrl = `https://api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(candidateQuery)}&author=${encodeURIComponent(author)}&limit=${encodeURIComponent(String(limit))}`
-			const response = await fetchImpl(candidateSearchUrl)
-			debugLog("public search response", {
-				attempt,
-				query: candidateQuery,
+	const searchQueries = [`${id} canonicalurl`.trim(), id].filter(Boolean)
+	for (const query of searchQueries) {
+		const searchUrl = `https://api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(query)}&author=${encodeURIComponent(author)}&limit=${encodeURIComponent(String(pageLimit))}`
+		try {
+			const response = await fetchImpl(searchUrl)
+			debugLog("latest-by-uuid public search response", {
+				query,
 				status: response.status,
 				ok: response.ok,
-				searchUrl: candidateSearchUrl,
+				searchUrl,
 			})
 			if (!response.ok) continue
-
 			const json = await response.json().catch(() => ({}))
-			const posts = Array.isArray(json?.posts) ? json.posts : []
-			debugLog("public search posts", {
-				attempt,
-				query: candidateQuery,
-				count: posts.length,
-				uris: posts.map((post) => String(post?.uri || "")).filter(Boolean),
-			})
-
-			if (posts.length > 0) {
-				query = candidateQuery
-				searchUrl = candidateSearchUrl
-			}
-
-			for (const post of posts) {
+			const searchPosts = Array.isArray(json?.posts) ? json.posts : []
+			for (const post of searchPosts) {
 				const uri = String(post?.uri || "").trim()
 				if (!uri || postsByUri.has(uri)) continue
 				postsByUri.set(uri, post)
 			}
-		}
-
-		if (postsByUri.size > 0) {
-			break
-		}
-
-		if (attempt < searchAttempts) {
-			debugLog("public search retrying", {
-				attempt,
-				nextAttempt: attempt + 1,
-				delayMs: searchDelayMs * attempt,
+		} catch (error) {
+			warnLog("latest-by-uuid public search failed", {
+				query,
+				error: error?.message || String(error),
 			})
-			await sleep(searchDelayMs * attempt)
 		}
 	}
 
-	let posts = Array.from(postsByUri.values())
-	debugLog("public search combined posts", {
-		count: posts.length,
-		uris: posts.map((post) => String(post?.uri || "")).filter(Boolean),
-	})
-	let payloads = collectChunkPayloadsFromPosts(posts, {
+	const authorFeedPosts = await fetchAuthorFeedPostsFromPublicBsky(
+		fetchImpl,
+		author,
+		{maxPages, pageLimit},
+		debugLog,
+		warnLog,
+	)
+	for (const post of authorFeedPosts) {
+		const uri = String(post?.uri || "").trim()
+		if (!uri || postsByUri.has(uri)) continue
+		postsByUri.set(uri, post)
+	}
+
+	const posts = Array.from(postsByUri.values())
+
+	debugLog("latest-by-uuid author feed scan", {
 		uuid: id,
-		version: stamp,
-	})
-	let indexes = summarizeChunkPayloadIndexes(payloads)
-	let total = computeChunkTotal(payloads)
-	debugLog("matched chunk payloads", {
-		count: payloads.length,
-		indexes,
-		total,
-		missing: total > 0 ? buildMissingIndexList(indexes, total) : [],
+		postCount: posts.length,
 	})
 
-	if (payloads.length === 0) {
-		debugLog("no chunk payloads from search; scanning author feed", {
-			author,
-		})
-		const authorFeedPosts = await fetchAuthorFeedPostsFromPublicBsky(
-			fetchImpl,
-			author,
-			{maxPages: 6, pageLimit: Math.max(1, Math.min(100, Number(limit || 100)))},
-			debugLog,
-			warnLog,
-		)
-		if (authorFeedPosts.length > 0) {
-			for (const post of authorFeedPosts) {
-				const uri = String(post?.uri || "").trim()
-				if (!uri || postsByUri.has(uri)) continue
-				postsByUri.set(uri, post)
+	const groupsByRevision = new Map()
+
+	for (const post of posts) {
+		const rootUri = resolvePostThreadRootUri(post)
+		if (!rootUri) continue
+		const postTimestampMs = resolvePostTimestampMs(post)
+
+		const embed = post?.embed
+		const media =
+			embed?.$type === "app.bsky.embed.recordWithMedia#view"
+				? embed.media
+				: embed
+		const images =
+			media?.$type === "app.bsky.embed.images#view" ? media.images || [] : []
+
+		for (const image of images) {
+			const payload = parseChunkPayloadFromAlt(image?.alt || "")
+			if (!payload) continue
+			const payloadUuid = String(payload?.u || payload?.uuid || "")
+			if (payloadUuid !== id) continue
+			const legacyToken = String(payload?.v || payload?.version || "").trim()
+			const groupKey = legacyToken
+				? `legacy:${legacyToken}`
+				: `root:${rootUri}`
+
+			const index = Number(payload?.i || 0)
+			if (!Number.isFinite(index) || index <= 0) continue
+
+			if (!groupsByRevision.has(groupKey)) {
+				groupsByRevision.set(groupKey, {
+					groupKey,
+					legacyToken,
+					rootUri,
+					byIndex: new Map(),
+					latestMs: postTimestampMs,
+					seedUris: new Set(),
+				})
 			}
-			posts = Array.from(postsByUri.values())
-			payloads = collectChunkPayloadsFromPosts(posts, {
-				uuid: id,
-				version: stamp,
-			})
-			indexes = summarizeChunkPayloadIndexes(payloads)
-			total = computeChunkTotal(payloads)
-			debugLog("author feed chunk payloads", {
-				postCount: posts.length,
-				count: payloads.length,
-				indexes,
-				total,
-				missing: total > 0 ? buildMissingIndexList(indexes, total) : [],
-			})
+			const group = groupsByRevision.get(groupKey)
+			group.latestMs = Math.max(group.latestMs, postTimestampMs)
+			group.seedUris.add(String(post?.uri || "").trim())
+			group.seedUris.add(rootUri)
+			if (!group.byIndex.has(index)) group.byIndex.set(index, payload)
 		}
 	}
 
-	if (payloads.length > 0 && total > 0 && indexes.length < total) {
-		const seedUris = posts
-			.map((post) => String(post?.uri || "").trim())
-			.filter(Boolean)
-		const uniqueSeedUris = [...new Set(seedUris)]
-		debugLog("incomplete chunks; expanding threads", {
-			seedCount: uniqueSeedUris.length,
-			seedUris: uniqueSeedUris,
-		})
+	const groups = Array.from(groupsByRevision.values()).sort(
+		(a, b) => b.latestMs - a.latestMs,
+	)
 
+	debugLog("latest-by-uuid candidate groups", {
+		uuid: id,
+		groupCount: groups.length,
+		groups: groups.map((group) => ({
+			groupKey: group.groupKey,
+			rootUri: group.rootUri,
+			chunkCount: group.byIndex.size,
+			latestMs: group.latestMs,
+		})),
+	})
+
+	let lastError = null
+	for (const group of groups) {
+		const seedUris = Array.from(group.seedUris).filter(Boolean)
+		const seedPosts = posts.filter((post) => {
+			const uri = String(post?.uri || "").trim()
+			return uri && seedUris.includes(uri)
+		})
 		const threadResults = await Promise.all(
-			uniqueSeedUris.map((uri) =>
+			seedUris.map((uri) =>
 				fetchThreadPostsFromPublicBsky(
 					fetchImpl,
 					uri,
@@ -1005,71 +989,109 @@ export async function loadProfileBundleFromPublicBsky({
 				),
 			),
 		)
-		const extraPosts = threadResults.flat()
-		const combinedByUri = new Map()
-		for (const post of posts) {
+		const threadPosts = threadResults.flat()
+		const postsByUri = new Map()
+		for (const post of [...seedPosts, ...threadPosts]) {
 			const uri = String(post?.uri || "").trim()
-			if (!uri) continue
-			combinedByUri.set(uri, post)
+			if (!uri || postsByUri.has(uri)) continue
+			postsByUri.set(uri, post)
 		}
-		for (const post of extraPosts) {
-			const uri = String(post?.uri || "").trim()
-			if (!uri || combinedByUri.has(uri)) continue
-			combinedByUri.set(uri, post)
-		}
-
-		const expandedPosts = Array.from(combinedByUri.values())
-		const expandedPayloads = collectChunkPayloadsFromPosts(expandedPosts, {
-			uuid: id,
-			version: stamp,
-		})
-		const expandedIndexes = summarizeChunkPayloadIndexes(expandedPayloads)
-		const expandedTotal = computeChunkTotal(expandedPayloads)
-
-		debugLog("expanded chunk payloads", {
-			postCount: expandedPosts.length,
-			count: expandedPayloads.length,
-			indexes: expandedIndexes,
-			total: expandedTotal,
-			missing:
-				expandedTotal > 0
-					? buildMissingIndexList(expandedIndexes, expandedTotal)
-					: [],
-		})
-
-		if (expandedPayloads.length > payloads.length) {
-			payloads = expandedPayloads
-			indexes = expandedIndexes
-			total = expandedTotal
-		}
-	}
-
-	if (payloads.length > 0) {
-		let reconstructed
+		const groupPosts = Array.from(postsByUri.values())
+		const payloads = collectChunkPayloadsFromPosts(groupPosts, {uuid: id})
+		if (!payloads.length) continue
 		try {
-			reconstructed = reconstructBundleFromChunkPayloads(payloads)
-		} catch (error) {
-			warnLog("reconstructBundleFromChunkPayloads failed", {
-				error: error?.message || String(error),
-				errorDetails: error?.details || null,
-				count: payloads.length,
-				indexes,
-				total,
-				missing: total > 0 ? buildMissingIndexList(indexes, total) : [],
-				searchUrl,
+			const reconstructed = reconstructBundleFromChunkPayloads(payloads)
+			debugLog("latest-by-uuid reconstruction success", {
+				uuid: id,
+				groupKey: group.groupKey,
+				rootUri: group.rootUri,
+				chunkCount: payloads.length,
 			})
-			throw error
-		}
-		debugLog("reconstruction complete", {
-			fragmentCount: reconstructed.fragments.length,
-			combinedJsonLength: reconstructed.combinedJson.length,
-		})
-		return {
-			query,
-			searchUrl,
-			posts,
-			payloads,
-			...reconstructed,
+			return {
+				uuid: id,
+				posts: groupPosts,
+				payloads,
+				...reconstructed,
+			}
+		} catch (error) {
+			lastError = error
+			warnLog("latest-by-uuid reconstruction failed", {
+				uuid: id,
+				groupKey: group.groupKey,
+				rootUri: group.rootUri,
+				error: error?.message || String(error),
+				details: error?.details || null,
+			})
+
+			if (typeof window === "undefined" && group.legacyToken) {
+				const fallbackQuery = `${id} ${group.legacyToken}`.trim()
+				const fallbackSearchUrl = `https://api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(fallbackQuery)}&author=${encodeURIComponent(author)}&limit=${encodeURIComponent(String(pageLimit))}`
+				try {
+					const response = await fetchImpl(fallbackSearchUrl)
+					if (response.ok) {
+						const json = await response.json().catch(() => ({}))
+						const fallbackPosts = Array.isArray(json?.posts) ? json.posts : []
+						const mergedByUri = new Map()
+						for (const post of [...groupPosts, ...fallbackPosts]) {
+							const uri = String(post?.uri || "").trim()
+							if (!uri || mergedByUri.has(uri)) continue
+							mergedByUri.set(uri, post)
+						}
+
+						const fallbackSeedUris = Array.from(mergedByUri.values())
+							.map((post) => String(post?.uri || "").trim())
+							.filter(Boolean)
+						const fallbackThreads = await Promise.all(
+							fallbackSeedUris.map((uri) =>
+								fetchThreadPostsFromPublicBsky(
+									fetchImpl,
+									uri,
+									debugLog,
+									warnLog,
+								),
+							),
+						)
+						for (const post of fallbackThreads.flat()) {
+							const uri = String(post?.uri || "").trim()
+							if (!uri || mergedByUri.has(uri)) continue
+							mergedByUri.set(uri, post)
+						}
+
+						const expandedPosts = Array.from(mergedByUri.values())
+						const expandedPayloads = collectChunkPayloadsFromPosts(
+							expandedPosts,
+							{uuid: id},
+						)
+						if (expandedPayloads.length > payloads.length) {
+							const reconstructed = reconstructBundleFromChunkPayloads(
+								expandedPayloads,
+							)
+							debugLog(
+								"latest-by-uuid fallback reconstruction success",
+								{
+									uuid: id,
+									groupKey: group.groupKey,
+									legacyToken: group.legacyToken,
+									chunkCount: expandedPayloads.length,
+								},
+							)
+							return {
+								uuid: id,
+								posts: expandedPosts,
+								payloads: expandedPayloads,
+								...reconstructed,
+							}
+						}
+					}
+				} catch (fallbackError) {
+					warnLog("latest-by-uuid fallback search failed", {
+						uuid: id,
+						groupKey: group.groupKey,
+						legacyToken: group.legacyToken,
+						error: fallbackError?.message || String(fallbackError),
+					})
+				}
+			}
 		}
 	}
 
@@ -1090,142 +1112,42 @@ export async function loadProfileBundleFromPublicBsky({
 			} catch {
 				continue
 			}
+			if (!parsed || typeof parsed !== "object") continue
+
 			const payloadUuid = String(parsed?.uuid || parsed?.u || "")
-			const payloadVersion = String(parsed?.version || parsed?.v || "")
-			if (payloadUuid !== id || payloadVersion !== stamp) continue
-			debugLog("using legacy single-payload fallback", {
-				postUri: String(post?.uri || ""),
-				keys: Object.keys(parsed || {}),
-			})
-			return {
-				query,
-				searchUrl,
-				posts,
-				payloads: [],
-				combinedJson: JSON.stringify(parsed),
-				combined: parsed,
-				fragments: [JSON.stringify(parsed)],
-			}
-		}
-	}
-
-	warnLog("profile not found after search", {
-		searchUrl,
-		postCount: posts.length,
-		uuid: id,
-		version: stamp,
-	})
-	throw new Error("Profile not found")
-}
-
-function sortVersionsMostRecentFirst(versions = []) {
-	const unique = [...new Set(versions.map((value) => String(value || "").trim()).filter(Boolean))]
-	return unique.sort((a, b) => {
-		const aNum = Number.parseInt(a, 36)
-		const bNum = Number.parseInt(b, 36)
-		if (Number.isFinite(aNum) && Number.isFinite(bNum) && aNum !== bNum) {
-			return bNum - aNum
-		}
-		if (a.length !== b.length) return b.length - a.length
-		return b.localeCompare(a)
-	})
-}
-
-export async function loadMostRecentProfileBundleFromPublicBsky({
-	fetchImpl = fetch,
-	uuid,
-	author = "love4dogs.club",
-	debug = false,
-	maxPages = 8,
-	pageLimit = 100,
-} = {}) {
-	const debugLog = (...args) => {
-		if (debug) console.log("[bskyChunkStore]", ...args)
-	}
-	const warnLog = (...args) => {
-		if (debug) console.warn("[bskyChunkStore]", ...args)
-	}
-
-	const id = String(uuid || "").trim()
-	if (!id) throw new Error("Missing uuid route param")
-
-	const posts = await fetchAuthorFeedPostsFromPublicBsky(
-		fetchImpl,
-		author,
-		{maxPages, pageLimit},
-		debugLog,
-		warnLog,
-	)
-
-	debugLog("latest-by-uuid author feed scan", {
-		uuid: id,
-		postCount: posts.length,
-	})
-
-	const payloadsByVersion = new Map()
-
-	for (const post of posts) {
-		const embed = post?.embed
-		const media =
-			embed?.$type === "app.bsky.embed.recordWithMedia#view"
-				? embed.media
-				: embed
-		const images =
-			media?.$type === "app.bsky.embed.images#view" ? media.images || [] : []
-
-		for (const image of images) {
-			const payload = parseChunkPayloadFromAlt(image?.alt || "")
-			if (!payload) continue
-			const payloadUuid = String(payload?.u || payload?.uuid || "")
 			if (payloadUuid !== id) continue
-			const payloadVersion = String(payload?.v || payload?.version || "")
-			if (!payloadVersion) continue
 
-			if (!payloadsByVersion.has(payloadVersion)) {
-				payloadsByVersion.set(payloadVersion, new Map())
+			if (parsed?.primary && Array.isArray(parsed?.subsequent)) {
+				const serialized = JSON.stringify(parsed)
+				return {
+					uuid: id,
+					posts: [post],
+					payloads: [],
+					combinedJson: serialized,
+					combined: parsed,
+					fragments: [serialized],
+				}
 			}
-			const byIndex = payloadsByVersion.get(payloadVersion)
-			const index = Number(payload?.i || 0)
-			if (!Number.isFinite(index) || index <= 0) continue
-			if (!byIndex.has(index)) byIndex.set(index, payload)
+
+			if (parsed?.canonicalurl || parsed?.name || parsed?.description) {
+				const combined = {
+					primary: parsed,
+					subsequent: [],
+				}
+				const serialized = JSON.stringify(combined)
+				return {
+					uuid: id,
+					posts: [post],
+					payloads: [],
+					combinedJson: serialized,
+					combined,
+					fragments: [serialized],
+				}
+			}
 		}
 	}
 
-	const versions = sortVersionsMostRecentFirst(Array.from(payloadsByVersion.keys()))
-	debugLog("latest-by-uuid candidate versions", {
-		uuid: id,
-		versions,
-	})
-
-	for (const version of versions) {
-		const byIndex = payloadsByVersion.get(version)
-		const payloads = Array.from(byIndex.entries())
-			.sort((a, b) => a[0] - b[0])
-			.map((entry) => entry[1])
-		try {
-			const reconstructed = reconstructBundleFromChunkPayloads(payloads)
-			debugLog("latest-by-uuid reconstruction success", {
-				uuid: id,
-				version,
-				chunkCount: payloads.length,
-			})
-			return {
-				uuid: id,
-				version,
-				posts,
-				payloads,
-				...reconstructed,
-			}
-		} catch (error) {
-			warnLog("latest-by-uuid reconstruction failed", {
-				uuid: id,
-				version,
-				error: error?.message || String(error),
-				details: error?.details || null,
-			})
-		}
-	}
-
+	if (lastError) throw lastError
 	throw new Error("Profile not found")
 }
 

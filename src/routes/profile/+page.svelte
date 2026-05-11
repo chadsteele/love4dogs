@@ -44,8 +44,6 @@
 	const DEBUG_PROFILE = false
 
 	let uuid = $state("")
-	let primaryVersion = $state("")
-	let priorVersion = $state("")
 
 	let email = $state("")
 	let profileName = $state("")
@@ -87,7 +85,7 @@
 	let emailInputEl
 	let storageReady = $state(false)
 	let initialProfileSnapshot = null
-	let storedSnapshotByStamp = null
+	let storedSnapshotBaseline = null
 	let hasChangedFromStoredSnapshot = $state(false)
 	let clearSnapshot = null
 	let showUndo = $state(false)
@@ -111,10 +109,6 @@
 
 	function generateShortUuid() {
 		return Math.random().toString(36).slice(2, 10)
-	}
-
-	function makeVersion() {
-		return Date.now().toString(36)
 	}
 
 	function measureChunkAltPayloadLength(htmlFragment = "", meta = {}) {
@@ -1160,7 +1154,7 @@
 	const nameError = $derived(!profileName.trim() ? "Name is required." : "")
 
 	const canonicalurl = $derived.by(() => {
-		return buildCanonicalUrl(uuid, primaryVersion, profileName)
+		return buildCanonicalUrl(uuid, profileName)
 	})
 
 	const emailError = $derived(
@@ -1243,7 +1237,6 @@
 
 	const primaryPostPayload = $derived({
 		uuid,
-		version: primaryVersion,
 		canonicalurl,
 		email: encryptEmailForPayload(email),
 		profilePic: uploadedProfileImage?.bskyUrl || null,
@@ -1255,7 +1248,6 @@
 	const subsequentPostsPayload = $derived(
 		minifiedChunkEntries.map((entry, index) => ({
 			uuid,
-			version: priorVersion,
 			index: index + 1,
 			total: minifiedChunkEntries.length,
 			htmlFragment: entry.htmlFragment,
@@ -1280,7 +1272,6 @@
 			subsequentPayloadForBundlePreview,
 			{
 				uuid,
-				version: priorVersion,
 				maxPayloadChars: CHUNK_ALT_PAYLOAD_TARGET_CHARS,
 			},
 		),
@@ -1343,13 +1334,13 @@
 		}
 	}
 
-	function buildBundleCacheKey(uuid = "", stamp = "") {
-		return `${SESSION_BUNDLE_CACHE_PREFIX}:${uuid}:${stamp}`
+	function buildBundleCacheKey(uuid = "") {
+		return `${SESSION_BUNDLE_CACHE_PREFIX}:${uuid}`
 	}
 
-	function readBundleSessionCache(uuid = "", stamp = "") {
+	function readBundleSessionCache(uuid = "") {
 		if (typeof sessionStorage === "undefined") return null
-		const cacheKey = buildBundleCacheKey(uuid, stamp)
+		const cacheKey = buildBundleCacheKey(uuid)
 		const raw = sessionStorage.getItem(cacheKey)
 		if (!raw) return null
 		try {
@@ -1359,13 +1350,13 @@
 		}
 	}
 
-	function buildProfileViewCacheKey(uuid = "", stamp = "") {
-		return `${PROFILE_VIEW_CACHE_PREFIX}:${uuid}:${stamp}`
+	function buildProfileViewCacheKey(uuid = "") {
+		return `${PROFILE_VIEW_CACHE_PREFIX}:${uuid}`
 	}
 
-	function readProfileViewCache(uuid = "", stamp = "") {
+	function readProfileViewCache(uuid = "") {
 		if (typeof localStorage === "undefined") return null
-		const cacheKey = buildProfileViewCacheKey(uuid, stamp)
+		const cacheKey = buildProfileViewCacheKey(uuid)
 		const raw = localStorage.getItem(cacheKey)
 		if (!raw) return null
 		try {
@@ -1378,11 +1369,7 @@
 		}
 	}
 
-	function applyBundleToEditor(
-		bundle = null,
-		fallbackUuid = "",
-		fallbackVersion = "",
-	) {
+	function applyBundleToEditor(bundle = null, fallbackUuid = "") {
 		const combined =
 			bundle && typeof bundle === "object" && bundle.combined
 				? bundle.combined
@@ -1396,9 +1383,6 @@
 
 		uuid =
 			String(primary?.uuid || fallbackUuid || "") || generateShortUuid()
-		primaryVersion =
-			String(primary?.version || fallbackVersion || "") || makeVersion()
-		priorVersion = primaryVersion
 		email = decodePayloadEmail(primary?.email)
 		profileName = String(primary?.name || "")
 		profileDescription = String(primary?.description || "")
@@ -1412,15 +1396,8 @@
 		editorMediaList = []
 	}
 
-	function applyViewCacheToEditor(
-		data = {},
-		fallbackUuid = "",
-		fallbackVersion = "",
-	) {
+	function applyViewCacheToEditor(data = {}, fallbackUuid = "") {
 		uuid = String(data?.uuid || fallbackUuid || "") || generateShortUuid()
-		primaryVersion =
-			String(data?.version || fallbackVersion || "") || makeVersion()
-		priorVersion = primaryVersion
 		email = decodePayloadEmail(data?.email)
 		profileName = String(data?.name || "")
 		profileDescription = String(data?.description || "")
@@ -1438,24 +1415,20 @@
 		return JSON.parse(JSON.stringify(value))
 	}
 
-	function getProfileStamp(profile = {}) {
-		const stampUuid = String(profile?.uuid || "")
-		const stampVersion = String(profile?.primaryVersion || "")
-		return `${stampUuid}:${stampVersion}`
+	function getProfileIdentity(profile = {}) {
+		return String(profile?.uuid || "")
 	}
 
 	function setStoredSnapshotBaseline(
 		profile = buildStoredProfileForStorage(),
 	) {
-		storedSnapshotByStamp = cloneStoredProfile(profile)
+		storedSnapshotBaseline = cloneStoredProfile(profile)
 		hasChangedFromStoredSnapshot = false
 	}
 
 	function buildStoredProfile() {
 		return {
 			uuid,
-			primaryVersion,
-			priorVersion,
 			email,
 			profileName,
 			profileDescription,
@@ -1543,10 +1516,6 @@
 
 	function applyStoredProfile(profile = {}) {
 		uuid = String(profile.uuid || "") || generateShortUuid()
-		primaryVersion = String(profile.primaryVersion || "") || makeVersion()
-		priorVersion =
-			String(profile.priorVersion || profile.subsequentVersion || "") ||
-			primaryVersion
 		email = String(profile.email || "")
 		profileName = String(profile.profileName || "")
 		profileDescription = String(profile.profileDescription || "")
@@ -1724,8 +1693,6 @@
 	async function publishToBluesky() {
 		debugProfile("[profile] publishToBluesky:start", {
 			uuid,
-			primaryVersion,
-			priorVersion,
 			chunkCount: minifiedChunkEntries.length,
 			editorMediaCount: editorMediaList.length,
 		})
@@ -1771,27 +1738,20 @@
 			debugProfile("[profile] saving draft before publish")
 			saveProfile(false)
 
-			const publishedPriorVersion = primaryVersion
-			const publishedPrimaryVersion = makeVersion()
-			const publishedCanonicalUrl = buildCanonicalUrl(
-				uuid,
-				publishedPrimaryVersion,
-				profileName,
-			)
+			const publishedCanonicalUrl = buildCanonicalUrl(uuid, profileName)
 			const publishedSlugPath = cleanCanonicalName(profileName)
 				.split("/")
 				.map((segment) => segment.trim())
 				.filter(Boolean)
 				.map((segment) => encodeURIComponent(segment))
 				.join("/")
-			const publishedViewUrl = `/profile/view/${encodeURIComponent(uuid)}/${encodeURIComponent(publishedPrimaryVersion)}/${publishedSlugPath || "profile"}`
+			const publishedViewUrl = `/profile/view/${encodeURIComponent(uuid)}/${publishedSlugPath || "profile"}`
 
 			const subsequentPayloadForBundle = mapSubsequentPayloadForBundle(
 				subsequentPostsPayload,
 			)
 			const primaryPayloadForBundle = {
 				uuid,
-				version: publishedPrimaryVersion,
 				canonicalurl: publishedCanonicalUrl,
 				email: encryptEmailForPayload(email),
 				profilePic: uploadedProfileImage?.bskyUrl || null,
@@ -1804,11 +1764,6 @@
 				subsequentPayloadForBundle,
 				{
 					uuid: String(primaryPayloadForBundle?.uuid || uuid || ""),
-					version: String(
-						publishedPrimaryVersion ||
-							primaryPayloadForBundle?.version ||
-							"",
-					),
 					maxPayloadChars: CHUNK_ALT_PAYLOAD_TARGET_CHARS,
 				},
 			)
@@ -1884,7 +1839,6 @@
 					entry?.bundleFragment || "",
 					{
 						uuid,
-						version: publishedPrimaryVersion,
 						index: index + 1,
 						total: chunks.length,
 						forceCompression: Boolean(entry?.forceCompression),
@@ -1897,7 +1851,6 @@
 				fetchImpl: fetch,
 				endpoint: "/api/post",
 				uuid,
-				priorVersion: publishedPrimaryVersion,
 				postText,
 				chunks,
 				primaryMedia,
@@ -1905,18 +1858,11 @@
 				videoAttachments,
 			})
 
-			priorVersion = publishedPriorVersion
-			primaryVersion = publishedPrimaryVersion
-
 			publishMessage = `Published profile + ${publishResult.totalChunkPosts} chunk${publishResult.totalChunkPosts === 1 ? "" : "s"} at ${new Date().toLocaleTimeString()}`
 			debugProfile("[profile] publishToBluesky:success", {
 				message: publishMessage,
-				publishedPrimaryVersion,
-				publishedPriorVersion,
 				canonicalUrl: publishedCanonicalUrl,
 				viewUrl: publishedViewUrl,
-				nextPrimaryVersion: publishedPrimaryVersion,
-				priorVersion,
 			})
 
 			if (typeof window !== "undefined") {
@@ -1955,14 +1901,6 @@
 		}
 	}
 
-	function bumpPrimaryVersion() {
-		primaryVersion = makeVersion()
-	}
-
-	function setPriorVersionFromPrimary() {
-		priorVersion = primaryVersion
-	}
-
 	function clearProfileDraft() {
 		debugProfile("[profile] clearProfileDraft:start")
 
@@ -1970,8 +1908,6 @@
 
 		suppressAutosave = true
 		uuid = generateShortUuid()
-		primaryVersion = makeVersion()
-		priorVersion = ""
 		email = ""
 		profileName = ""
 		profileDescription = ""
@@ -2066,7 +2002,6 @@
 	onMount(() => {
 		debugProfile("[profile] onMount:start")
 		const routeUuid = String(page.params?.uuid || "").trim()
-		const routeStamp = String(page.params?.stamp || "").trim()
 		const intervalId = ENABLE_EDITOR_MEDIA_UPLOADS
 			? setInterval(() => {
 					maybePromoteCdnUrls().catch((error) => {
@@ -2080,14 +2015,13 @@
 				}, CDN_PROMOTION_TICK_MS)
 			: null
 
-		if (routeUuid && routeStamp && typeof localStorage !== "undefined") {
-			const sessionBundle = readBundleSessionCache(routeUuid, routeStamp)
+		if (routeUuid && typeof localStorage !== "undefined") {
+			const sessionBundle = readBundleSessionCache(routeUuid)
 			if (sessionBundle) {
 				debugProfile("[profile] onMount:loaded session bundle", {
 					routeUuid,
-					routeStamp,
 				})
-				applyBundleToEditor(sessionBundle, routeUuid, routeStamp)
+				applyBundleToEditor(sessionBundle, routeUuid)
 				initialProfileSnapshot =
 					cloneStoredProfile(buildStoredProfile())
 				setStoredSnapshotBaseline(buildStoredProfileForStorage())
@@ -2098,13 +2032,12 @@
 				}
 			}
 
-			const viewCacheData = readProfileViewCache(routeUuid, routeStamp)
+			const viewCacheData = readProfileViewCache(routeUuid)
 			if (viewCacheData) {
 				debugProfile("[profile] onMount:loaded profile view cache", {
 					routeUuid,
-					routeStamp,
 				})
-				applyViewCacheToEditor(viewCacheData, routeUuid, routeStamp)
+				applyViewCacheToEditor(viewCacheData, routeUuid)
 				initialProfileSnapshot =
 					cloneStoredProfile(buildStoredProfile())
 				setStoredSnapshotBaseline(buildStoredProfileForStorage())
@@ -2119,8 +2052,6 @@
 		if (typeof localStorage === "undefined") {
 			debugProfile("[profile] onMount:no localStorage")
 			uuid = generateShortUuid()
-			primaryVersion = makeVersion()
-			priorVersion = primaryVersion
 			initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
 			setStoredSnapshotBaseline(buildStoredProfileForStorage())
 			storageReady = true
@@ -2133,8 +2064,6 @@
 		if (!raw) {
 			debugProfile("[profile] onMount:no stored profile")
 			uuid = generateShortUuid()
-			primaryVersion = makeVersion()
-			priorVersion = primaryVersion
 			initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
 			storageReady = true
 			saveProfile(false)
@@ -2156,8 +2085,6 @@
 		} catch {
 			warnProfile("[profile] onMount:failed to parse stored profile")
 			uuid = generateShortUuid()
-			primaryVersion = makeVersion()
-			priorVersion = primaryVersion
 			initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
 			setStoredSnapshotBaseline(buildStoredProfileForStorage())
 		}
@@ -2170,20 +2097,20 @@
 	})
 
 	$effect(() => {
-		if (!storageReady || !storedSnapshotByStamp) return
+		if (!storageReady || !storedSnapshotBaseline) return
 		if (hasChangedFromStoredSnapshot) return
 
 		const currentSnapshot = buildStoredProfileForStorage()
 		if (
-			getProfileStamp(currentSnapshot) !==
-			getProfileStamp(storedSnapshotByStamp)
+			getProfileIdentity(currentSnapshot) !==
+			getProfileIdentity(storedSnapshotBaseline)
 		) {
 			return
 		}
 
 		if (
 			JSON.stringify(currentSnapshot) !==
-			JSON.stringify(storedSnapshotByStamp)
+			JSON.stringify(storedSnapshotBaseline)
 		) {
 			hasChangedFromStoredSnapshot = true
 		}
@@ -2251,12 +2178,11 @@
 			const fragments = chunkHtmlByAltPayload(
 				source,
 				CHUNK_ALT_PAYLOAD_TARGET_CHARS,
-				{uuid, version: priorVersion, forceCompression},
+				{uuid, forceCompression},
 			)
 			const payloadLengths = fragments.map((htmlFragment, index) =>
 				measureChunkAltPayloadLength(htmlFragment, {
 					uuid,
-					version: priorVersion,
 					index: index + 1,
 					total: fragments.length,
 					forceCompression,
@@ -2283,12 +2209,11 @@
 			const fragments = chunkHtmlByAltPayload(
 				source,
 				CHUNK_ALT_PAYLOAD_TARGET_CHARS,
-				{uuid, version: priorVersion, forceCompression},
+				{uuid, forceCompression},
 			)
 			const payloadLengths = fragments.map((htmlFragment, index) =>
 				measureChunkAltPayloadLength(htmlFragment, {
 					uuid,
-					version: priorVersion,
 					index: index + 1,
 					total: fragments.length,
 					forceCompression,
@@ -2325,22 +2250,6 @@
 			<div>
 				<p class="label">Short UUID</p>
 				<p class="mono">{uuid}</p>
-			</div>
-			<div class="version-group">
-				<div>
-					<p class="label">Primary version</p>
-					<p class="mono">{primaryVersion}</p>
-				</div>
-				<button type="button" onclick={bumpPrimaryVersion}>Bump</button>
-			</div>
-			<div class="version-group">
-				<div>
-					<p class="label">Prior version</p>
-					<p class="mono">{priorVersion}</p>
-				</div>
-				<button type="button" onclick={setPriorVersionFromPrimary}
-					>Use current</button
-				>
 			</div>
 		</section>
 	</ShowAdmin>
@@ -2604,12 +2513,6 @@
 		display: grid;
 		grid-template-columns: repeat(3, minmax(0, 1fr));
 		gap: 0.6rem;
-	}
-	.version-group {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		gap: 0.5rem;
 	}
 	.label {
 		margin: 0 0 0.3rem;

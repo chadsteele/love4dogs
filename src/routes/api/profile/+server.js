@@ -4,10 +4,9 @@ const BSKY_XRPC = 'https://bsky.social/xrpc'
 
 export async function GET({ url }) {
 	const uuid = url.searchParams.get('uuid')
-	const stamp = url.searchParams.get('stamp')
 
-	if (!uuid || !stamp) {
-		return json({ error: 'uuid and stamp required' }, { status: 400 })
+	if (!uuid) {
+		return json({ error: 'uuid required' }, { status: 400 })
 	}
 
 	try {
@@ -26,7 +25,7 @@ export async function GET({ url }) {
 		const searchData = await searchRes.json()
 		const posts = searchData?.posts || []
 
-		// Find the post with matching uuid and stamp in image alts
+		// Find the post with matching uuid in image alts
 		for (const post of posts) {
 			if (post.embed?.$type === 'app.bsky.embed.images') {
 				for (const img of post.embed.images || []) {
@@ -34,8 +33,7 @@ export async function GET({ url }) {
 
 					try {
 						const altData = JSON.parse(img.alt)
-						// Check if this alt contains both uuid and stamp
-						if (altData.canonicalurl?.includes(uuid) && altData.canonicalurl?.includes(stamp)) {
+						if (altData.canonicalurl?.includes(uuid)) {
 							// Found it - return the profile JSON as-is
 							return json(altData)
 						}

@@ -29,19 +29,18 @@ async function getSession() {
 export async function GET({ url }) {
 	try {
 		const uuid = String(url.searchParams.get('uuid') || '').trim();
-		const stamp = String(url.searchParams.get('stamp') || '').trim();
 
-		if (!uuid || !stamp) {
+		if (!uuid) {
 			return new Response(
-				JSON.stringify({ error: 'UUID and stamp are required.' }),
+				JSON.stringify({ error: 'UUID is required.' }),
 				{ status: 400, headers: { 'content-type': 'application/json' } }
 			);
 		}
 
 		const session = await getSession();
 
-		// Search for posts with canonicalurl - try uuid, stamp, then canonicalurl order
-		const searchQuery = `${uuid} ${stamp} canonicalurl`;
+		// Search for posts with canonicalurl + uuid
+		const searchQuery = `${uuid} canonicalurl`;
 		const res = await fetch(
 			`${BSKY_XRPC}/app.bsky.feed.searchPosts?q=${encodeURIComponent(searchQuery)}&limit=10`,
 			{
@@ -72,9 +71,9 @@ export async function GET({ url }) {
 				}
 			}
 
-			// Check if any alt contains both UUID and stamp
+			// Check if any alt contains UUID
 			for (const alt of imageAlts) {
-				if (alt.includes(uuid) && alt.includes(stamp)) {
+				if (alt.includes(uuid)) {
 					return new Response(
 						JSON.stringify({ uri: post.uri }),
 						{ status: 200, headers: { 'content-type': 'application/json' } }
