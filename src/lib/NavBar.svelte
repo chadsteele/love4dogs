@@ -1,6 +1,12 @@
 <script>
+	import {onMount} from "svelte"
 	import {goto} from "$app/navigation"
 	import {isLocalHost} from "$lib/utils"
+	import {
+		getCurrentProfileUuid,
+		listStoredProfiles,
+		setCurrentProfileUuid,
+	} from "$lib/profileRegistry"
 	import {
 		Menu,
 		History,
@@ -12,7 +18,8 @@
 		AlertOctagon,
 		Shield,
 		Pencil,
-		Plus,
+		Check,
+		UserCircle2,
 	} from "lucide-svelte"
 
 	let {
@@ -36,6 +43,66 @@
 
 	let logoLoaded = $state(true)
 	let selectionMenuEl = $state(null)
+	let profileMenuEl = $state(null)
+	let profileMenuOpen = $state(false)
+	let storedProfiles = $state([])
+	let currentProfileUuid = $state("")
+
+	function refreshStoredProfiles() {
+		storedProfiles = listStoredProfiles()
+		currentProfileUuid = getCurrentProfileUuid()
+	}
+
+	function profileName(entry = {}) {
+		const cleanedName = String(entry?.name || "").trim()
+		if (cleanedName) return cleanedName
+		return `Profile ${String(entry?.uuid || "").slice(0, 8)}`
+	}
+
+	const currentProfile = $derived.by(() => {
+		if (!storedProfiles.length) return null
+		return (
+			storedProfiles.find((entry) => entry.uuid === currentProfileUuid) ||
+			storedProfiles[0]
+		)
+	})
+
+	function openProfileEditor(uuid = "") {
+		const target = String(uuid || "").trim()
+		if (!target) return
+		goto(`/post/edit/${encodeURIComponent(target)}`)
+	}
+
+	function handleProfileButton() {
+		if (!currentProfile) {
+			goto("/post/edit")
+			return
+		}
+		if (storedProfiles.length <= 1) {
+			openProfileEditor(currentProfile.uuid)
+			return
+		}
+		profileMenuOpen = !profileMenuOpen
+	}
+
+	function handleSwitchProfile(uuid = "") {
+		const target = String(uuid || "").trim()
+		if (!target) return
+		setCurrentProfileUuid(target)
+		currentProfileUuid = target
+		profileMenuOpen = false
+	}
+
+	onMount(() => {
+		refreshStoredProfiles()
+		const onStorage = () => {
+			refreshStoredProfiles()
+		}
+		window.addEventListener("storage", onStorage)
+		return () => {
+			window.removeEventListener("storage", onStorage)
+		}
+	})
 
 	$effect(() => {
 		if (!selectionMenuOpen) return
@@ -43,6 +110,21 @@
 		const onPointerDown = (event) => {
 			if (!selectionMenuEl?.contains(event.target)) {
 				selectionMenuOpen = false
+			}
+		}
+
+		document.addEventListener("pointerdown", onPointerDown)
+		return () => {
+			document.removeEventListener("pointerdown", onPointerDown)
+		}
+	})
+
+	$effect(() => {
+		if (!profileMenuOpen) return
+
+		const onPointerDown = (event) => {
+			if (!profileMenuEl?.contains(event.target)) {
+				profileMenuOpen = false
 			}
 		}
 
@@ -238,19 +320,67 @@
 	{/if}
 
 	<div class="topbar-links">
-		{#if editProfileUrl}
-			<a
-				class="edit-profile-btn"
-				href={editProfileUrl}
-				aria-label="Edit Profile"
+		<div class="profile-menu-wrap" bind:this={profileMenuEl}>
+			<button
+				type="button"
+				class="profile-avatar-btn"
+				onclick={handleProfileButton}
+				aria-label="Profile"
+				title={!currentProfile
+					? "Create your first profile"
+					: storedProfiles.length > 1
+						? "Switch or edit profiles"
+						: "Edit profile"}
 			>
-				<Pencil size={16} /> &nbsp; Edit
-			</a>
-		{:else if !hideCreateButton}
-			<a class="post-route-btn" href="/post" aria-label="Create Post">
-				<Plus size={16} /> &nbsp; Create
-			</a>
-		{/if}
+				{#if currentProfile?.profilePic}
+					<img
+						src={currentProfile.profilePic}
+						alt={profileName(currentProfile)}
+					/>
+				{:else}
+					<UserCircle2 size={22} />
+				{/if}
+			</button>
+
+			{#if profileMenuOpen && storedProfiles.length > 1}
+				<div class="profile-menu">
+					{#each storedProfiles as profile (profile.uuid)}
+						<div class="profile-menu-row">
+							<button
+								type="button"
+								class="profile-switch-btn"
+								onclick={() =>
+									handleSwitchProfile(profile.uuid)}
+							>
+								{#if profile.profilePic}
+									<img
+										class="profile-thumb"
+										src={profile.profilePic}
+										alt={profileName(profile)}
+									/>
+								{:else}
+									<UserCircle2 size={18} />
+								{/if}
+								<span>{profileName(profile)}</span>
+								{#if profile.uuid === currentProfileUuid}
+									<Check size={14} />
+								{/if}
+							</button>
+							<button
+								type="button"
+								class="profile-edit-btn"
+								onclick={() => {
+									profileMenuOpen = false
+									openProfileEditor(profile.uuid)
+								}}
+							>
+								<Pencil size={14} />
+							</button>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		</div>
 	</div>
 </nav>
 
@@ -294,6 +424,10 @@
 	}
 
 	.selection-menu-wrap {
+		position: relative;
+	}
+
+	.profile-menu-wrap {
 		position: relative;
 	}
 
@@ -440,32 +574,89 @@
 		cursor: pointer;
 	}
 
-	.post-route-btn {
+	.profile-avatar-btn {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
 		height: 40px;
-		padding: 0 1rem;
-		border-radius: 999px;
+		width: 40px;
+		padding: 0;
+		border-radius: 50%;
 		border: 1px solid #305741;
 		background: #3b6e4f;
 		color: #fff;
-		font-weight: 600;
-		text-decoration: none;
+		cursor: pointer;
+		overflow: hidden;
 	}
 
-	.edit-profile-btn {
+	.profile-avatar-btn img {
+		width: 100%;
+		height: 100%;
+		border-radius: 50%;
+		object-fit: cover;
+		border: none;
+	}
+
+	.profile-menu {
+		position: absolute;
+		top: calc(100% + 0.45rem);
+		right: 0;
+		min-width: 240px;
+		background: #fff;
+		border: 1px solid #d7c8b6;
+		border-radius: 12px;
+		box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
+		padding: 0.4rem;
+		z-index: 30;
+	}
+
+	.profile-menu-row {
+		display: grid;
+		grid-template-columns: 1fr auto;
+		gap: 0.35rem;
+		align-items: center;
+		padding: 0.2rem 0;
+	}
+
+	.profile-switch-btn {
+		width: 100%;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		padding: 0.45rem 0.5rem;
+		border: none;
+		border-radius: 8px;
+		background: transparent;
+		cursor: pointer;
+		text-align: left;
+		font: inherit;
+	}
+
+	.profile-switch-btn:hover {
+		background: #f3ece1;
+	}
+
+	.profile-thumb {
+		width: 22px;
+		height: 22px;
+		border-radius: 50%;
+		object-fit: cover;
+	}
+
+	.profile-edit-btn {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		height: 40px;
-		padding: 0 1rem;
-		border-radius: 999px;
-		border: 1px solid #305741;
-		background: #3b6e4f;
-		color: #fff;
-		font-weight: 600;
-		text-decoration: none;
+		width: 30px;
+		height: 30px;
+		border: 1px solid #d7c8b6;
+		border-radius: 8px;
+		background: #fff;
+		cursor: pointer;
+	}
+
+	.profile-edit-btn:hover {
+		background: #f3ece1;
 	}
 
 	.topbar-links {
@@ -510,31 +701,9 @@
 			flex-basis: 100%;
 		}
 
-		.post-route-btn {
-			width: 40px;
-			height: 40px;
-			padding: 0;
-			font-size: 0;
-		}
-
-		.post-route-btn::before {
-			content: "+";
-			font-size: 1.45rem;
-			line-height: 1;
-			font-weight: 700;
-		}
-
-		.edit-profile-btn {
-			width: 40px;
-			height: 40px;
-			padding: 0;
-			font-size: 0;
-		}
-
-		.edit-profile-btn::before {
-			content: "✎";
-			font-size: 1.2rem;
-			line-height: 1;
+		.profile-menu {
+			right: -0.5rem;
+			min-width: min(88vw, 260px);
 		}
 	}
 </style>

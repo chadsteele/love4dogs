@@ -318,7 +318,7 @@
 		if (!text) return ""
 
 		const canonicalPattern =
-			/https?:\/\/(?:www\.)?(?:love4dogs\.club|localhost(?::\d+)?)\/profile\/view\/[^\s"'<>]+/i
+			/https?:\/\/(?:www\.)?(?:love4dogs\.club|localhost(?::\d+)?)\/(?:post|profile)\/view\/[^\s"'<>]+/i
 		const canonicalMatch = text.match(canonicalPattern)
 		if (canonicalMatch?.[0]) {
 			return cleanExtractedUrl(canonicalMatch[0])
@@ -379,7 +379,7 @@
 		}
 
 		const escapedPattern = new RegExp(
-			"https?:\\\\/\\\\/(?:www\\\\.)?(?:love4dogs\\\\.club|localhost(?::\\\\d+)?)\\\\/profile\\\\/view\\\\/[^\\\\s\"'<>]+",
+			"https?:\\\\/\\\\/(?:www\\\\.)?(?:love4dogs\\\\.club|localhost(?::\\\\d+)?)\\\\/(?:post|profile)\\\\/view\\\\/[^\\\\s\"'<>]+",
 			"i",
 		)
 		const escapedMatch = source.match(escapedPattern)
@@ -396,7 +396,7 @@
 				if (feature?.$type !== "app.bsky.richtext.facet#link") continue
 				const uri = String(feature?.uri || "").trim()
 				if (!uri) continue
-				if (/\/profile\/view\//i.test(uri)) {
+				if (/\/(?:post|profile)\/view\//i.test(uri)) {
 					return cleanExtractedUrl(uri)
 				}
 			}
@@ -447,7 +447,7 @@
 		const canonical = String(url || "").trim()
 		if (!canonical) return null
 
-		const match = canonical.match(/profile\/view\/([^/]+)/i)
+		const match = canonical.match(/(?:post|profile)\/view\/([^/]+)/i)
 		if (match) {
 			return {
 				uuid: match[1],
@@ -470,8 +470,8 @@
 		}
 
 		try {
-			// Navigate to profile view with uuid
-			window.location.href = `/profile/view/${encodeURIComponent(parsed.uuid)}/`
+			// Navigate to post view with uuid
+			window.location.href = `/post/view/${encodeURIComponent(parsed.uuid)}/`
 		} catch (err) {
 			console.error("[PostCard] Error resolving title click", err)
 		}

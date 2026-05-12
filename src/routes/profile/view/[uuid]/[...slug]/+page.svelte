@@ -108,7 +108,7 @@
 				const {primary, subsequent} = sessionBundle?.combined || {}
 				jsonData = {...primary, html: subsequent?.join("")}
 				jsonLinks = Array.from(collectLinksFromValue(jsonData))
-				editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`
+				editProfileUrl = `/post/edit/${encodeURIComponent(uuid)}${slugPath}`
 				console.log("[profile/view] load:session-cache-hit", {
 					uuid,
 					linkCount: jsonLinks.length,
@@ -120,7 +120,7 @@
 			if (cached) {
 				jsonData = cached
 				jsonLinks = Array.from(collectLinksFromValue(jsonData))
-				editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`
+				editProfileUrl = `/post/edit/${encodeURIComponent(uuid)}${slugPath}`
 				console.log("[profile/view] load:cache-hit", {
 					uuid,
 					linkCount: jsonLinks.length,
@@ -154,7 +154,7 @@
 			jsonData = {...primary, html: subsequent?.join("")}
 			writeCachedProfile(uuid, jsonData)
 			writeBundleSessionCache(uuid, loaded)
-			editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`
+			editProfileUrl = `/post/edit/${encodeURIComponent(uuid)}${slugPath}`
 			jsonLinks = Array.from(collectLinksFromValue(jsonData))
 			console.log("[profile/view] load:success", {
 				uuid,
