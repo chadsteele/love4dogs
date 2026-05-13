@@ -208,6 +208,18 @@
 			{/if}
 
 			<div class="hero-body">
+				{#if jsonData?.name || jsonData?.description}
+					<div class="hero-meta">
+						{#if jsonData?.name}
+							<h1 class="hero-name">{jsonData?.name}</h1>
+						{/if}
+						{#if jsonData?.description}
+							<p class="hero-description">
+								{jsonData?.description}
+							</p>
+						{/if}
+					</div>
+				{/if}
 				<div class="content-html">{@html jsonData?.html || ""}</div>
 			</div>
 		</section>
@@ -261,6 +273,27 @@
 
 	.hero-body {
 		padding-top: 5.5rem;
+	}
+
+	.hero-meta {
+		padding: 1rem 1rem 0;
+		display: grid;
+		gap: 0.4rem;
+	}
+
+	.hero-name {
+		margin: 0;
+		font-size: clamp(1.2rem, 2.4vw, 1.8rem);
+		line-height: 1.2;
+	}
+
+	.hero-description {
+		margin: 0;
+		font-size: 1rem;
+		line-height: 1.45;
+		color: #51463a;
+		white-space: pre-wrap;
+		word-break: break-word;
 	}
 
 	.loading,

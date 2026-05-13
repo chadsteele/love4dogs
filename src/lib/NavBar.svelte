@@ -34,7 +34,7 @@
 		onSetView = () => {},
 		onSelectionAction = () => {},
 		onOpenAbout = () => {},
-		showSearch = false,
+		showSearch = true,
 		onSearchSubmit = () => {},
 		onSearchInput = () => {},
 		menu,
@@ -84,6 +84,47 @@
 	function openProfileManager() {
 		profileMenuOpen = false
 		goto("/profile/select")
+	}
+
+	function routeToHomeWithParams(entries = []) {
+		const params = new URLSearchParams()
+		for (const [key, value] of entries) {
+			const next = String(value || "").trim()
+			if (next) params.set(key, next)
+		}
+		const query = params.toString()
+		goto(query ? `/?${query}` : "/")
+	}
+
+	function handleSetView(view = "feed") {
+		const next = String(view || "feed").trim() || "feed"
+		if (typeof window !== "undefined" && window.location.pathname !== "/") {
+			routeToHomeWithParams([
+				["view", next],
+				["q", searchTerm],
+			])
+			return
+		}
+		onSetView(next)
+	}
+
+	function handleSearchSubmit() {
+		if (typeof window !== "undefined" && window.location.pathname !== "/") {
+			routeToHomeWithParams([
+				["view", "feed"],
+				["q", searchTerm],
+			])
+			return
+		}
+		onSearchSubmit()
+	}
+
+	function handleOpenAbout() {
+		if (typeof window !== "undefined" && window.location.pathname !== "/") {
+			goto("/about")
+			return
+		}
+		onOpenAbout()
 	}
 
 	$effect(() => {
@@ -152,7 +193,7 @@
 								type="button"
 								class:is-active={currentView === "admin"}
 								onclick={() => {
-									onSetView("admin")
+									handleSetView("admin")
 									selectionMenuOpen = false
 								}}
 							>
@@ -163,7 +204,7 @@
 							type="button"
 							class:is-active={currentView === "feed"}
 							onclick={() => {
-								onSetView("feed")
+								handleSetView("feed")
 								selectionMenuOpen = false
 							}}
 						>
@@ -174,7 +215,7 @@
 								type="button"
 								class:is-active={currentView === "history"}
 								onclick={() => {
-									onSetView("history")
+									handleSetView("history")
 									selectionMenuOpen = false
 								}}
 							>
@@ -186,7 +227,7 @@
 								type="button"
 								class:is-active={currentView === "bookmarks"}
 								onclick={() => {
-									onSetView("bookmarks")
+									handleSetView("bookmarks")
 									selectionMenuOpen = false
 								}}
 							>
@@ -198,7 +239,7 @@
 								type="button"
 								class:is-active={currentView === "trash"}
 								onclick={() => {
-									onSetView("trash")
+									handleSetView("trash")
 									selectionMenuOpen = false
 								}}
 							>
@@ -257,7 +298,7 @@
 						<button
 							type="button"
 							onclick={() => {
-								onOpenAbout()
+								handleOpenAbout()
 								selectionMenuOpen = false
 							}}
 						>
@@ -271,7 +312,18 @@
 			{/if}
 		</div>
 
-		<div class="brand">
+		<div
+			class="brand"
+			role="link"
+			tabindex="0"
+			onclick={() => goto("/about")}
+			onkeydown={(event) => {
+				if (event.key === "Enter" || event.key === " ") {
+					event.preventDefault()
+					goto("/about")
+				}
+			}}
+		>
 			<div class="logo-wrap">
 				{#if logoLoaded}
 					<img
@@ -298,7 +350,7 @@
 			class="search"
 			onsubmit={(event) => {
 				event.preventDefault()
-				onSearchSubmit()
+				handleSearchSubmit()
 			}}
 		>
 			<Search size={18} />
@@ -400,6 +452,7 @@
 		display: flex;
 		align-items: center;
 		gap: 0.7rem;
+		cursor: pointer;
 	}
 
 	.topbar-left {

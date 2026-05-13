@@ -19,6 +19,13 @@
 	const FAVORITE_SEARCH_TERMS_KEY =
 		"love4dogs.settings.favorite-search-terms-v1"
 	const DEFAULT_SEARCH_TERM_KEY = "love4dogs.settings.default-search-term-v1"
+	const NAV_VIEWS = new Set([
+		"feed",
+		"history",
+		"bookmarks",
+		"trash",
+		"admin",
+	])
 
 	let posts = $state([])
 	let recentTags = $state([])
@@ -474,8 +481,22 @@
 		bookmarkedUris = readStoredList(BOOKMARK_KEY)
 		trashedUris = readStoredList(TRASH_KEY)
 		favoriteSearchTerms = readFavoriteSearchTerms()
-		if (!searchTerm.trim()) {
+		let initialSearchTerm = ""
+		let initialView = ""
+		if (typeof window !== "undefined") {
+			const params = new URLSearchParams(window.location.search)
+			initialSearchTerm = normalizeSearchTerm(params.get("q") || "")
+			initialView = String(params.get("view") || "")
+				.trim()
+				.toLowerCase()
+		}
+		if (initialSearchTerm) {
+			searchTerm = initialSearchTerm
+		} else if (!searchTerm.trim()) {
 			searchTerm = readDefaultSearchTerm()
+		}
+		if (initialView && NAV_VIEWS.has(initialView)) {
+			currentView = initialView
 		}
 		evaluateAboutModalVisibility()
 		loadFeed()

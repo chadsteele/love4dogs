@@ -14,6 +14,7 @@
 	} from "$lib/utils"
 	import PostImageViewer from "$lib/PostImageViewer.svelte"
 	import Share from "$lib/Share.svelte"
+	import ProfilePostHeader from "$lib/ProfilePostHeader.svelte"
 
 	import {siBluesky} from "simple-icons"
 
@@ -327,7 +328,9 @@
 	}
 
 	function cleanExtractedUrl(raw = "") {
-		return String(raw || "").replace(/[),.!?:;]+$/g, "")
+		return String(raw || "")
+			.replace(/[),.!?:;\\]+$/g, "")
+			.replace(/[\\]+$/g, "")
 	}
 
 	function extractCanonicalUrlFromText(source = "") {
@@ -466,14 +469,156 @@
 		const canonical = String(url || "").trim()
 		if (!canonical) return null
 
-		const match = canonical.match(/profile\/view\/([^/]+)/i)
-		if (match) {
+		const viewMatch = canonical.match(/profile\/view\/([^/]+)/i)
+		if (viewMatch) {
 			return {
-				uuid: match[1],
+				uuid: viewMatch[1],
+			}
+		}
+
+		const pathMatch = canonical.match(
+			/https?:\/\/[^/]+\/([^/?#]+)(?:\/|\?|#|$)/i,
+		)
+		if (pathMatch) {
+			return {
+				uuid: pathMatch[1],
 			}
 		}
 
 		return null
+	}
+
+	function extractProfileDataFromBundle(alt = "") {
+		if (!alt) return null
+		const source = String(alt || "").trim()
+		if (!source) return null
+
+		try {
+			const parsed = JSON.parse(source)
+
+			const candidates = [
+				parsed,
+				parsed?.primary,
+				parsed?.combined?.primary,
+			]
+
+			if (typeof parsed?.h === "string" && parsed.h.trim()) {
+				try {
+					const inner = JSON.parse(parsed.h)
+					candidates.push(
+						inner,
+						inner?.primary,
+						inner?.combined?.primary,
+					)
+				} catch {
+					// Keep best-effort parsing from known candidate roots.
+				}
+			}
+
+			const pick = (keys = []) => {
+				for (const candidate of candidates) {
+					if (!candidate || typeof candidate !== "object") continue
+					for (const key of keys) {
+						const value = String(candidate?.[key] || "").trim()
+						if (value) return value
+					}
+				}
+				return ""
+			}
+
+			const normalizeImageUrl = (value = "") => {
+				const next = normalizeEscapedUrl(value)
+				if (!next) return ""
+				if (/^~c~/i.test(next)) return ""
+				if (!/^https?:\/\//i.test(next)) return ""
+				return rewriteLove4DogsUrlForLocalhost(next)
+			}
+
+			const profilePic = normalizeImageUrl(
+				pick(["profilePic", "profilepic"]),
+			)
+			const backgroundPic = normalizeImageUrl(
+				pick(["backgroundPic", "backgroundpic"]),
+			)
+			const name = pick(["name", "title", "n"])
+			const description = pick(["description", "desc", "d"])
+			const canonicalurl = normalizeEscapedUrl(
+				pick(["canonicalurl", "canonicalUrl"]),
+			)
+
+			if (!profilePic && !backgroundPic && !canonicalurl) return null
+
+			return {
+				profilePic: profilePic || null,
+				backgroundPic: backgroundPic || null,
+				profileName: name || null,
+				profileDescription: description || null,
+				canonicalUrl: canonicalurl || null,
+			}
+		} catch {
+			return null
+		}
+	}
+
+	function detectProfilePost(inputPost = {}, fallbackCanonicalUrl = "") {
+		if (!inputPost) return null
+
+		for (const alt of inputPost?.imageAlts || []) {
+			const profileData = extractProfileDataFromBundle(alt)
+			if (profileData) {
+				return {
+					...profileData,
+					canonicalUrl:
+						profileData?.canonicalUrl ||
+						fallbackCanonicalUrl ||
+						null,
+				}
+			}
+		}
+
+		const videoAlt = extractProfileDataFromBundle(
+			inputPost?.video?.alt || "",
+		)
+		if (videoAlt) {
+			return {
+				...videoAlt,
+				canonicalUrl:
+					videoAlt?.canonicalUrl || fallbackCanonicalUrl || null,
+			}
+		}
+
+		const hasChunkMetadata = (inputPost?.imageAlts || []).some((alt) => {
+			try {
+				const parsed = JSON.parse(String(alt || ""))
+				return Boolean(parsed?.u && parsed?.i && parsed?.t)
+			} catch {
+				return false
+			}
+		})
+
+		if (!hasChunkMetadata || !fallbackCanonicalUrl) return null
+
+		const images = uniqueImageUrls(inputPost?.images || [])
+		const validImages = images
+			.map((image) =>
+				rewriteLove4DogsUrlForLocalhost(String(image || "").trim()),
+			)
+			.filter((image) => /^https?:\/\//i.test(image))
+		if (!validImages.length) return null
+
+		const parts = getPostParts(inputPost)
+		const profilePic = validImages[0] || ""
+		const backgroundPic = validImages[1] || ""
+
+		if (!profilePic && !backgroundPic) return null
+
+		return {
+			profilePic: profilePic || null,
+			backgroundPic: backgroundPic || null,
+			profileName: parts?.title || null,
+			profileDescription: parts?.body || null,
+			canonicalUrl: fallbackCanonicalUrl,
+		}
 	}
 
 	async function resolveTitleClick() {
@@ -498,6 +643,7 @@
 
 	const parts = $derived(getPostParts(post))
 	const canonicalUrl = $derived(extractCanonicalUrl(post))
+	const profileData = $derived(detectProfilePost(post, canonicalUrl))
 	const titleHref = $derived(canonicalUrl)
 	const titleHtml = $derived(escapeHtml(parts.title))
 	const bodyLines = $derived(
@@ -526,6 +672,7 @@
 
 	$effect(() => {
 		if (!parts.title) return
+
 		if (titleHref) {
 			console.log("[PostCard] canonical URL resolved", {
 				uri: post?.uri || "",
@@ -615,6 +762,16 @@
 		</div>
 	{/if}
 
+	{#if profileData}
+		<ProfilePostHeader
+			profilePic={profileData.profilePic}
+			backgroundPic={profileData.backgroundPic}
+			profileName={profileData.profileName}
+			profileDescription={profileData.profileDescription}
+			canonicalUrl={profileData.canonicalUrl}
+		/>
+	{/if}
+
 	{#if parts.title}
 		<h3 class="post-title">
 			{#if titleHref}
@@ -677,7 +834,6 @@
 					type="button"
 					class="post-image-btn"
 					class:image-wide={sortedImages.length === 1 ||
-						sortedImages.length === 2 ||
 						(sortedImages.length === 3 &&
 							((threeImageFirstIsWidest && index === 0) ||
 								(!threeImageFirstIsWidest && index === 2)))}
@@ -921,6 +1077,22 @@
 		grid-column: 1 / -1;
 	}
 
+	.post-images {
+		display: grid;
+		grid-template-columns: 1fr;
+		gap: 0.45rem;
+		margin-top: 0.65rem;
+	}
+
+	.post-images.two-images {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.post-images.three-images,
+	.post-images.four-images {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
 	.post-images img {
 		width: 100%;
 		aspect-ratio: 1 / 1;
@@ -932,7 +1104,6 @@
 	}
 
 	.post-images.single-image img,
-	.post-images.two-images img,
 	.post-images .post-image-btn.image-wide img {
 		aspect-ratio: auto;
 		max-height: 460px;
