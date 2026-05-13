@@ -689,6 +689,89 @@ export async function POST({ request }) {
 			);
 		}
 
+		if (mode === 'delete-post-uri') {
+			const uri = String(formData.get('uri') || '').trim();
+			if (!uri) {
+				return new Response(JSON.stringify({ error: 'Post URI is required.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+
+			const target = parsePostAtUri(uri);
+			if (!target) {
+				return new Response(JSON.stringify({ error: 'Invalid post URI.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+
+			let session = await getSession();
+			if (session.did && target.repo !== session.did) {
+				return new Response(
+					JSON.stringify({ error: 'URI does not belong to authenticated repo.' }),
+					{
+						status: 403,
+						headers: { 'content-type': 'application/json' }
+					}
+				);
+			}
+
+			let deleteRes = await fetch(`${BSKY_XRPC}/com.atproto.repo.deleteRecord`, {
+				method: 'POST',
+				headers: {
+					authorization: `Bearer ${session.accessJwt}`,
+					'content-type': 'application/json'
+				},
+				body: JSON.stringify({
+					repo: session.did,
+					collection: 'app.bsky.feed.post',
+					rkey: target.rkey
+				})
+			});
+
+			if (!deleteRes.ok) {
+				const errBody = await deleteRes.json().catch(() => ({}));
+				const errMessage = String(errBody?.message || errBody?.error || '');
+				if (isAuthLikeFailure(deleteRes.status, errMessage)) {
+					cachedSession = null;
+					session = await createSession();
+					deleteRes = await fetch(`${BSKY_XRPC}/com.atproto.repo.deleteRecord`, {
+						method: 'POST',
+						headers: {
+							authorization: `Bearer ${session.accessJwt}`,
+							'content-type': 'application/json'
+						},
+						body: JSON.stringify({
+							repo: session.did,
+							collection: 'app.bsky.feed.post',
+							rkey: target.rkey
+						})
+					});
+				}
+			}
+
+			if (!deleteRes.ok) {
+				const errBody = await deleteRes.json().catch(() => ({}));
+				return new Response(
+					JSON.stringify({
+						error:
+							errBody?.message ||
+							errBody?.error ||
+							'Failed to delete post URI.'
+					}),
+					{
+						status: 502,
+						headers: { 'content-type': 'application/json' }
+					}
+				);
+			}
+
+			return new Response(JSON.stringify({ ok: true, deleted: [target.uri] }), {
+				headers: { 'content-type': 'application/json' }
+			});
+		}
+
 		const rawText = String(formData.get('text') || '').trim();
 		const images = formData
 			.getAll('images')

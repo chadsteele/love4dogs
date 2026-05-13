@@ -32,6 +32,7 @@
 	import Editor from "$lib/Editor.svelte"
 	import NavBar from "$lib/NavBar.svelte"
 	import {getCurrentProfileUuid} from "$lib/profileRegistry"
+	import {replacePostUriViaApi} from "$lib/bskyChunkStore"
 
 	const LOCAL_TAG_KEY = "love4dogs.tag-counts"
 	const LOCAL_OLD_POSTS_KEY = "love4dogs.my-post-uris"
@@ -569,22 +570,22 @@
 					: ""
 
 			if (replacingUri) {
-				const deleteRes = await fetch("/api/post", {
-					method: "DELETE",
-					headers: {"content-type": "application/json"},
-					body: JSON.stringify({uris: [replacingUri]}),
-				})
-				if (deleteRes.ok) {
+				try {
+					await replacePostUriViaApi({
+						fetchImpl: fetch,
+						endpoint: "/api/post",
+						previousUri: replacingUri,
+						nextUri: createdUri,
+					})
 					addToTrash(replacingUri)
 					removeApproxPostFromCache(replacingUri)
 					removeOldPostUri(replacingUri)
 					const nextDetails = {...oldPostDetailsByUri}
 					delete nextDetails[replacingUri]
 					oldPostDetailsByUri = nextDetails
-				} else {
-					const deleteJson = await deleteRes.json().catch(() => ({}))
+				} catch (error) {
 					postError =
-						deleteJson.error ||
+						error?.message ||
 						"New post saved, but deleting the old post failed."
 				}
 			}

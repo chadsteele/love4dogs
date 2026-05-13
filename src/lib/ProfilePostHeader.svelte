@@ -54,7 +54,7 @@
 		border-radius: 12px;
 		cursor: pointer;
 		display: block;
-		margin-top: 0.65rem;
+
 		padding: 0;
 		width: 100%;
 		border: 0;

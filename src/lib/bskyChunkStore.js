@@ -430,6 +430,72 @@ async function postToBskyApi(fetchImpl, endpoint, body) {
 	return json
 }
 
+function isValidPostAtUri(uri = "") {
+	return /^at:\/\/[^/]+\/app\.bsky\.feed\.post\/[^/?#]+$/i.test(
+		String(uri || "").trim(),
+	)
+}
+
+export async function deletePostUriViaApi({
+	fetchImpl = fetch,
+	endpoint = "/api/post",
+	uri = "",
+} = {}) {
+	const targetUri = String(uri || "").trim()
+	if (!targetUri) {
+		return {ok: true, skipped: true, reason: "missing-uri"}
+	}
+	if (!isValidPostAtUri(targetUri)) {
+		throw new Error(`Invalid post URI: ${targetUri}`)
+	}
+
+	const formData = new FormData()
+	formData.append("mode", "delete-post-uri")
+	formData.append("uri", targetUri)
+
+	const response = await fetchImpl(endpoint, {
+		method: "POST",
+		body: formData,
+	})
+	const json = await response.json().catch(() => ({}))
+	if (!response.ok || !json?.ok) {
+		throw new Error(json?.error || `Failed to delete post URI: ${targetUri}`)
+	}
+
+	return {
+		ok: true,
+		skipped: false,
+		deletedUri: targetUri,
+		result: json,
+	}
+}
+
+export async function replacePostUriViaApi({
+	fetchImpl = fetch,
+	endpoint = "/api/post",
+	previousUri = "",
+	nextUri = "",
+} = {}) {
+	const oldUri = String(previousUri || "").trim()
+	const newUri = String(nextUri || "").trim()
+	if (!oldUri || !newUri || oldUri === newUri) {
+		return {ok: true, replaced: false, skipped: true}
+	}
+
+	await deletePostUriViaApi({
+		fetchImpl,
+		endpoint,
+		uri: oldUri,
+	})
+
+	return {
+		ok: true,
+		replaced: true,
+		oldUri,
+		newUri,
+	}
+}
+
 export async function publishChunkBundleToBsky({
 	fetchImpl = fetch,
 	endpoint = "/api/post",

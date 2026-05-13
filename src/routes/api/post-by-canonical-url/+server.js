@@ -5,6 +5,45 @@ const BSKY_HANDLE = 'love4dogs.club';
 
 let cachedSession = null;
 
+function resolveRootUri(post = {}) {
+	const root = String(post?.record?.reply?.root?.uri || post?.reply?.root?.uri || '').trim();
+	if (root) return root;
+	return String(post?.uri || '').trim();
+}
+
+function collectImageAlts(post = {}) {
+	const embed = post?.embed;
+	const media =
+		embed?.$type === 'app.bsky.embed.recordWithMedia#view'
+			? embed.media
+			: embed;
+	const images =
+		media?.$type === 'app.bsky.embed.images#view'
+			? media.images || []
+			: media?.$type === 'app.bsky.embed.images'
+				? media.images || []
+				: [];
+	return images.map((img) => String(img?.alt || '').trim()).filter(Boolean);
+}
+
+function altMatchesUuid(alt = '', uuid = '') {
+	const target = String(uuid || '').trim();
+	if (!target) return false;
+	const source = String(alt || '').trim();
+	if (!source) return false;
+	if (source.includes(target)) return true;
+	try {
+		const parsed = JSON.parse(source);
+		const payloadUuid = String(parsed?.u || parsed?.uuid || '').trim();
+		if (payloadUuid && payloadUuid === target) return true;
+		const canonical = String(parsed?.canonicalurl || parsed?.canonicalUrl || '').trim();
+		if (canonical && canonical.includes(target)) return true;
+	} catch {
+		// Plain text alt values are handled via substring check above.
+	}
+	return false;
+}
+
 async function getSession() {
 	if (cachedSession) return cachedSession;
 
@@ -42,7 +81,7 @@ export async function GET({ url }) {
 		// Search for posts with canonicalurl + uuid
 		const searchQuery = `${uuid} canonicalurl`;
 		const res = await fetch(
-			`${BSKY_XRPC}/app.bsky.feed.searchPosts?q=${encodeURIComponent(searchQuery)}&limit=10`,
+			`${BSKY_XRPC}/app.bsky.feed.searchPosts?q=${encodeURIComponent(searchQuery)}&author=${encodeURIComponent(BSKY_HANDLE)}&limit=100`,
 			{
 				headers: {
 					authorization: `Bearer ${session.accessJwt}`,
@@ -62,20 +101,15 @@ export async function GET({ url }) {
 		const json = await res.json();
 		const posts = json?.posts || [];
 
-		// Find the post with matching canonical URL in image alts
+		// Find the most relevant post with matching bundle payload and return thread root URI.
 		for (const post of posts) {
-			const imageAlts = [];
-			if (post.embed?.$type === 'app.bsky.embed.images') {
-				for (const img of post.embed.images || []) {
-					if (img.alt) imageAlts.push(img.alt);
-				}
-			}
-
-			// Check if any alt contains UUID
+			const imageAlts = collectImageAlts(post);
 			for (const alt of imageAlts) {
-				if (alt.includes(uuid)) {
+				if (altMatchesUuid(alt, uuid)) {
+					const uri = resolveRootUri(post);
+					if (!uri) continue;
 					return new Response(
-						JSON.stringify({ uri: post.uri }),
+						JSON.stringify({ uri }),
 						{ status: 200, headers: { 'content-type': 'application/json' } }
 					);
 				}

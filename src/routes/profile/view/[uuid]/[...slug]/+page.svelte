@@ -236,6 +236,7 @@
 		position: relative;
 		overflow: visible;
 		padding: 0;
+		border: 0;
 		border-radius: 16px;
 		box-shadow: 0 8px 20px rgba(65, 42, 20, 0.1);
 	}

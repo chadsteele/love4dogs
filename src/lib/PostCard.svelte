@@ -573,7 +573,9 @@
 				for (const candidate of candidates) {
 					if (!candidate || typeof candidate !== "object") continue
 					for (const key of keys) {
-						const value = String(candidate?.[key] || "").trim()
+						const rawValue = candidate?.[key]
+						if (typeof rawValue !== "string") continue
+						const value = rawValue.trim()
 						if (value) return value
 					}
 				}
@@ -587,14 +589,9 @@
 				pick(["backgroundPic", "backgroundpic"]),
 			)
 			const name = pick(["name", "title", "n"])
-			const description = pick(["description", "desc", "d"])
+			const description = pick(["description", "desc"])
 			const canonicalurl = normalizeEscapedUrl(
 				pick(["canonicalurl", "canonicalUrl"]),
-			)
-
-			console.log(
-				"[extractProfileDataFromBundle] Extracted description:",
-				description,
 			)
 
 			if (!profilePic && !backgroundPic && !canonicalurl) return null

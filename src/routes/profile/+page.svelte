@@ -32,6 +32,7 @@
 		chunkHtmlByAltPayload,
 		measureChunkAltPayloadLength as measureBskyChunkAltPayloadLength,
 		publishChunkBundleToBsky,
+		replacePostUriViaApi,
 	} from "$lib/bskyChunkStore"
 	import ShowAdmin from "$lib/ShowAdmin.svelte"
 
@@ -95,6 +96,7 @@
 	let initialProfileSnapshot = null
 	let storedSnapshotBaseline = null
 	let hasChangedFromStoredSnapshot = $state(false)
+	let existingProfileAtUri = $state("")
 	let clearSnapshot = null
 	let showUndo = $state(false)
 	let clearUndoTimer = null
@@ -122,6 +124,82 @@
 
 	function buildCompressedStamp(now = Date.now()) {
 		return Math.max(0, Math.floor(Number(now) || 0)).toString(36)
+	}
+
+	function resolveRootAtUriFromPost(post = {}) {
+		const root = String(
+			post?.reply?.root?.uri ||
+				post?.record?.reply?.root?.uri ||
+				post?.uri ||
+				"",
+		).trim()
+		return /^at:\/\//i.test(root) ? root : ""
+	}
+
+	function resolvePostTimestampMs(post = {}) {
+		const candidates = [
+			post?.indexedAt,
+			post?.record?.createdAt,
+			post?.value?.createdAt,
+			post?.createdAt,
+		]
+		for (const candidate of candidates) {
+			const ms = Date.parse(String(candidate || ""))
+			if (Number.isFinite(ms) && ms > 0) return ms
+		}
+		return 0
+	}
+
+	function extractRootAtUriFromBundle(bundle = null, expectedUuid = "") {
+		const direct = String(bundle?.rootUri || bundle?.atUri || "").trim()
+		if (/^at:\/\//i.test(direct)) return direct
+
+		const targetUuid = String(expectedUuid || "").trim()
+		const posts = Array.isArray(bundle?.posts) ? bundle.posts : []
+		let bestRoot = ""
+		let bestMs = 0
+
+		for (const post of posts) {
+			const rootAtUri = resolveRootAtUriFromPost(post)
+			if (!rootAtUri) continue
+
+			let hasMatchingPayload = false
+			const embed = post?.embed
+			const media =
+				embed?.$type === "app.bsky.embed.recordWithMedia#view"
+					? embed.media
+					: embed
+			const images =
+				media?.$type === "app.bsky.embed.images#view"
+					? media.images || []
+					: []
+
+			for (const image of images) {
+				let parsed = null
+				try {
+					parsed = JSON.parse(String(image?.alt || ""))
+				} catch {
+					parsed = null
+				}
+				if (!parsed || typeof parsed !== "object") continue
+				const payloadUuid = String(
+					parsed?.u || parsed?.uuid || "",
+				).trim()
+				if (targetUuid && payloadUuid !== targetUuid) continue
+				hasMatchingPayload = true
+				break
+			}
+
+			if (!hasMatchingPayload) continue
+
+			const ms = resolvePostTimestampMs(post)
+			if (!bestRoot || ms >= bestMs) {
+				bestRoot = rootAtUri
+				bestMs = ms
+			}
+		}
+
+		return bestRoot
 	}
 
 	function measureChunkAltPayloadLength(htmlFragment = "", meta = {}) {
@@ -1458,6 +1536,7 @@
 			buildMediaFromUrl(primary?.backgroundPic, "Profile background"),
 		])
 		editorMediaList = []
+		existingProfileAtUri = extractRootAtUriFromBundle(bundle, uuid)
 	}
 
 	function applyViewCacheToEditor(data = {}, fallbackUuid = "") {
@@ -1473,6 +1552,7 @@
 			buildMediaFromUrl(data?.backgroundPic, "Profile background"),
 		])
 		editorMediaList = []
+		existingProfileAtUri = String(data?.rootUri || data?.atUri || "").trim()
 	}
 
 	function cloneStoredProfile(value) {
@@ -1493,6 +1573,7 @@
 	function buildStoredProfile() {
 		return {
 			uuid,
+			existingProfileAtUri,
 			email,
 			profileName,
 			profileDescription,
@@ -1598,6 +1679,7 @@
 
 	function applyStoredProfile(profile = {}) {
 		uuid = String(profile.uuid || "") || generateShortUuid()
+		existingProfileAtUri = String(profile.existingProfileAtUri || "").trim()
 		email = String(profile.email || "")
 		profileName = String(profile.profileName || "")
 		profileDescription = String(profile.profileDescription || "")
@@ -1847,6 +1929,26 @@
 		publishing = true
 
 		try {
+			let previousAtUri = String(existingProfileAtUri || "").trim()
+			if (!previousAtUri && uuid) {
+				try {
+					const existingBundleRes = await fetch(
+						`/api/profile-bundle?uuid=${encodeURIComponent(uuid)}`,
+					)
+					const existingBundle = await existingBundleRes
+						.json()
+						.catch(() => ({}))
+					if (existingBundleRes.ok) {
+						previousAtUri = extractRootAtUriFromBundle(
+							existingBundle,
+							uuid,
+						)
+					}
+				} catch {
+					// Best effort only; if no prior URI is known we skip deletion.
+				}
+			}
+
 			const resolvePublishImageCarrier = async (
 				entry,
 				fallbackAlt = "Image",
@@ -2034,12 +2136,31 @@
 				videoAttachments,
 			})
 
+			const newPublishedAtUri = String(
+				publishResult?.primaryResult?.uri || "",
+			).trim()
+			existingProfileAtUri = newPublishedAtUri || previousAtUri
+
+			if (
+				previousAtUri &&
+				newPublishedAtUri &&
+				previousAtUri !== newPublishedAtUri
+			) {
+				await replacePostUriViaApi({
+					fetchImpl: fetch,
+					endpoint: "/api/post",
+					previousUri: previousAtUri,
+					nextUri: newPublishedAtUri,
+				})
+			}
+
 			publishMessage = `Published profile + ${publishResult.totalChunkPosts} chunk${publishResult.totalChunkPosts === 1 ? "" : "s"} at ${new Date().toLocaleTimeString()}`
 			debugProfile("[profile] publishToBluesky:success", {
 				message: publishMessage,
 				canonicalUrl: publishedCanonicalUrl,
 				viewUrl: publishedViewUrl,
 			})
+			saveProfile(false)
 
 			if (typeof window !== "undefined") {
 				window.location.href = publishedViewUrl
@@ -2281,6 +2402,7 @@
 				{routeUuid},
 			)
 			uuid = routeUuid
+			existingProfileAtUri = ""
 			email = ""
 			profileName = ""
 			profileDescription = ""
@@ -2299,6 +2421,7 @@
 		if (typeof localStorage === "undefined") {
 			debugProfile("[profile] onMount:no localStorage")
 			uuid = generateShortUuid()
+			existingProfileAtUri = ""
 			initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
 			setStoredSnapshotBaseline(buildStoredProfileForStorage())
 			storageReady = true
@@ -2366,6 +2489,7 @@
 
 		debugProfile("[profile] onMount:no current profile; starting empty")
 		uuid = generateShortUuid()
+		existingProfileAtUri = ""
 		initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
 		storageReady = true
 		setStoredSnapshotBaseline(buildStoredProfileForStorage())
