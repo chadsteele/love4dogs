@@ -1528,10 +1528,13 @@
 			if (!entry || typeof entry !== "object") return false
 			const blob = entry?.blob
 			const bskyUrl = String(entry?.bskyUrl || "").trim()
+			const url = String(entry?.url || "").trim()
 			return Boolean(
-				blob &&
+				(blob &&
 					(typeof blob === "object" || typeof blob === "string") &&
-					bskyUrl,
+					bskyUrl) ||
+					bskyUrl ||
+					url,
 			)
 		})
 	}
@@ -2188,7 +2191,16 @@
 
 	onMount(() => {
 		debugProfile("[profile] onMount:start")
-		const routeUuid = String(page.params?.uuid || "").trim()
+		const directRouteUuid = String(page.params?.uuid || "").trim()
+		const slugParam = page.params?.slug
+		const slugPath = Array.isArray(slugParam)
+			? slugParam.join("/")
+			: String(slugParam || "")
+		const slugFirstSegment = String(slugPath || "")
+			.split("/")
+			.map((segment) => segment.trim())
+			.filter(Boolean)[0]
+		const routeUuid = directRouteUuid || slugFirstSegment || ""
 		const intervalId = ENABLE_EDITOR_MEDIA_UPLOADS
 			? setInterval(() => {
 					maybePromoteCdnUrls().catch((error) => {
@@ -2234,6 +2246,44 @@
 					if (intervalId) clearInterval(intervalId)
 				}
 			}
+
+			const storedByRouteUuid = readStoredProfileByUuid(routeUuid)
+			if (storedByRouteUuid) {
+				debugProfile(
+					"[profile] onMount:loaded stored profile by route uuid",
+					{
+						routeUuid,
+					},
+				)
+				applyStoredProfile(storedByRouteUuid)
+				setCurrentProfileUuid(routeUuid)
+				initialProfileSnapshot =
+					cloneStoredProfile(buildStoredProfile())
+				setStoredSnapshotBaseline(buildStoredProfileForStorage())
+				storageReady = true
+				return () => {
+					if (intervalId) clearInterval(intervalId)
+				}
+			}
+
+			debugProfile(
+				"[profile] onMount:route uuid not found; starting new profile",
+				{routeUuid},
+			)
+			uuid = routeUuid
+			email = ""
+			profileName = ""
+			profileDescription = ""
+			contentHtml = ""
+			profileUploadedMedia = []
+			backgroundUploadedMedia = []
+			editorMediaList = []
+			initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
+			setStoredSnapshotBaseline(buildStoredProfileForStorage())
+			storageReady = true
+			return () => {
+				if (intervalId) clearInterval(intervalId)
+			}
 		}
 
 		if (typeof localStorage === "undefined") {
@@ -2248,7 +2298,7 @@
 		}
 
 		const currentUuid = getCurrentProfileUuid()
-		const loadUuid = routeUuid || currentUuid
+		const loadUuid = currentUuid
 
 		if (loadUuid) {
 			const storedByUuid = readStoredProfileByUuid(loadUuid)

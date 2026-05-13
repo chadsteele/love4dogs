@@ -7,7 +7,11 @@
 		Repeat2,
 	} from "lucide-svelte"
 	import {onMount} from "svelte"
-	import {CONTACT_LOCK_PREFIX, decryptContact} from "$lib/utils"
+	import {
+		CONTACT_LOCK_PREFIX,
+		decryptContact,
+		rewriteLove4DogsUrlForLocalhost,
+	} from "$lib/utils"
 	import PostImageViewer from "$lib/PostImageViewer.svelte"
 	import Share from "$lib/Share.svelte"
 
@@ -134,11 +138,11 @@
 			let cursor = 0
 
 			for (const match of plainText.matchAll(urlRegex)) {
-				const url = match[0]
+				const url = rewriteLove4DogsUrlForLocalhost(match[0])
 				const start = match.index ?? 0
 				html += escapeHtml(plainText.slice(cursor, start))
 				html += `<a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`
-				cursor = start + url.length
+				cursor = start + match[0].length
 			}
 
 			html += escapeHtml(plainText.slice(cursor))
@@ -162,7 +166,7 @@
 				linkFacets.push({
 					byteStart: facet.index.byteStart,
 					byteEnd: facet.index.byteEnd,
-					uri: linkFeature.uri,
+					uri: rewriteLove4DogsUrlForLocalhost(linkFeature.uri),
 				})
 				continue
 			}
@@ -410,20 +414,22 @@
 				const uri = String(feature?.uri || "").trim()
 				if (!uri) continue
 				if (/\/profile\/view\//i.test(uri)) {
-					return cleanExtractedUrl(uri)
+					return rewriteLove4DogsUrlForLocalhost(
+						cleanExtractedUrl(uri),
+					)
 				}
 			}
 		}
 
 		for (const alt of inputPost?.imageAlts || []) {
 			const fromAlt = extractCanonicalUrlFromAltPayload(alt)
-			if (fromAlt) return fromAlt
+			if (fromAlt) return rewriteLove4DogsUrlForLocalhost(fromAlt)
 		}
 
 		const fromVideoAlt = extractCanonicalUrlFromAltPayload(
 			inputPost?.video?.alt || "",
 		)
-		if (fromVideoAlt) return fromVideoAlt
+		if (fromVideoAlt) return rewriteLove4DogsUrlForLocalhost(fromVideoAlt)
 
 		return ""
 	}

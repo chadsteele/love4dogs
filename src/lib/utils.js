@@ -67,6 +67,28 @@ export function isLocalHost() {
 	return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
 }
 
+export function rewriteLove4DogsUrlForLocalhost(url = '') {
+	const source = String(url || '').trim();
+	if (!source || !isLocalHost()) return source;
+
+	let parsed;
+	try {
+		parsed = new URL(source);
+	} catch {
+		return source;
+	}
+
+	const host = String(parsed.hostname || '').toLowerCase();
+	if (host !== 'love4dogs.club' && host !== 'www.love4dogs.club') {
+		return source;
+	}
+
+	const localOrigin = String(window.location?.origin || '').trim();
+	if (!localOrigin) return source;
+
+	return `${localOrigin}${parsed.pathname}${parsed.search}${parsed.hash}`;
+}
+
 export function buildCanonicalUrl(uuid = '', name = '', baseUrl = DEFAULT_SITE_BASE_URL) {
 	const trimmedName = String(name || '').trim();
 	if (!trimmedName) return '';
@@ -76,7 +98,7 @@ export function buildCanonicalUrl(uuid = '', name = '', baseUrl = DEFAULT_SITE_B
 	if (!cleaned) return '';
 
 	const safeUuid = String(uuid || '').trim();
-	const safeBaseUrl = String(baseUrl || DEFAULT_SITE_BASE_URL).replace(/\/+$/, '');
+	const safeBaseUrl = rewriteLove4DogsUrlForLocalhost(String(baseUrl || DEFAULT_SITE_BASE_URL)).replace(/\/+$/, '');
 
 	return `${safeBaseUrl}/${safeUuid}/${cleaned}`;
 }
@@ -221,11 +243,12 @@ export function buildLocationBlock(location, mapBaseUrl = DEFAULT_MAP_BASE_URL) 
 
 	const hash = gpsToHash(Number(location.lat), Number(location.lon));
 	if (!hash) return '';
+	const localizedMapBaseUrl = rewriteLove4DogsUrlForLocalhost(String(mapBaseUrl || DEFAULT_MAP_BASE_URL));
 
 	const details = [location.city, location.state, location.country, location.zip]
 		.filter(Boolean)
 		.join(', ');
-	return `\n\n📍 ${mapBaseUrl}/${hash.path}\n${details}`;
+	return `\n\n📍 ${localizedMapBaseUrl}/${hash.path}\n${details}`;
 }
 
 export async function lookupLocationDetails(lat, lon, options = {}) {
@@ -576,6 +599,7 @@ export function minifyHtml(html = '') {
 	// They intentionally support tags with attributes and preserve closing-tag suffixes.
 	// Changing these regexes can break backwards compatibility for stored chunk payloads.
 	// Replace verbose tags with shorter equivalents
+	result = result.replace(/<div>/g, '<d>');
 	result = result.replace(/<div\s/g, '<d ');
 	result = result.replace(/<\/div/g, '</d');
 	result = result.replace(/<strong\s/g, '<b ');

@@ -1,9 +1,12 @@
 <script>
 	import {goto} from "$app/navigation"
 	import {isLocalHost} from "$lib/utils"
+	import ProfileList from "$lib/ProfileList.svelte"
 	import {
+		buildNewProfileEditPath,
 		getCurrentProfileUuid,
 		listStoredProfiles,
+		setCurrentProfileUuid,
 	} from "$lib/profileRegistry"
 	import {
 		Menu,
@@ -41,8 +44,10 @@
 
 	let logoLoaded = $state(true)
 	let selectionMenuEl = $state(null)
+	let profileMenuEl = $state(null)
 	let navProfiles = $state([])
 	let navCurrentUuid = $state("")
+	let profileMenuOpen = $state(false)
 
 	const navCurrentProfile = $derived(
 		navProfiles.find((entry) => entry?.uuid === navCurrentUuid) || null,
@@ -57,13 +62,27 @@
 	function goToProfileChooser() {
 		const count = navProfiles.length
 		if (!navCurrentUuid || count === 0) {
-			goto("/profile/edit")
+			goto(buildNewProfileEditPath())
 			return
 		}
 		if (count === 1) {
 			goto(`/profile/edit/${encodeURIComponent(navCurrentUuid)}`)
 			return
 		}
+		profileMenuOpen = !profileMenuOpen
+		selectionMenuOpen = false
+	}
+
+	function chooseCurrentProfile(uuid = "") {
+		const next = String(uuid || "").trim()
+		if (!next) return
+		setCurrentProfileUuid(next)
+		navCurrentUuid = next
+		profileMenuOpen = false
+	}
+
+	function openProfileManager() {
+		profileMenuOpen = false
 		goto("/profile/select")
 	}
 
@@ -73,6 +92,21 @@
 		const onPointerDown = (event) => {
 			if (!selectionMenuEl?.contains(event.target)) {
 				selectionMenuOpen = false
+			}
+		}
+
+		document.addEventListener("pointerdown", onPointerDown)
+		return () => {
+			document.removeEventListener("pointerdown", onPointerDown)
+		}
+	})
+
+	$effect(() => {
+		if (!profileMenuOpen) return
+
+		const onPointerDown = (event) => {
+			if (!profileMenuEl?.contains(event.target)) {
+				profileMenuOpen = false
 			}
 		}
 
@@ -293,19 +327,45 @@
 				<Plus size={16} /> &nbsp; Create
 			</a>
 		{/if}
-		<button
-			type="button"
-			class="profile-avatar-btn"
-			onclick={goToProfileChooser}
-			aria-label="Choose current profile"
-			title="Choose current profile"
-		>
-			{#if navAvatarSrc}
-				<img src={navAvatarSrc} alt="Current profile" />
-			{:else}
-				<User size={18} />
+		<div class="profile-menu-wrap" bind:this={profileMenuEl}>
+			<button
+				type="button"
+				class="profile-avatar-btn"
+				onclick={goToProfileChooser}
+				aria-label="Choose current profile"
+				title="Choose current profile"
+			>
+				{#if navAvatarSrc}
+					<img src={navAvatarSrc} alt="Current profile" />
+				{:else}
+					<User size={18} />
+				{/if}
+			</button>
+			{#if profileMenuOpen}
+				<div class="profile-menu">
+					<ProfileList
+						profiles={navProfiles}
+						currentUuid={navCurrentUuid}
+						mode="picker"
+						onChoose={chooseCurrentProfile}
+					/>
+					<div class="profile-menu-actions">
+						<button type="button" onclick={openProfileManager}>
+							Manage profiles
+						</button>
+						<button
+							type="button"
+							onclick={() => {
+								profileMenuOpen = false
+								goto(buildNewProfileEditPath())
+							}}
+						>
+							Create profile
+						</button>
+					</div>
+				</div>
 			{/if}
-		</button>
+		</div>
 	</div>
 </nav>
 
@@ -379,6 +439,47 @@
 		box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
 		padding: 0.4rem;
 		z-index: 30;
+	}
+
+	.profile-menu-wrap {
+		position: relative;
+	}
+
+	.profile-menu {
+		position: absolute;
+		top: calc(100% + 0.45rem);
+		right: 0;
+		width: min(460px, 94vw);
+		max-height: min(70vh, 540px);
+		overflow: auto;
+		background: #fff;
+		border: 1px solid #d7c8b6;
+		border-radius: 12px;
+		box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
+		padding: 0.5rem;
+		z-index: 40;
+	}
+
+	.profile-menu-actions {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 0.45rem;
+		margin-top: 0.5rem;
+		padding-top: 0.5rem;
+		border-top: 1px solid #e6ddcf;
+	}
+
+	.profile-menu-actions button {
+		border: 1px solid #d7c8b6;
+		background: #fff;
+		border-radius: 9px;
+		padding: 0.42rem 0.5rem;
+		font: inherit;
+		cursor: pointer;
+	}
+
+	.profile-menu-actions button:hover {
+		background: #f3ece1;
 	}
 
 	.selection-menu button {

@@ -2,7 +2,9 @@
 	import {onMount} from "svelte"
 	import {goto} from "$app/navigation"
 	import NavBar from "$lib/NavBar.svelte"
+	import ProfileList from "$lib/ProfileList.svelte"
 	import {
+		buildNewProfileEditPath,
 		getCurrentProfileUuid,
 		listStoredProfiles,
 		setCurrentProfileUuid,
@@ -45,41 +47,21 @@
 		{#if profiles.length === 0}
 			<div class="empty-state">
 				<p>No saved profiles yet.</p>
-				<a class="action" href="/profile/edit"
-					>Create your first profile</a
+				<button
+					type="button"
+					class="action"
+					onclick={() => goto(buildNewProfileEditPath())}
 				>
+					Create your first profile
+				</button>
 			</div>
 		{:else}
-			<ul class="profile-list">
-				{#each profiles as profile}
-					<li class:current={profile.uuid === currentUuid}>
-						<button
-							type="button"
-							class="profile-row"
-							onclick={() => chooseProfile(profile.uuid)}
-						>
-							{#if profile.avatarUrl}
-								<img
-									src={profile.avatarUrl}
-									alt={profile.name || "Profile"}
-								/>
-							{:else}
-								<div class="avatar-fallback">P</div>
-							{/if}
-							<div class="meta">
-								<strong
-									>{profile.name ||
-										"Untitled profile"}</strong
-								>
-								<small>{profile.uuid}</small>
-							</div>
-							{#if profile.uuid === currentUuid}
-								<span class="badge">Current</span>
-							{/if}
-						</button>
-					</li>
-				{/each}
-			</ul>
+			<ProfileList
+				{profiles}
+				{currentUuid}
+				mode="picker"
+				onChoose={chooseProfile}
+			/>
 		{/if}
 	</section>
 </main>
@@ -107,68 +89,6 @@
 		color: #6d5f51;
 	}
 
-	.profile-list {
-		list-style: none;
-		padding: 0;
-		margin: 0;
-		display: grid;
-		gap: 0.65rem;
-	}
-
-	.profile-row {
-		width: 100%;
-		display: grid;
-		grid-template-columns: 44px 1fr auto;
-		gap: 0.75rem;
-		align-items: center;
-		padding: 0.6rem;
-		border-radius: 12px;
-		border: 1px solid #d8cdbf;
-		background: #fff;
-		cursor: pointer;
-		text-align: left;
-	}
-
-	.current .profile-row {
-		border-color: #3b6e4f;
-		background: #f2f8f4;
-	}
-
-	img,
-	.avatar-fallback {
-		width: 44px;
-		height: 44px;
-		border-radius: 999px;
-		object-fit: cover;
-	}
-
-	.avatar-fallback {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		background: #e7dbcd;
-		color: #6c5542;
-		font-weight: 700;
-	}
-
-	.meta {
-		display: grid;
-		gap: 0.2rem;
-	}
-
-	.meta small {
-		color: #857666;
-		font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-	}
-
-	.badge {
-		font-size: 0.82rem;
-		padding: 0.2rem 0.5rem;
-		border-radius: 999px;
-		background: #3b6e4f;
-		color: #fff;
-	}
-
 	.empty-state {
 		padding: 0.8rem;
 		border-radius: 12px;
@@ -176,12 +96,17 @@
 	}
 
 	.action {
-		display: inline-block;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 		margin-top: 0.45rem;
 		padding: 0.45rem 0.75rem;
+		border: 0;
 		border-radius: 999px;
 		background: #3b6e4f;
 		color: #fff;
 		text-decoration: none;
+		font: inherit;
+		cursor: pointer;
 	}
 </style>

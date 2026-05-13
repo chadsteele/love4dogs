@@ -16,6 +16,9 @@
 	const ABOUT_MODAL_WINDOW_MS = 36 * 60 * 60 * 1000
 	const MAX_SAVED_ITEMS = 100
 	const BSKY_REQUIRED_QUERY_TERM = "canonicalurl"
+	const FAVORITE_SEARCH_TERMS_KEY =
+		"love4dogs.settings.favorite-search-terms-v1"
+	const DEFAULT_SEARCH_TERM_KEY = "love4dogs.settings.default-search-term-v1"
 
 	let posts = $state([])
 	let recentTags = $state([])
@@ -37,6 +40,7 @@
 	let loadingMore = $state(false)
 	let feedCursor = null
 	let hasMorePosts = $state(true)
+	let favoriteSearchTerms = $state([])
 
 	let searchDebounceTimer = null
 	let lastFeedRequestId = 0
@@ -66,6 +70,43 @@
 	function saveStoredList(key, list) {
 		if (typeof window === "undefined") return
 		localStorage.setItem(key, JSON.stringify(cappedUniqueList(list)))
+	}
+
+	function normalizeSearchTerm(value = "") {
+		return String(value || "")
+			.trim()
+			.replace(/\s+/g, " ")
+	}
+
+	function readFavoriteSearchTerms() {
+		if (typeof window === "undefined") return []
+		try {
+			const parsed = JSON.parse(
+				localStorage.getItem(FAVORITE_SEARCH_TERMS_KEY) || "[]",
+			)
+			if (!Array.isArray(parsed)) return []
+			const seen = new Set()
+			const next = []
+			for (const entry of parsed) {
+				const normalized = normalizeSearchTerm(entry)
+				if (!normalized) continue
+				const key = normalized.toLowerCase()
+				if (seen.has(key)) continue
+				seen.add(key)
+				next.push(normalized)
+				if (next.length >= 20) break
+			}
+			return next
+		} catch {
+			return []
+		}
+	}
+
+	function readDefaultSearchTerm() {
+		if (typeof window === "undefined") return ""
+		return String(localStorage.getItem(DEFAULT_SEARCH_TERM_KEY) || "")
+			.trim()
+			.replace(/\s+/g, " ")
 	}
 
 	function readTimestamp(key) {
@@ -432,6 +473,10 @@
 		loadLocalTagCounts()
 		bookmarkedUris = readStoredList(BOOKMARK_KEY)
 		trashedUris = readStoredList(TRASH_KEY)
+		favoriteSearchTerms = readFavoriteSearchTerms()
+		if (!searchTerm.trim()) {
+			searchTerm = readDefaultSearchTerm()
+		}
 		evaluateAboutModalVisibility()
 		loadFeed()
 		myPostUris = loadMyPostUris()
@@ -529,6 +574,28 @@
 			if (!searchTerm.trim()) loadFeed()
 		}}
 	/>
+
+	{#if currentView === "feed" && favoriteSearchTerms.length > 0}
+		<section class="favorite-searches" aria-label="Favorite searches">
+			<p class="favorite-searches-label">Favorite searches</p>
+			<div class="favorite-searches-chips">
+				{#each favoriteSearchTerms as term}
+					<button
+						type="button"
+						class="favorite-search-chip"
+						onclick={() => {
+							searchTerm = term
+							if (searchDebounceTimer)
+								clearTimeout(searchDebounceTimer)
+							loadFeed()
+						}}
+					>
+						{term}
+					</button>
+				{/each}
+			</div>
+		</section>
+	{/if}
 
 	<section class="grid">
 		<article class="panel feed">
@@ -634,6 +701,41 @@
 		display: grid;
 		grid-template-columns: 1fr;
 		gap: 1rem;
+	}
+
+	.favorite-searches {
+		display: grid;
+		gap: 0.45rem;
+		margin: 0 0 0.75rem;
+	}
+
+	.favorite-searches-label {
+		margin: 0;
+		font-size: 0.84rem;
+		font-weight: 600;
+		color: #5f665f;
+	}
+
+	.favorite-searches-chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.45rem;
+	}
+
+	.favorite-search-chip {
+		border: 1px solid rgba(59, 110, 79, 0.34);
+		background: rgba(59, 110, 79, 0.1);
+		color: #305741;
+		border-radius: 999px;
+		padding: 0.22rem 0.65rem;
+		font-size: 0.84rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.favorite-search-chip:hover {
+		background: rgba(59, 110, 79, 0.18);
+		border-color: #305741;
 	}
 
 	.panel {

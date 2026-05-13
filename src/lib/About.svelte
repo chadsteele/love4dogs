@@ -3,11 +3,12 @@
 	import {onMount} from "svelte"
 	import {goto} from "$app/navigation"
 	import RandomEmojis from "$lib/RandomEmojis.svelte"
+	import {rewriteLove4DogsUrlForLocalhost} from "$lib/utils"
 
 	let {mode = "page", onClose} = $props()
 	const isModal = $derived(mode === "modal")
 
-	const siteUrl = "https://love4dogs.club"
+	const siteUrl = rewriteLove4DogsUrlForLocalhost("https://love4dogs.club")
 	const ABOUT_PAGE_VISIT_KEY = "love4dogs.about-page-visited-at"
 	const backgroundImageUrl = `${siteUrl}/background.jpg`
 	const aboutTitle = "About Love4Dogs"
