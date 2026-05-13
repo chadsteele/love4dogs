@@ -83,6 +83,19 @@
 		return [result[0], ...sortable, ...result.slice(sortableEnd)]
 	}
 
+	function uniqueImageUrls(images = []) {
+		if (!Array.isArray(images) || images.length === 0) return []
+		const seen = new Set()
+		const unique = []
+		for (const image of images) {
+			const value = String(image || "").trim()
+			if (!value || seen.has(value)) continue
+			seen.add(value)
+			unique.push(value)
+		}
+		return unique
+	}
+
 	function escapeHtml(text = "") {
 		return text
 			.replace(/&/g, "&amp;")
@@ -487,9 +500,8 @@
 
 	const comments = $derived(post.comments || [])
 	const postVideo = $derived(post.video || null)
-	const sortedImages = $derived(
-		sortCardImages(post.images || [], imageDimensions),
-	)
+	const uniqueImages = $derived(uniqueImageUrls(post.images || []))
+	const sortedImages = $derived(sortCardImages(uniqueImages, imageDimensions))
 	const threeImageFirstIsWidest = $derived.by(() => {
 		if (sortedImages.length !== 3) return false
 		const [first, second, third] = sortedImages
@@ -524,7 +536,7 @@
 
 	$effect(() => {
 		if (typeof window === "undefined") return
-		const images = Array.isArray(post.images) ? post.images : []
+		const images = uniqueImages
 		if (!images.length) return
 
 		let cancelled = false

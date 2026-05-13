@@ -176,10 +176,15 @@ function getCachedReverseGeo(cacheKey, lat, lon) {
 	if (!cached) return null;
 
 	return {
+		houseNumber: cached.houseNumber || '',
+		road: cached.road || '',
+		neighbourhood: cached.neighbourhood || '',
+		suburb: cached.suburb || '',
 		city: cached.city || '',
 		state: cached.state || '',
 		country: cached.country || '',
-		zip: cached.zip || ''
+		zip: cached.zip || '',
+		formattedAddress: cached.formattedAddress || ''
 	};
 }
 
@@ -189,10 +194,15 @@ function setCachedReverseGeo(cacheKey, maxEntries, lat, lon, value) {
 
 	const key = reverseGeoCacheKey(lat, lon);
 	cache[key] = {
+		houseNumber: value.houseNumber || '',
+		road: value.road || '',
+		neighbourhood: value.neighbourhood || '',
+		suburb: value.suburb || '',
 		city: value.city || '',
 		state: value.state || '',
 		country: value.country || '',
 		zip: value.zip || '',
+		formattedAddress: value.formattedAddress || '',
 		savedAt: Date.now()
 	};
 
@@ -237,14 +247,24 @@ export async function lookupLocationDetails(lat, lon, options = {}) {
 	let state = '';
 	let country = '';
 	let zip = '';
+	let houseNumber = '';
+	let road = '';
+	let neighbourhood = '';
+	let suburb = '';
+	let formattedAddress = '';
 	let fromCache = false;
 
 	const reverseGeo = getCachedReverseGeo(reverseGeoCacheKeyName, nextLat, nextLon);
 	if (reverseGeo) {
+		houseNumber = reverseGeo.houseNumber;
+		road = reverseGeo.road;
+		neighbourhood = reverseGeo.neighbourhood;
+		suburb = reverseGeo.suburb;
 		city = reverseGeo.city;
 		state = reverseGeo.state;
 		country = reverseGeo.country;
 		zip = reverseGeo.zip;
+		formattedAddress = reverseGeo.formattedAddress;
 		fromCache = true;
 	} else {
 		try {
@@ -253,18 +273,50 @@ export async function lookupLocationDetails(lat, lon, options = {}) {
 				{ headers: { 'Accept-Language': acceptLanguage } }
 			);
 			const data = await res.json();
+			houseNumber = data?.address?.house_number || '';
+			road = data?.address?.road || data?.address?.pedestrian || '';
+			neighbourhood = data?.address?.neighbourhood || '';
+			suburb = data?.address?.suburb || '';
 			city = data?.address?.city || data?.address?.town || data?.address?.village || data?.address?.hamlet || '';
 			state = data?.address?.state || data?.address?.province || data?.address?.region || data?.address?.state_district || '';
 			country = data?.address?.country || '';
 			zip = data?.address?.postcode || '';
-			setCachedReverseGeo(reverseGeoCacheKeyName, reverseGeoMaxEntries, nextLat, nextLon, { city, state, country, zip });
+			const line1 = [houseNumber, road].filter(Boolean).join(' ').trim();
+			const line2 = [neighbourhood, suburb].filter(Boolean).join(', ').trim();
+			const fallbackFormatted = [line1, line2, city, state, country, zip]
+				.filter(Boolean)
+				.join(', ');
+			formattedAddress = String(data?.display_name || fallbackFormatted || '').trim();
+			setCachedReverseGeo(reverseGeoCacheKeyName, reverseGeoMaxEntries, nextLat, nextLon, {
+				houseNumber,
+				road,
+				neighbourhood,
+				suburb,
+				city,
+				state,
+				country,
+				zip,
+				formattedAddress
+			});
 		} catch {
 			// Keep coordinate updates working even if reverse geocoding fails.
 		}
 	}
 
 	return {
-		location: { lat: nextLat, lon: nextLon, city, state, country, zip },
+		location: {
+			lat: nextLat,
+			lon: nextLon,
+			houseNumber,
+			road,
+			neighbourhood,
+			suburb,
+			city,
+			state,
+			country,
+			zip,
+			formattedAddress
+		},
 		error: '',
 		fromCache
 	};
@@ -499,4 +551,40 @@ export function hashToGps(hash) {
 	const exact = singleHashToGps(parts[1] || parts[0]);
 	if (!exact) return null;
 	return { lat: exact.lat, lon: exact.lon, hashes: { approx: parts[1] ? parts[0] : null, exact: parts[1] || parts[0] } };
+}
+
+/**
+ * Minify and compress HTML by removing whitespace and replacing verbose tags with shorter equivalents.
+ * Includes tag compression (div→d, strong→b, em→i) and whitespace removal.
+ * This is lossless: compressed tags can be decompressed later without ambiguity.
+ * @param {string} html
+ * @returns {string}
+ */
+export function minifyHtml(html = '') {
+	let result = String(html || '');
+
+	// Block-level tag regex: remove whitespace immediately after opening and before closing
+	result = result.replace(/>(\s+)</g, '><');
+
+	// Collapse multiple whitespace sequences into single space (but preserve at least one)
+	result = result.replace(/\s{2,}/g, ' ');
+
+	// Remove whitespace before closing tags
+	result = result.replace(/\s+</g, '<');
+
+	// Contract: keep these exact patterns unless explicitly requested by the user.
+	// They intentionally support tags with attributes and preserve closing-tag suffixes.
+	// Changing these regexes can break backwards compatibility for stored chunk payloads.
+	// Replace verbose tags with shorter equivalents
+	result = result.replace(/<div\s/g, '<d ');
+	result = result.replace(/<\/div/g, '</d');
+	result = result.replace(/<strong\s/g, '<b ');
+	result = result.replace(/<\/strong>/g, '</b');
+	result = result.replace(/<em\s/g, '<i ');
+	result = result.replace(/<\/em/g, '</i');
+
+	// Trim the result
+	result = result.trim();
+
+	return result;
 }

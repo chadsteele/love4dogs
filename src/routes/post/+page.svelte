@@ -31,6 +31,7 @@
 	import PostCard from "$lib/PostCard.svelte"
 	import Editor from "$lib/Editor.svelte"
 	import NavBar from "$lib/NavBar.svelte"
+	import {getCurrentProfileUuid} from "$lib/profileRegistry"
 
 	const LOCAL_TAG_KEY = "love4dogs.tag-counts"
 	const LOCAL_OLD_POSTS_KEY = "love4dogs.my-post-uris"
@@ -413,6 +414,12 @@
 	async function submitPost() {
 		postError = ""
 		postSuccess = ""
+
+		if (!getCurrentProfileUuid()) {
+			postError =
+				"Select a current profile first. Tap your avatar in the top bar to create or choose one."
+			return
+		}
 
 		const trimmedTitle = title.trim()
 		if (!trimmedTitle) {

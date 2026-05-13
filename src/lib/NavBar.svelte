@@ -2,6 +2,10 @@
 	import {goto} from "$app/navigation"
 	import {isLocalHost} from "$lib/utils"
 	import {
+		getCurrentProfileUuid,
+		listStoredProfiles,
+	} from "$lib/profileRegistry"
+	import {
 		Menu,
 		History,
 		PawPrint,
@@ -13,6 +17,7 @@
 		Shield,
 		Pencil,
 		Plus,
+		User,
 	} from "lucide-svelte"
 
 	let {
@@ -36,6 +41,31 @@
 
 	let logoLoaded = $state(true)
 	let selectionMenuEl = $state(null)
+	let navProfiles = $state([])
+	let navCurrentUuid = $state("")
+
+	const navCurrentProfile = $derived(
+		navProfiles.find((entry) => entry?.uuid === navCurrentUuid) || null,
+	)
+	const navAvatarSrc = $derived(String(navCurrentProfile?.avatarUrl || ""))
+
+	function refreshNavProfiles() {
+		navProfiles = listStoredProfiles()
+		navCurrentUuid = getCurrentProfileUuid()
+	}
+
+	function goToProfileChooser() {
+		const count = navProfiles.length
+		if (!navCurrentUuid || count === 0) {
+			goto("/profile/edit")
+			return
+		}
+		if (count === 1) {
+			goto(`/profile/edit/${encodeURIComponent(navCurrentUuid)}`)
+			return
+		}
+		goto("/profile/select")
+	}
 
 	$effect(() => {
 		if (!selectionMenuOpen) return
@@ -49,6 +79,18 @@
 		document.addEventListener("pointerdown", onPointerDown)
 		return () => {
 			document.removeEventListener("pointerdown", onPointerDown)
+		}
+	})
+
+	$effect(() => {
+		refreshNavProfiles()
+		if (typeof window === "undefined") return
+		const onStorage = () => refreshNavProfiles()
+		window.addEventListener("storage", onStorage)
+		window.addEventListener("focus", onStorage)
+		return () => {
+			window.removeEventListener("storage", onStorage)
+			window.removeEventListener("focus", onStorage)
 		}
 	})
 </script>
@@ -251,6 +293,19 @@
 				<Plus size={16} /> &nbsp; Create
 			</a>
 		{/if}
+		<button
+			type="button"
+			class="profile-avatar-btn"
+			onclick={goToProfileChooser}
+			aria-label="Choose current profile"
+			title="Choose current profile"
+		>
+			{#if navAvatarSrc}
+				<img src={navAvatarSrc} alt="Current profile" />
+			{:else}
+				<User size={18} />
+			{/if}
+		</button>
 	</div>
 </nav>
 
@@ -473,6 +528,27 @@
 		align-items: center;
 		gap: 1rem;
 		flex-wrap: wrap;
+	}
+
+	.profile-avatar-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 40px;
+		height: 40px;
+		padding: 0;
+		border-radius: 999px;
+		border: 1px solid #305741;
+		background: #fff;
+		color: #305741;
+		overflow: hidden;
+		cursor: pointer;
+	}
+
+	.profile-avatar-btn img {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
 	}
 
 	.wide-screen-only {

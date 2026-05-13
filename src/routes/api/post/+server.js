@@ -209,6 +209,70 @@ function buildImageCdnUrl(did, blobRef) {
 	return `https://cdn.bsky.app/img/feed_fullsize/plain/${did}/${cid}@jpeg`;
 }
 
+function parseBskyCdnImageUrl(value = '') {
+	const source = String(value || '').trim();
+	if (!source) return null;
+	let parsed;
+	try {
+		parsed = new URL(source);
+	} catch {
+		return null;
+	}
+	if (!/^cdn\.bsky\.app$/i.test(parsed.hostname)) return null;
+	const match = parsed.pathname.match(/^\/img\/[^/]+\/plain\/([^/]+)\/([^@/?#]+)@([^/?#]+)$/i);
+	if (!match) return null;
+	return {
+		did: String(match[1] || '').trim(),
+		cid: String(match[2] || '').trim(),
+		encoding: String(match[3] || '').trim().toLowerCase(),
+	};
+}
+
+function mimeTypeFromEncoding(encoding = '') {
+	const value = String(encoding || '').toLowerCase();
+	if (value.includes('png')) return 'image/png';
+	if (value.includes('webp')) return 'image/webp';
+	if (value.includes('gif')) return 'image/gif';
+	if (value.includes('avif')) return 'image/avif';
+	if (value.includes('jpg') || value.includes('jpeg')) return 'image/jpeg';
+	return 'image/jpeg';
+}
+
+async function buildBlobRefFromCdnImageUrl(url = '') {
+	const parsed = parseBskyCdnImageUrl(url);
+	if (!parsed) return null;
+
+	let size = 0;
+	let mimeType = mimeTypeFromEncoding(parsed.encoding);
+	try {
+		const headRes = await fetch(String(url), {
+			method: 'HEAD',
+			cache: 'no-store'
+		});
+		if (headRes.ok) {
+			const headerType = String(headRes.headers.get('content-type') || '').trim();
+			const headerLen = Number(headRes.headers.get('content-length') || 0);
+			if (headerType) mimeType = headerType;
+			if (Number.isFinite(headerLen) && headerLen > 0) size = Math.floor(headerLen);
+		}
+	} catch {
+		// Best effort only; blob refs can still be reconstructed from DID/CID.
+	}
+
+	return {
+		did: parsed.did,
+		cid: parsed.cid,
+		blob: {
+			$type: 'blob',
+			ref: {
+				$link: parsed.cid,
+			},
+			mimeType,
+			size,
+		},
+	};
+}
+
 function isHttpUrl(value) {
 	return /^https?:\/\//i.test(String(value || '').trim());
 }
@@ -587,6 +651,37 @@ export async function POST({ request }) {
 					url: buildImageCdnUrl(cacheSession.did, blob),
 					cacheUri: created?.uri || '',
 					cacheCid: created?.cid || ''
+				}),
+				{
+					headers: { 'content-type': 'application/json' }
+				}
+			);
+		}
+
+		if (mode === 'resolve-cdn-blob') {
+			const sourceUrl = String(formData.get('sourceUrl') || '').trim();
+			if (!sourceUrl) {
+				return new Response(JSON.stringify({ error: 'sourceUrl is required.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+
+			const resolved = await buildBlobRefFromCdnImageUrl(sourceUrl);
+			if (!resolved?.blob) {
+				return new Response(JSON.stringify({ error: 'Invalid Bluesky CDN image URL.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+
+			return new Response(
+				JSON.stringify({
+					ok: true,
+					kind: 'image',
+					blob: resolved.blob,
+					did: resolved.did,
+					url: sourceUrl,
 				}),
 				{
 					headers: { 'content-type': 'application/json' }

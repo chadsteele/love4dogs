@@ -17,7 +17,15 @@
 		normalizeContactInput,
 		lookupLocationDetails,
 		mediaTokenFromBuffer,
+		minifyHtml,
 	} from "$lib/utils"
+	import {
+		getCurrentProfileUuid,
+		readStoredProfileByUuid,
+		setCurrentProfileUuid,
+		upsertStoredProfile,
+		writeStoredProfileByUuid,
+	} from "$lib/profileRegistry"
 	import {
 		buildCombinedPayloadBundle as buildBskyCombinedPayloadBundle,
 		buildChunkEntriesFromBundle,
@@ -27,7 +35,7 @@
 	} from "$lib/bskyChunkStore"
 	import ShowAdmin from "$lib/ShowAdmin.svelte"
 
-	const PROFILE_STORAGE_KEY = "love4dogs.profile-v2"
+	const LEGACY_PROFILE_STORAGE_KEY = "love4dogs.profile-v2"
 	const PROFILE_VIEW_CACHE_PREFIX = "love4dogs.profile-view-cache"
 	const SESSION_BUNDLE_CACHE_PREFIX = "love4dogs.bundle-session"
 	const NORMALIZED_IMAGE_MAX_DIM = 1800
@@ -672,7 +680,47 @@
 		const sourceUrl = String(url || "").trim()
 		const resolvedSourceUrl = resolveUploadSourceUrl(sourceUrl) || sourceUrl
 		if (!resolvedSourceUrl) return null
-		if (isBskyHostedUrl(resolvedSourceUrl)) return null
+		if (isBskyHostedUrl(resolvedSourceUrl)) {
+			const wantsImage =
+				preferredKind === "image" || isLikelyImageUrl(resolvedSourceUrl)
+			if (!wantsImage) return null
+			if (editorUploadCache.has(resolvedSourceUrl)) {
+				return editorUploadCache.get(resolvedSourceUrl)
+			}
+
+			const formData = new FormData()
+			formData.append("mode", "resolve-cdn-blob")
+			formData.append("sourceUrl", resolvedSourceUrl)
+			const response = await fetch("/api/post", {
+				method: "POST",
+				body: formData,
+			})
+			const json = await response.json().catch(() => ({}))
+			if (!response.ok || !json?.ok || !json?.blob) {
+				throw new Error(
+					json?.error ||
+						`Failed to resolve blob from CDN URL: ${resolvedSourceUrl}`,
+				)
+			}
+
+			const sourceName = resolvedSourceUrl.split("/").pop() || "image"
+			const result = {
+				kind: "image",
+				alt: sourceName,
+				blob: json.blob,
+				sourceName,
+				sourceUrl: resolvedSourceUrl,
+				bskyUrl: String(json.url || resolvedSourceUrl),
+				cacheUri: "",
+				cacheCid: "",
+				cached: true,
+			}
+			editorUploadCache.set(resolvedSourceUrl, result)
+			if (sourceUrl && sourceUrl !== resolvedSourceUrl) {
+				editorUploadCache.set(sourceUrl, result)
+			}
+			return result
+		}
 		if (isInlineMediaDataUrl(resolvedSourceUrl)) {
 			const response = await fetch(resolvedSourceUrl)
 			if (!response.ok)
@@ -922,7 +970,6 @@
 			for (const entry of candidates) {
 				if (seenUploadUrls.has(entry.url)) continue
 				seenUploadUrls.add(entry.url)
-				if (isBskyHostedUrl(entry.url)) continue
 				uniqueUploadEntries.push(entry)
 			}
 
@@ -1180,6 +1227,12 @@
 						return false
 					}
 					if (entry.blob) return false
+					if (entry.kind === "image") {
+						const imageUrl = String(
+							entry.bskyUrl || entry.url || "",
+						)
+						if (isBskyHostedUrl(imageUrl)) return true
+					}
 					const url = String(entry.bskyUrl || entry.url || "")
 					return !isBskyHostedUrl(url)
 				}).length,
@@ -1239,8 +1292,12 @@
 		uuid,
 		canonicalurl,
 		email: encryptEmailForPayload(email),
-		profilePic: uploadedProfileImage?.bskyUrl || null,
-		backgroundPic: uploadedBackgroundImage?.bskyUrl || null,
+		profilePic:
+			selectedProfileImage?.bskyUrl || selectedProfileImage?.url || null,
+		backgroundPic:
+			selectedBackgroundImage?.bskyUrl ||
+			selectedBackgroundImage?.url ||
+			null,
 		name: profileName,
 		description: profileDescription,
 	})
@@ -1504,6 +1561,21 @@
 		}
 	}
 
+	function shouldRegisterCurrentProfile(profile = {}) {
+		if (!profile || typeof profile !== "object") return false
+		if (String(profile.profileName || "").trim()) return true
+		if (String(profile.profileDescription || "").trim()) return true
+		if (String(profile.email || "").trim()) return true
+		if (String(profile.contentHtml || "").trim()) return true
+		if (
+			Array.isArray(profile.profileUploadedMedia) &&
+			profile.profileUploadedMedia.length > 0
+		) {
+			return true
+		}
+		return false
+	}
+
 	function getDraftSaveWarning() {
 		const html = String(contentHtml || "")
 		if (html.length <= EDITOR_MAX_HTML_CHARS) return ""
@@ -1541,9 +1613,7 @@
 		)
 		const submitProfileImageError = !hasProfileImage
 			? "Profile picture is required."
-			: !uploadedProfileImage
-				? "Profile picture is loaded from CDN. Re-upload it before publishing."
-				: ""
+			: ""
 		debugProfile("[profile] validateRequiredFields", {
 			hasName: Boolean(profileName.trim()),
 			hasEmail: Boolean(email.trim()),
@@ -1612,39 +1682,68 @@
 		return result
 	}
 
+	function normalizeAddressPart(value = "") {
+		return String(value || "")
+			.toLowerCase()
+			.replace(/\s+/g, " ")
+			.trim()
+	}
+
+	function buildCompleteAddress(location = {}) {
+		const line1 = [location.houseNumber, location.road]
+			.map((value) => String(value || "").trim())
+			.filter(Boolean)
+			.join(" ")
+		const line2 = [location.neighbourhood, location.suburb]
+			.map((value) => String(value || "").trim())
+			.filter(Boolean)
+			.join(", ")
+		const structured = [
+			line1,
+			line2,
+			location.city,
+			location.state,
+			location.country,
+			location.zip,
+		]
+			.map((value) => String(value || "").trim())
+			.filter(Boolean)
+			.join(", ")
+
+		return String(location.formattedAddress || structured).trim()
+	}
+
 	/**
-	 * Check if a new address preserves the location confirmation.
-	 * Only the beginning of the address can be edited; the ending must be identical.
-	 * This ensures city/country/zip (which correspond to the pin) remain unchanged.
+	 * Keep confirmation valid while the user edits free-form address text,
+	 * as long as state/country/zip from the pinned location still match.
 	 */
 	function hasRequiredLocationParts(location) {
 		if (!location || typeof location !== "object") return false
-		return [location.city, location.country, location.zip].every(
+		return [location.state, location.country, location.zip].every(
 			(value) => String(value || "").trim().length > 0,
 		)
 	}
 
-	function addressOkay(oldAddress, newAddress) {
+	function addressOkay(newAddress) {
 		if (!hasRequiredLocationParts(confirmedLocation)) return false
-		const old = oldAddress.trim().toLowerCase()
-		const neu = newAddress.trim().toLowerCase()
+		const neu = normalizeAddressPart(newAddress)
 		const required = [
-			confirmedLocation?.city,
+			confirmedLocation?.state,
 			confirmedLocation?.country,
 			confirmedLocation?.zip,
 		]
+			.map((value) => normalizeAddressPart(value))
+			.filter(Boolean)
 
-		if (!old || !neu) return false
+		if (!neu) return false
 
-		if (required.some((part) => !part || !neu.includes(part.toLowerCase())))
-			return false
+		if (required.some((part) => !neu.includes(part))) return false
 
-		return old[old.length - 1] === neu[old.length - 1]
+		return true
 	}
 
 	$effect(() => {
-		locationConfirmed =
-			locationConfirmed && addressOkay(confirmedAddress, addressText)
+		locationConfirmed = locationConfirmed && addressOkay(addressText)
 		if (locationConfirmed) locationError = ""
 	})
 
@@ -1674,9 +1773,12 @@
 		if (!hasRequiredLocationParts(confirmedLocation)) {
 			locationConfirmed = false
 			locationError =
-				"Location must include city, country, and zip before it can be confirmed."
+				"Location must include state, country, and zip before it can be confirmed."
 			return
 		}
+
+		const completeAddress = buildCompleteAddress(confirmedLocation)
+		if (completeAddress) addressText = completeAddress
 
 		confirmedAddress = addressText.trim()
 		locationConfirmed = true
@@ -1735,6 +1837,59 @@
 		publishing = true
 
 		try {
+			const resolvePublishImageCarrier = async (
+				entry,
+				fallbackAlt = "Image",
+			) => {
+				if (!entry || entry.kind !== "image") return null
+				const alt = String(entry.alt || fallbackAlt)
+				if (entry.blob) {
+					return {
+						...entry,
+						kind: "image",
+						alt,
+					}
+				}
+
+				const sourceUrl = String(
+					entry.bskyUrl || entry.url || "",
+				).trim()
+				if (!sourceUrl || !isBskyHostedUrl(sourceUrl)) return null
+
+				const formData = new FormData()
+				formData.append("mode", "resolve-cdn-blob")
+				formData.append("sourceUrl", sourceUrl)
+				const response = await fetch("/api/post", {
+					method: "POST",
+					body: formData,
+				})
+				const json = await response.json().catch(() => ({}))
+				if (!response.ok || !json?.ok || !json?.blob) {
+					throw new Error(
+						json?.error ||
+							"Unable to resolve existing CDN image for publishing.",
+					)
+				}
+
+				return {
+					...entry,
+					kind: "image",
+					alt,
+					blob: json.blob,
+					bskyUrl: String(json.url || sourceUrl),
+					sourceUrl,
+				}
+			}
+
+			const publishProfileImage = await resolvePublishImageCarrier(
+				selectedProfileImage,
+				"Profile image",
+			)
+			const publishBackgroundImage = await resolvePublishImageCarrier(
+				selectedBackgroundImage,
+				"Profile background",
+			)
+
 			debugProfile("[profile] saving draft before publish")
 			saveProfile(false)
 
@@ -1754,8 +1909,16 @@
 				uuid,
 				canonicalurl: publishedCanonicalUrl,
 				email: encryptEmailForPayload(email),
-				profilePic: uploadedProfileImage?.bskyUrl || null,
-				backgroundPic: uploadedBackgroundImage?.bskyUrl || null,
+				profilePic:
+					publishProfileImage?.bskyUrl ||
+					selectedProfileImage?.bskyUrl ||
+					selectedProfileImage?.url ||
+					null,
+				backgroundPic:
+					publishBackgroundImage?.bskyUrl ||
+					selectedBackgroundImage?.bskyUrl ||
+					selectedBackgroundImage?.url ||
+					null,
 				name: profileName,
 				description: profileDescription,
 			}
@@ -1781,19 +1944,19 @@
 			})
 
 			const primaryMedia = []
-			if (uploadedProfileImage?.blob) {
+			if (publishProfileImage?.blob) {
 				primaryMedia.push({
-					...uploadedProfileImage,
+					...publishProfileImage,
 					kind: "image",
-					alt: String(uploadedProfileImage.alt || "Profile image"),
+					alt: String(publishProfileImage.alt || "Profile image"),
 				})
 			}
-			if (uploadedBackgroundImage?.blob) {
+			if (publishBackgroundImage?.blob) {
 				primaryMedia.push({
-					...uploadedBackgroundImage,
+					...publishBackgroundImage,
 					kind: "image",
 					alt: String(
-						uploadedBackgroundImage.alt || "Profile background",
+						publishBackgroundImage.alt || "Profile background",
 					),
 				})
 			}
@@ -1813,14 +1976,14 @@
 					alt: String(entry.alt || "Video"),
 					blob: entry.blob,
 				}))
-			const fallbackImage = uploadedProfileImage
+			const fallbackImage = publishProfileImage
 				? [
 						{
 							kind: "image",
 							alt: String(
-								uploadedProfileImage.alt || "Profile image",
+								publishProfileImage.alt || "Profile image",
 							),
-							blob: uploadedProfileImage.blob,
+							blob: publishProfileImage.blob,
 						},
 					]
 				: []
@@ -1893,9 +2056,22 @@
 			return
 		}
 		saveWarning = ""
-		const snapshot = JSON.stringify(buildStoredProfileForStorage())
+		const payload = buildStoredProfileForStorage()
+		const snapshot = JSON.stringify(payload)
 		lastAutosaveSnapshot = snapshot
-		localStorage.setItem(PROFILE_STORAGE_KEY, snapshot)
+		writeStoredProfileByUuid(uuid, payload)
+		if (shouldRegisterCurrentProfile(payload)) {
+			setCurrentProfileUuid(uuid)
+			upsertStoredProfile({
+				uuid,
+				name: profileName,
+				avatarUrl: String(
+					selectedProfileImage?.bskyUrl ||
+						selectedProfileImage?.url ||
+						"",
+				),
+			})
+		}
 		if (showMessage) {
 			saveMessage = `Saved at ${new Date().toLocaleTimeString()}`
 		}
@@ -1959,8 +2135,19 @@
 
 		const snapshot = JSON.stringify(buildStoredProfileForStorage())
 		lastAutosaveSnapshot = snapshot
-		if (typeof localStorage !== "undefined") {
-			localStorage.setItem(PROFILE_STORAGE_KEY, snapshot)
+		const payload = buildStoredProfileForStorage()
+		writeStoredProfileByUuid(uuid, payload)
+		if (shouldRegisterCurrentProfile(payload)) {
+			setCurrentProfileUuid(uuid)
+			upsertStoredProfile({
+				uuid,
+				name: profileName,
+				avatarUrl: String(
+					selectedProfileImage?.bskyUrl ||
+						selectedProfileImage?.url ||
+						"",
+				),
+			})
 		}
 	}
 
@@ -2060,37 +2247,68 @@
 			}
 		}
 
-		const raw = localStorage.getItem(PROFILE_STORAGE_KEY)
-		if (!raw) {
-			debugProfile("[profile] onMount:no stored profile")
-			uuid = generateShortUuid()
-			initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
-			storageReady = true
-			saveProfile(false)
-			setStoredSnapshotBaseline(buildStoredProfileForStorage())
-			return () => {
-				if (intervalId) clearInterval(intervalId)
+		const currentUuid = getCurrentProfileUuid()
+		const loadUuid = routeUuid || currentUuid
+
+		if (loadUuid) {
+			const storedByUuid = readStoredProfileByUuid(loadUuid)
+			if (storedByUuid) {
+				debugProfile(
+					"[profile] onMount:loaded stored profile by uuid",
+					{
+						loadUuid,
+					},
+				)
+				applyStoredProfile(storedByUuid)
+				setCurrentProfileUuid(loadUuid)
+				initialProfileSnapshot =
+					cloneStoredProfile(buildStoredProfile())
+				setStoredSnapshotBaseline(buildStoredProfileForStorage())
+				storageReady = true
+				return () => {
+					if (intervalId) clearInterval(intervalId)
+				}
 			}
 		}
 
-		try {
-			const parsed = JSON.parse(raw)
-			debugProfile("[profile] onMount:loaded stored profile", {
-				hasUuid: Boolean(parsed?.uuid),
-				hasContentHtml: Boolean(parsed?.contentHtml),
-			})
-			applyStoredProfile(parsed)
-			initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
-			setStoredSnapshotBaseline(buildStoredProfileForStorage())
-		} catch {
-			warnProfile("[profile] onMount:failed to parse stored profile")
-			uuid = generateShortUuid()
-			initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
-			setStoredSnapshotBaseline(buildStoredProfileForStorage())
+		const raw = localStorage.getItem(LEGACY_PROFILE_STORAGE_KEY)
+		if (raw) {
+			try {
+				const parsed = JSON.parse(raw)
+				if (parsed && typeof parsed === "object" && parsed.uuid) {
+					debugProfile("[profile] onMount:migrating legacy profile", {
+						uuid: parsed.uuid,
+					})
+					applyStoredProfile(parsed)
+					writeStoredProfileByUuid(parsed.uuid, parsed)
+					setCurrentProfileUuid(parsed.uuid)
+					upsertStoredProfile({
+						uuid: parsed.uuid,
+						name: parsed.profileName,
+						avatarUrl: String(
+							parsed?.profileUploadedMedia?.[0]?.bskyUrl ||
+								parsed?.profileUploadedMedia?.[0]?.url ||
+								"",
+						),
+					})
+					initialProfileSnapshot =
+						cloneStoredProfile(buildStoredProfile())
+					setStoredSnapshotBaseline(buildStoredProfileForStorage())
+					storageReady = true
+					return () => {
+						if (intervalId) clearInterval(intervalId)
+					}
+				}
+			} catch {
+				warnProfile("[profile] onMount:failed to parse legacy profile")
+			}
 		}
 
+		debugProfile("[profile] onMount:no current profile; starting empty")
+		uuid = generateShortUuid()
+		initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
 		storageReady = true
-		debugProfile("[profile] onMount:ready")
+		setStoredSnapshotBaseline(buildStoredProfileForStorage())
 		return () => {
 			if (intervalId) clearInterval(intervalId)
 		}
@@ -2128,8 +2346,19 @@
 		if (snapshot === lastAutosaveSnapshot) return
 		lastAutosaveSnapshot = snapshot
 		debugProfile("[profile] autosave effect triggered")
-		if (typeof localStorage !== "undefined") {
-			localStorage.setItem(PROFILE_STORAGE_KEY, snapshot)
+		const payload = buildStoredProfileForStorage()
+		writeStoredProfileByUuid(uuid, payload)
+		if (shouldRegisterCurrentProfile(payload)) {
+			setCurrentProfileUuid(uuid)
+			upsertStoredProfile({
+				uuid,
+				name: profileName,
+				avatarUrl: String(
+					selectedProfileImage?.bskyUrl ||
+						selectedProfileImage?.url ||
+						"",
+				),
+			})
 		}
 	})
 
@@ -2175,8 +2404,9 @@
 		;(async () => {
 			if (currentBuild !== chunkBuildVersion) return
 			const forceCompression = true
+			const minifiedSource = minifyHtml(source)
 			const fragments = chunkHtmlByAltPayload(
-				source,
+				minifiedSource,
 				CHUNK_ALT_PAYLOAD_TARGET_CHARS,
 				{uuid, forceCompression},
 			)
@@ -2188,14 +2418,16 @@
 					forceCompression,
 				}),
 			)
-			minifiedChunkEntries = fragments.map((htmlFragment) => ({
-				htmlFragment,
-				forceCompression,
-				postBody: extractChunkBodyText(
+			minifiedChunkEntries = fragments.map((htmlFragment) => {
+				return {
 					htmlFragment,
-					CHUNK_BODY_TEXT_SIZE,
-				),
-			}))
+					forceCompression,
+					postBody: extractChunkBodyText(
+						htmlFragment,
+						CHUNK_BODY_TEXT_SIZE,
+					),
+				}
+			})
 			debugProfile("[profile] chunk effect:success", {
 				currentBuild,
 				forceCompression,
@@ -2206,8 +2438,9 @@
 		})().catch(() => {
 			if (currentBuild !== chunkBuildVersion) return
 			const forceCompression = true
+			const minifiedSource = minifyHtml(source)
 			const fragments = chunkHtmlByAltPayload(
-				source,
+				minifiedSource,
 				CHUNK_ALT_PAYLOAD_TARGET_CHARS,
 				{uuid, forceCompression},
 			)
@@ -2219,14 +2452,16 @@
 					forceCompression,
 				}),
 			)
-			minifiedChunkEntries = fragments.map((htmlFragment) => ({
-				htmlFragment,
-				forceCompression,
-				postBody: extractChunkBodyText(
+			minifiedChunkEntries = fragments.map((htmlFragment) => {
+				return {
 					htmlFragment,
-					CHUNK_BODY_TEXT_SIZE,
-				),
-			}))
+					forceCompression,
+					postBody: extractChunkBodyText(
+						htmlFragment,
+						CHUNK_BODY_TEXT_SIZE,
+					),
+				}
+			})
 			warnProfile("[profile] chunk effect:fallback", {
 				currentBuild,
 				forceCompression,
