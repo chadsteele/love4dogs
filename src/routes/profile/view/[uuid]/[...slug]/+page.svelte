@@ -2,7 +2,9 @@
 	import {onMount} from "svelte"
 	import {page} from "$app/state"
 	import NavBar from "$lib/NavBar.svelte"
+	import ProfilePostHeader from "$lib/ProfilePostHeader.svelte"
 	import {collectLinksFromValue} from "$lib/bskyChunkStore"
+	import Linkify from "$lib/Linkify.svelte"
 
 	const PROFILE_VIEW_CACHE_PREFIX = "love4dogs.profile-view-cache"
 	const PROFILE_VIEW_CACHE_TTL_MS = 5 * 60 * 1000
@@ -193,32 +195,19 @@
 		<p class="error">{error}</p>
 	{:else if jsonData}
 		<section class="panel hero">
-			<img
-				class="hero-bg"
-				src={jsonData?.backgroundPic || "/background.jpg"}
-				alt="Background"
+			<ProfilePostHeader
+				profilePic={asUrl(jsonData?.profilePic)}
+				backgroundPic={asUrl(jsonData?.backgroundPic)}
+				title={jsonData?.name || ""}
+				name={jsonData?.name || ""}
+				url={asUrl(jsonData?.canonicalurl)}
 			/>
 
-			{#if asUrl(jsonData?.profilePic)}
-				<img
-					class="avatar"
-					src={asUrl(jsonData?.profilePic)}
-					alt="Profile"
-				/>
-			{/if}
-
 			<div class="hero-body">
-				{#if jsonData?.name || jsonData?.description}
-					<div class="hero-meta">
-						{#if jsonData?.name}
-							<h1 class="hero-name">{jsonData?.name}</h1>
-						{/if}
-						{#if jsonData?.description}
-							<p class="hero-description">
-								{jsonData?.description}
-							</p>
-						{/if}
-					</div>
+				{#if jsonData?.description}
+					<p class="hero-description">
+						<Linkify>{jsonData?.description}</Linkify>
+					</p>
 				{/if}
 				<div class="content-html">{@html jsonData?.html || ""}</div>
 			</div>
@@ -245,53 +234,22 @@
 
 	.hero {
 		position: relative;
-		overflow: hidden;
+		overflow: visible;
 		padding: 0;
 		border-radius: 16px;
 		box-shadow: 0 8px 20px rgba(65, 42, 20, 0.1);
 	}
 
-	.hero-bg {
-		display: block;
-		width: 100%;
-		height: 260px;
-		object-fit: cover;
-	}
-
-	.avatar {
-		position: absolute;
-		left: 1rem;
-		top: calc(260px - 5rem);
-		z-index: 1;
-		width: 10rem;
-		height: 10rem;
-		object-fit: cover;
-		border-radius: 50%;
-		border: 3px solid rgba(255, 255, 255, 0.85);
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-	}
-
 	.hero-body {
-		padding-top: 5.5rem;
-	}
-
-	.hero-meta {
-		padding: 1rem 1rem 0;
-		display: grid;
-		gap: 0.4rem;
-	}
-
-	.hero-name {
-		margin: 0;
-		font-size: clamp(1.2rem, 2.4vw, 1.8rem);
-		line-height: 1.2;
+		padding: 0 1rem 1rem;
 	}
 
 	.hero-description {
 		margin: 0;
+		padding: 0.1rem 0 0.7rem;
 		font-size: 1rem;
-		line-height: 1.45;
 		color: #51463a;
+		line-height: 1.45;
 		white-space: pre-wrap;
 		word-break: break-word;
 	}
@@ -375,19 +333,8 @@
 	}
 
 	@media (max-width: 768px) {
-		.avatar {
-			width: 78px;
-			height: 78px;
-			top: calc(220px - 39px);
-			left: 0.8rem;
-		}
-
 		.hero-body {
-			padding-top: 4.4rem;
-		}
-
-		.hero-bg {
-			height: 220px;
+			padding: 0 0.8rem 0.8rem;
 		}
 	}
 </style>

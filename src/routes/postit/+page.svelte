@@ -31,11 +31,14 @@
 	import PostCard from "$lib/PostCard.svelte"
 	import Editor from "$lib/Editor.svelte"
 	import NavBar from "$lib/NavBar.svelte"
-	import {getCurrentProfileUuid} from "$lib/profileRegistry"
+	import {isKnownPostType, postTypes} from "$lib/config"
+	import {hasStoredProfiles} from "$lib/profileRegistry"
 
 	const LOCAL_TAG_KEY = "love4dogs.tag-counts"
 	const LOCAL_OLD_POSTS_KEY = "love4dogs.my-post-uris"
 	const TRASH_KEY = "love4dogs.trash"
+	const MISSING_PROFILE_ERROR =
+		"Create at least one profile before publishing a post."
 	const MAX_OLD_POSTS = 100
 	const MAX_CHARS = 300
 	const MAX_ATTACHMENTS = 4
@@ -45,6 +48,7 @@
 	let draft = $state("")
 	let imageAltHtml = $state("")
 	let title = $state("")
+	let postType = $state("")
 	let addressText = $state("")
 	let locationConfirmed = $state(false)
 	let confirmedAddress = $state("")
@@ -66,6 +70,10 @@
 	let editingPostUri = $state("")
 	let loadingEditPost = $state(false)
 	let tagsDrawerOpen = $state(true)
+	let submitAttempted = $state(false)
+	const typeError = $derived(
+		isKnownPostType(postType) ? "" : "Post type is required.",
+	)
 	const imageCount = $derived(
 		selectedFiles.filter((file) => file.type.startsWith("image/")).length,
 	)
@@ -347,6 +355,15 @@
 	})
 
 	async function handleModalConfirm() {
+		if (typeError) {
+			postError = typeError
+			return
+		}
+
+		if (!hasStoredProfiles()) {
+			postError = MISSING_PROFILE_ERROR
+			return
+		}
 		if (pinMovedInModal && modalLocation) {
 			const {location} = await lookupLocationDetails(
 				modalLocation.lat,
@@ -382,6 +399,7 @@
 		}
 		const contact = contactinfo.trim()
 		const parts = [trimmedTitle, body, location, contact].filter(Boolean)
+		if (postType) parts.unshift(postType)
 		let text = parts.join("\n\n")
 
 		if (!text.includes(ps)) {
@@ -412,14 +430,9 @@
 	}
 
 	async function submitPost() {
+		submitAttempted = true
 		postError = ""
 		postSuccess = ""
-
-		if (!getCurrentProfileUuid()) {
-			postError =
-				"Select a current profile first. Tap your avatar in the top bar to create or choose one."
-			return
-		}
 
 		const trimmedTitle = title.trim()
 		if (!trimmedTitle) {
@@ -440,6 +453,11 @@
 		const body = draft.trim()
 		if (!body) {
 			postError = "Write something before posting."
+			return
+		}
+
+		if (typeError) {
+			postError = typeError
 			return
 		}
 
@@ -592,6 +610,7 @@
 			incrementLocalTags(extractHashtags(finalText))
 			draft = ""
 			imageAltHtml = ""
+			postType = ""
 			addressText = ""
 			locationConfirmed = false
 			confirmedAddress = ""
@@ -734,6 +753,33 @@
 				{50 - [...title].length}
 			</span>
 		</div>
+
+		<fieldset class="type-fieldset">
+			<legend>
+				Type <span class="required">*</span>
+			</legend>
+			<div
+				class="type-options"
+				class:invalid-field={submitAttempted && !!typeError}
+			>
+				{#each postTypes as option (option.value)}
+					<label class="type-option">
+						<input
+							type="radio"
+							bind:group={postType}
+							value={option.value}
+						/>
+						<span>{option.label}</span>
+					</label>
+				{/each}
+			</div>
+		</fieldset>
+		{#if submitAttempted && typeError}
+			<p class="warning field-warning">
+				<CircleAlert size={15} />
+				{typeError}
+			</p>
+		{/if}
 
 		<textarea
 			bind:value={draft}
@@ -1046,6 +1092,47 @@
 		gap: 0.5rem;
 		margin-bottom: 0.5rem;
 	}
+	.type-fieldset {
+		margin: 0 0 0.55rem;
+		padding: 0;
+		border: 0;
+	}
+	.type-fieldset legend {
+		font-size: 0.84rem;
+		font-weight: 600;
+		color: #2f5f3f;
+		margin-bottom: 0.35rem;
+	}
+	.type-fieldset .required {
+		color: #b94a4a;
+	}
+	.type-options {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.4rem;
+		padding: 0.2rem;
+		border-radius: 10px;
+	}
+	.type-options.invalid-field {
+		box-shadow: 0 0 0 2px rgba(185, 74, 74, 0.25);
+	}
+	.type-option {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		border: 1px solid #d7c8b6;
+		border-radius: 999px;
+		padding: 0.28rem 0.55rem;
+		background: #fffdf9;
+		cursor: pointer;
+		font-size: 0.86rem;
+	}
+	.type-option input {
+		margin: 0;
+	}
+	.field-warning {
+		margin-top: 0.2rem;
+	}
 	.title-input {
 		flex: 1;
 		font: inherit;
@@ -1248,14 +1335,6 @@
 	}
 	.counter.danger {
 		color: #8e2f21;
-	}
-	.image-alt-editor-wrap {
-		margin-top: 0.7rem;
-	}
-	.image-alt-editor-label {
-		margin: 0 0 0.35rem;
-		font-size: 0.85rem;
-		color: #506157;
 	}
 	.tags-drawer {
 		margin-top: 0.6rem;

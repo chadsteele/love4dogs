@@ -6,15 +6,11 @@
 		Pencil,
 		Repeat2,
 	} from "lucide-svelte"
-	import {onMount} from "svelte"
-	import {
-		CONTACT_LOCK_PREFIX,
-		decryptContact,
-		rewriteLove4DogsUrlForLocalhost,
-	} from "$lib/utils"
+	import {rewriteLove4DogsUrlForLocalhost} from "$lib/utils"
 	import PostImageViewer from "$lib/PostImageViewer.svelte"
 	import Share from "$lib/Share.svelte"
 	import ProfilePostHeader from "$lib/ProfilePostHeader.svelte"
+	import Linkify from "$lib/Linkify.svelte"
 
 	import {siBluesky} from "simple-icons"
 
@@ -22,28 +18,10 @@
 		post,
 		selected = false,
 		bookmarked = false,
-		selectable = true,
+		selectable = false,
+		selectionEnabled = true,
 		onToggleSelect = () => {},
 	} = $props()
-
-	let isMyPost = $state(false)
-
-	const MY_POSTS_KEY = "love4dogs.my-post-uris"
-
-	onMount(() => {
-		try {
-			if (window.location.hostname === "localhost") {
-				isMyPost = true
-			} else {
-				const uris = JSON.parse(
-					localStorage.getItem(MY_POSTS_KEY) || "[]",
-				)
-				isMyPost = Array.isArray(uris) && uris.includes(post.uri)
-			}
-		} catch {
-			// ignore
-		}
-	})
 	let imageDimensions = $state({})
 	let showImageModal = $state(false)
 	let activeImageIndex = $state(0)
@@ -99,6 +77,44 @@
 			unique.push(value)
 		}
 		return unique
+	}
+
+	function normalizeComparableImageUrl(value = "") {
+		const source = String(value || "").trim()
+		if (!source) return ""
+		const unescaped = source.replace(/\\\//g, "/")
+		const localized = rewriteLove4DogsUrlForLocalhost(unescaped)
+		try {
+			const parsed = new URL(localized)
+			const host = String(parsed.hostname || "").toLowerCase()
+			const segments = parsed.pathname
+				.split("/")
+				.map((segment) => segment.trim())
+				.filter(Boolean)
+			if (
+				host === "cdn.bsky.app" &&
+				segments.length >= 5 &&
+				segments[0] === "img" &&
+				segments[2] === "plain"
+			) {
+				const did = segments[3]
+				const cid = segments[4].split("@")[0]
+				if (did && cid) return `bsky:${did}/${cid}`.toLowerCase()
+			}
+			return `${parsed.origin}${parsed.pathname}`
+				.replace(/\/+$/g, "")
+				.toLowerCase()
+		} catch {
+			return localized.replace(/\/+$/g, "").toLowerCase()
+		}
+	}
+
+	function normalizeProfileImageUrl(value = "") {
+		const next = normalizeEscapedUrl(value)
+		if (!next) return ""
+		if (/^~c~/i.test(next)) return ""
+		if (!/^https?:\/\//i.test(next)) return ""
+		return rewriteLove4DogsUrlForLocalhost(next)
 	}
 
 	function escapeHtml(text = "") {
@@ -201,29 +217,6 @@
 		return utf8Encoder.encode(text).length
 	}
 
-	function isLockedLine(text = "") {
-		return text.startsWith(CONTACT_LOCK_PREFIX)
-	}
-
-	let unlockedBodyLines = $state({})
-
-	function decryptLockedLine(text = "") {
-		const payload = text.slice(CONTACT_LOCK_PREFIX.length).trim()
-		if (!payload) return text
-		try {
-			return decryptContact(payload)
-		} catch {
-			return text
-		}
-	}
-
-	function toggleLockedBodyLine(index) {
-		unlockedBodyLines = {
-			...unlockedBodyLines,
-			[index]: !unlockedBodyLines[index],
-		}
-	}
-
 	function openImageModal(index) {
 		activeImageIndex = index
 		showImageModal = true
@@ -252,7 +245,7 @@
 			.filter(Boolean)
 	}
 
-	function buildBodyLines(body = "", bodyFacets = [], unlocked = {}) {
+	function buildBodyLines(body = "", bodyFacets = []) {
 		if (!body) return []
 		const lines = body.split("\n")
 		const output = []
@@ -263,21 +256,16 @@
 			const lineByteLength = utf8ByteLength(raw)
 			const lineByteStart = byteCursor
 			const lineByteEnd = lineByteStart + lineByteLength
-			const locked = isLockedLine(raw)
-			const unlockedLine = Boolean(unlocked[index])
-			const displayText =
-				locked && unlockedLine ? decryptLockedLine(raw) : raw
-			const lineFacets =
-				locked && unlockedLine
-					? []
-					: getLineFacets(raw, bodyFacets, lineByteStart, lineByteEnd)
+			const lineFacets = getLineFacets(
+				raw,
+				bodyFacets,
+				lineByteStart,
+				lineByteEnd,
+			)
 
 			output.push({
 				index,
-				raw,
-				locked,
-				unlocked: unlockedLine,
-				html: linkifyText(displayText, lineFacets),
+				html: linkifyText(raw, lineFacets),
 			})
 
 			byteCursor = lineByteEnd + (index < lines.length - 1 ? 1 : 0)
@@ -488,6 +476,72 @@
 		return null
 	}
 
+	function slugifyProfileTitle(value = "") {
+		return String(value || "")
+			.trim()
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, "-")
+			.replace(/^-+|-+$/g, "")
+	}
+
+	function extractSlugFromCanonical(rawCanonical = "", uuid = "") {
+		const source = String(rawCanonical || "").trim()
+		if (!source) return ""
+
+		try {
+			const base =
+				typeof window !== "undefined"
+					? window.location.origin
+					: "http://localhost"
+			const normalized = new URL(source, base)
+			const segments = (normalized.pathname || "")
+				.split("/")
+				.map((segment) => segment.trim())
+				.filter(Boolean)
+
+			const viewIndex = segments.findIndex((segment) =>
+				/^view$/i.test(segment),
+			)
+			if (viewIndex >= 0 && segments[viewIndex + 2]) {
+				return segments[viewIndex + 2]
+			}
+
+			if (uuid && segments[0] === uuid && segments[1]) {
+				return segments[1]
+			}
+		} catch {
+			// Fall back to title-derived slug.
+		}
+
+		return ""
+	}
+
+	function buildProfileViewPath(rawCanonical = "", fallbackTitle = "") {
+		const source = String(rawCanonical || "").trim()
+		const parsed = extractUuidFromCanonical(source)
+		const uuid = String(parsed?.uuid || "").trim()
+		if (!uuid) return ""
+
+		const slugFromCanonical = extractSlugFromCanonical(source, uuid)
+		const fallbackSlug = slugifyProfileTitle(fallbackTitle) || uuid
+		const slug = slugFromCanonical || fallbackSlug
+
+		return `/profile/view/${encodeURIComponent(uuid)}/${encodeURIComponent(slug)}`
+	}
+
+	function buildPostViewPath(rawCanonical = "", fallbackTitle = "") {
+		const source = String(rawCanonical || "").trim()
+		const parsed = extractUuidFromCanonical(source)
+		const uuid = String(parsed?.uuid || "").trim()
+		if (!uuid) return "/post/view"
+
+		const slugFromCanonical = extractSlugFromCanonical(source, uuid)
+		const fallbackSlug = slugifyProfileTitle(fallbackTitle) || uuid
+		const slug = slugFromCanonical || fallbackSlug
+
+		return `/post/view/${encodeURIComponent(uuid)}/${encodeURIComponent(slug)}`
+	}
+
 	function extractProfileDataFromBundle(alt = "") {
 		if (!alt) return null
 		const source = String(alt || "").trim()
@@ -526,24 +580,21 @@
 				return ""
 			}
 
-			const normalizeImageUrl = (value = "") => {
-				const next = normalizeEscapedUrl(value)
-				if (!next) return ""
-				if (/^~c~/i.test(next)) return ""
-				if (!/^https?:\/\//i.test(next)) return ""
-				return rewriteLove4DogsUrlForLocalhost(next)
-			}
-
-			const profilePic = normalizeImageUrl(
+			const profilePic = normalizeProfileImageUrl(
 				pick(["profilePic", "profilepic"]),
 			)
-			const backgroundPic = normalizeImageUrl(
+			const backgroundPic = normalizeProfileImageUrl(
 				pick(["backgroundPic", "backgroundpic"]),
 			)
 			const name = pick(["name", "title", "n"])
 			const description = pick(["description", "desc", "d"])
 			const canonicalurl = normalizeEscapedUrl(
 				pick(["canonicalurl", "canonicalUrl"]),
+			)
+
+			console.log(
+				"[extractProfileDataFromBundle] Extracted description:",
+				description,
 			)
 
 			if (!profilePic && !backgroundPic && !canonicalurl) return null
@@ -563,16 +614,34 @@
 	function detectProfilePost(inputPost = {}, fallbackCanonicalUrl = "") {
 		if (!inputPost) return null
 
+		const validImages = uniqueImageUrls(inputPost?.images || [])
+			.map((image) =>
+				rewriteLove4DogsUrlForLocalhost(String(image || "").trim()),
+			)
+			.filter((image) => /^https?:\/\//i.test(image))
+
+		const withImageFallback = (profile = null) => {
+			if (!profile) return null
+			const nextProfilePic = profile?.profilePic || validImages[0] || null
+			const nextBackgroundPic =
+				profile?.backgroundPic || validImages[1] || null
+			return {
+				...profile,
+				profilePic: nextProfilePic,
+				backgroundPic: nextBackgroundPic,
+			}
+		}
+
 		for (const alt of inputPost?.imageAlts || []) {
 			const profileData = extractProfileDataFromBundle(alt)
 			if (profileData) {
-				return {
+				return withImageFallback({
 					...profileData,
 					canonicalUrl:
 						profileData?.canonicalUrl ||
 						fallbackCanonicalUrl ||
 						null,
-				}
+				})
 			}
 		}
 
@@ -580,11 +649,11 @@
 			inputPost?.video?.alt || "",
 		)
 		if (videoAlt) {
-			return {
+			return withImageFallback({
 				...videoAlt,
 				canonicalUrl:
 					videoAlt?.canonicalUrl || fallbackCanonicalUrl || null,
-			}
+			})
 		}
 
 		const hasChunkMetadata = (inputPost?.imageAlts || []).some((alt) => {
@@ -598,12 +667,6 @@
 
 		if (!hasChunkMetadata || !fallbackCanonicalUrl) return null
 
-		const images = uniqueImageUrls(inputPost?.images || [])
-		const validImages = images
-			.map((image) =>
-				rewriteLove4DogsUrlForLocalhost(String(image || "").trim()),
-			)
-			.filter((image) => /^https?:\/\//i.test(image))
 		if (!validImages.length) return null
 
 		const parts = getPostParts(inputPost)
@@ -621,39 +684,50 @@
 		}
 	}
 
-	async function resolveTitleClick() {
-		if (!canonicalUrl) return
-
-		const parsed = extractUuidFromCanonical(canonicalUrl)
-		if (!parsed) {
-			console.warn(
-				"[PostCard] Could not parse UUID from canonical URL",
-				canonicalUrl,
-			)
-			return
-		}
-
-		try {
-			// Navigate to profile view with uuid
-			window.location.href = `/profile/view/${encodeURIComponent(parsed.uuid)}/`
-		} catch (err) {
-			console.error("[PostCard] Error resolving title click", err)
-		}
-	}
-
 	const parts = $derived(getPostParts(post))
 	const canonicalUrl = $derived(extractCanonicalUrl(post))
-	const profileData = $derived(detectProfilePost(post, canonicalUrl))
+	const detectedProfileData = $derived(detectProfilePost(post, canonicalUrl))
+	const profileData = $derived.by(() => {
+		if (!detectedProfileData) return null
+		return {
+			...detectedProfileData,
+			canonicalUrl:
+				detectedProfileData?.canonicalUrl || canonicalUrl || null,
+		}
+	})
+	const profileViewHref = $derived.by(() => {
+		if (!profileData) return ""
+		return buildProfileViewPath(
+			profileData?.canonicalUrl || canonicalUrl || "",
+			parts?.title || "",
+		)
+	})
+	const postViewHref = $derived.by(() =>
+		buildPostViewPath(canonicalUrl || "", parts?.title || ""),
+	)
 	const titleHref = $derived(canonicalUrl)
 	const titleHtml = $derived(escapeHtml(parts.title))
-	const bodyLines = $derived(
-		buildBodyLines(parts.body, parts.bodyFacets, unlockedBodyLines),
-	)
+	const bodyLines = $derived(buildBodyLines(parts.body, parts.bodyFacets))
 
 	const comments = $derived(post.comments || [])
 	const postVideo = $derived(post.video || null)
 	const uniqueImages = $derived(uniqueImageUrls(post.images || []))
-	const sortedImages = $derived(sortCardImages(uniqueImages, imageDimensions))
+	const bodyImages = $derived.by(() => {
+		if (!profileData) return uniqueImages
+
+		const headerImageSet = new Set(
+			[profileData?.profilePic, profileData?.backgroundPic]
+				.map((image) => normalizeComparableImageUrl(image))
+				.filter(Boolean),
+		)
+		if (!headerImageSet.size) return uniqueImages
+
+		return uniqueImages.filter((image) => {
+			const normalized = normalizeComparableImageUrl(image)
+			return !headerImageSet.has(normalized)
+		})
+	})
+	const sortedImages = $derived(sortCardImages(bodyImages, imageDimensions))
 	const threeImageFirstIsWidest = $derived.by(() => {
 		if (sortedImages.length !== 3) return false
 		const [first, second, third] = sortedImages
@@ -668,6 +742,41 @@
 			return false
 		}
 		return firstWidth >= secondWidth && firstWidth >= thirdWidth
+	})
+
+	$effect(() => {
+		if (!post?.uri) return
+
+		if (!profileData) {
+			console.log("[PostCard] profile header: not detected", {
+				uri: post.uri,
+				galleryCount: uniqueImages.length,
+			})
+			return
+		}
+
+		const headerImages = [
+			profileData?.profilePic,
+			profileData?.backgroundPic,
+		]
+			.map((image) => normalizeComparableImageUrl(image))
+			.filter(Boolean)
+
+		const removedImages = uniqueImages.filter((image) => {
+			const normalized = normalizeComparableImageUrl(image)
+			return headerImages.includes(normalized)
+		})
+
+		console.log("[PostCard] profile header/gallery reconciliation", {
+			uri: post.uri,
+			profilePic: profileData?.profilePic || null,
+			backgroundPic: profileData?.backgroundPic || null,
+			headerImageCount: headerImages.length,
+			galleryBeforeCount: uniqueImages.length,
+			galleryAfterCount: bodyImages.length,
+			removedCount: removedImages.length,
+			removedImages,
+		})
 	})
 
 	$effect(() => {
@@ -689,7 +798,7 @@
 
 	$effect(() => {
 		if (typeof window === "undefined") return
-		const images = uniqueImages
+		const images = bodyImages
 		if (!images.length) return
 
 		let cancelled = false
@@ -729,7 +838,7 @@
 </script>
 
 <article class="post-card">
-	{#if selectable}
+	{#if selectionEnabled}
 		<button
 			type="button"
 			class="select-btn"
@@ -741,14 +850,14 @@
 		</button>
 	{/if}
 
-	{#if bookmarked || isMyPost}
+	{#if bookmarked || selectable}
 		<div class="post-card-right-badges">
 			{#if bookmarked}
 				<div class="bookmark-badge" title="Favorited">
 					<PawPrint size={16} />
 				</div>
 			{/if}
-			{#if isMyPost}
+			{#if selectable}
 				<a
 					href={`/post?uri=${encodeURIComponent(post.uri)}`}
 					class="edit-badge"
@@ -766,51 +875,28 @@
 		<ProfilePostHeader
 			profilePic={profileData.profilePic}
 			backgroundPic={profileData.backgroundPic}
-			profileName={profileData.profileName}
-			profileDescription={profileData.profileDescription}
-			canonicalUrl={profileData.canonicalUrl}
+			title={parts.title}
+			name={parts.title}
+			url={profileViewHref || postViewHref}
 		/>
 	{/if}
 
-	{#if parts.title}
+	{#if !profileData && parts.title}
 		<h3 class="post-title">
-			{#if titleHref}
-				<a
-					class="post-title-link"
-					href={titleHref}
-					onclick={(event) => {
-						event.preventDefault()
-						event.stopPropagation()
-						console.log("[PostCard] title link click", {
-							uri: post?.uri || "",
-							title: parts.title,
-							titleHref,
-						})
-						resolveTitleClick()
-					}}
-				>
-					{@html titleHtml}
-				</a>
-			{:else}
+			<a class="post-title-link" href={postViewHref}>
 				{@html titleHtml}
-			{/if}
+			</a>
 		</h3>
 	{/if}
-	{#if parts.body}
+
+	<Linkify>
+		{post?.description || profileData?.profileDescription || ""}
+	</Linkify>
+
+	{#if !profileData && parts.body}
 		<div class="post-text">
 			{#each bodyLines as line (line.index)}
-				{#if line.locked && !line.unlocked}
-					<button
-						type="button"
-						class="locked-line"
-						onclick={(event) => {
-							event.stopPropagation()
-							toggleLockedBodyLine(line.index)
-						}}
-					>
-						{line.raw}
-					</button>
-				{:else if line.html}
+				{#if line.html}
 					<div class="post-line">{@html line.html}</div>
 				{:else}
 					<div
@@ -1039,23 +1125,6 @@
 
 	.post-line-spacer {
 		height: 1em;
-	}
-
-	.locked-line {
-		display: block;
-		/* width: 100%; */
-		border: none;
-		background: #f5eee3;
-		box-shadow:
-			inset 0 0 0 1px rgba(255, 255, 255, 0.45),
-			0 1px 4px rgba(74, 49, 24, 0.12);
-		color: #5f4b2d;
-		text-align: left;
-		padding: 0.15rem 0.4rem;
-		margin: 0;
-		border-radius: 6px;
-		cursor: pointer;
-		font: inherit;
 	}
 
 	.post-text :global(a) {

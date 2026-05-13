@@ -698,6 +698,8 @@
 					{#each visiblePosts() as post}
 						<PostCard
 							{post}
+							selectable={myPostUris.includes(post.uri)}
+							selectionEnabled={true}
 							selected={selectedUris.includes(post.uri)}
 							bookmarked={bookmarkedUris.includes(post.uri)}
 							onToggleSelect={toggleCardSelection}

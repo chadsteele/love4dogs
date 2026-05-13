@@ -9,6 +9,8 @@
 	} from "$lib/utils"
 	import PostCard from "$lib/PostCard.svelte"
 
+	const LOCAL_MY_POSTS_KEY = "love4dogs.my-post-uris"
+
 	let {data} = $props()
 	let mapEl = $state(null)
 	let mapPosts = $state([])
@@ -24,6 +26,7 @@
 	let cacheHashesCached = $state(0)
 	let cacheHashesFetching = $state(0)
 	let showLocalCacheDebug = $state(false)
+	let myPostUris = $state([])
 
 	let leaflet = null
 	let mapInstance = null
@@ -711,6 +714,20 @@
 			const host = String(window.location.hostname || "")
 			showLocalCacheDebug =
 				host === "localhost" || host === "127.0.0.1" || host === "::1"
+			try {
+				const parsed = JSON.parse(
+					localStorage.getItem(LOCAL_MY_POSTS_KEY) || "[]",
+				)
+				myPostUris = Array.isArray(parsed)
+					? [
+							...new Set(
+								parsed.map((uri) => String(uri || "").trim()),
+							),
+						]
+					: []
+			} catch {
+				myPostUris = []
+			}
 		}
 
 		async function initMap() {
@@ -877,7 +894,11 @@
 					&times;
 				</button>
 			</div>
-			<PostCard post={selectedPost} selectable={false} />
+			<PostCard
+				post={selectedPost}
+				selectable={myPostUris.includes(selectedPost.uri)}
+				selectionEnabled={false}
+			/>
 		</div>
 	</div>
 {/if}
