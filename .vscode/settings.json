@@ -1,0 +1,7 @@
+{
+    "html.autoClosingTags": false,
+    "javascript.autoClosingTags": false,
+    "typescript.autoClosingTags": false,
+    "markdown.autoClosingTags": false,
+    "svelte.autoClosingTags": false
+}

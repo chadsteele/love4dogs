@@ -100,6 +100,7 @@
 	let clearUndoTimer = null
 	let suppressAutosave = false
 	let lastAutosaveSnapshot = ""
+	let profileRecordStamp = $state(buildCompressedStamp())
 
 	let minifiedChunkEntries = $state([])
 	let chunkBuildVersion = 0
@@ -117,6 +118,10 @@
 
 	function generateShortUuid() {
 		return Math.random().toString(36).slice(2, 10)
+	}
+
+	function buildCompressedStamp(now = Date.now()) {
+		return Math.max(0, Math.floor(Number(now) || 0)).toString(36)
 	}
 
 	function measureChunkAltPayloadLength(htmlFragment = "", meta = {}) {
@@ -1290,6 +1295,8 @@
 
 	const primaryPostPayload = $derived({
 		uuid,
+		authorid: uuid,
+		stamp: profileRecordStamp,
 		canonicalurl,
 		email: encryptEmailForPayload(email),
 		profilePic:
@@ -1904,12 +1911,15 @@
 				.map((segment) => encodeURIComponent(segment))
 				.join("/")
 			const publishedViewUrl = `/profile/view/${encodeURIComponent(uuid)}/${publishedSlugPath || "profile"}`
+			profileRecordStamp = buildCompressedStamp()
 
 			const subsequentPayloadForBundle = mapSubsequentPayloadForBundle(
 				subsequentPostsPayload,
 			)
 			const primaryPayloadForBundle = {
 				uuid,
+				authorid: uuid,
+				stamp: profileRecordStamp,
 				canonicalurl: publishedCanonicalUrl,
 				email: encryptEmailForPayload(email),
 				profilePic:
