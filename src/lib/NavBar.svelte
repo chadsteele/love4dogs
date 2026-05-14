@@ -143,14 +143,35 @@
 			deleteAllInProgress = true
 			selectionMenuOpen = false
 
-			// Fetch all posts from the account
-			const feedResponse = await fetch("/api/feed?limit=100")
-			if (!feedResponse.ok) {
-				throw new Error("Failed to fetch feed")
-			}
+			const allUris = []
+			const seenUris = new Set()
+			let cursor = ""
 
-			const feedData = await feedResponse.json()
-			const allUris = feedData.feed?.map((item) => item.post.uri) || []
+			while (true) {
+				const params = new URLSearchParams({limit: "100"})
+				if (cursor) params.set("cursor", cursor)
+				const feedResponse = await fetch(
+					`/api/feed?${params.toString()}`,
+				)
+				if (!feedResponse.ok) {
+					throw new Error("Failed to fetch feed")
+				}
+
+				const feedData = await feedResponse.json()
+				const pageUris = Array.isArray(feedData.posts)
+					? feedData.posts.map((post) => post?.uri).filter(Boolean)
+					: []
+
+				for (const uri of pageUris) {
+					if (seenUris.has(uri)) continue
+					seenUris.add(uri)
+					allUris.push(uri)
+				}
+
+				const nextCursor = String(feedData.cursor || "").trim()
+				if (!nextCursor || pageUris.length === 0) break
+				cursor = nextCursor
+			}
 
 			if (!allUris || allUris.length === 0) {
 				alert("No posts found to delete")

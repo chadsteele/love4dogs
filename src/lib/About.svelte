@@ -15,6 +15,17 @@
 	const aboutParagraphs = [
 		"🛠️ WE'RE UNDER CONSTRUCTION! 🚜👷🏽",
 		"Please excuse our mess and come back soon for a better experience. In the meantime, feel free to explore the feed and share posts to help connect animals in need with loving homes.",
+		`
+		<b>Why?</b>
+		<ul>
+			<li>👍 We aim to be the first place you post about animal welfare</li>
+			<li>🚀 We make sharing on all other platforms super easy.</li>
+			<li>📍 Every post has a location and can be found via a map view.</li>
+			<li>❤️ It's like myspace for animal lovers.  Posts can be very long and formatted and contain videos, etc.</li>
+			<li>👤 You can maintain a personal profile with all your details.</li>
+			<li>🤝 Help us create a supportive space for sharing information and resources.</li>
+		</ul>
+		`,
 		"Love4Dogs is a community-driven project dedicated to connecting ALL ANIMAL lovers, rescuers, fosters, adopters, shelters, and NGOs. Our mission is to create a safe and supportive space where people can share information about animals in need, rescue updates, and location-aware posts that help connect animals with loving homes.",
 		"The goal here is to consolidate all animal interests and organizations locally and globally, making it easier for people to find and share information about animals in their area and around the world. Whether you're looking to adopt, foster, volunteer, or simply connect with other animal enthusiasts, Love4Dogs is here to help you find your pack.",
 		"Use the feed to browse recent posts, favorites, and hidden items in your area or open the composer to publish posts with photos and map-linked locations.",
@@ -117,7 +128,7 @@
 
 			<RandomEmojis />
 			{#each aboutParagraphs as paragraph}
-				<p>{paragraph}</p>
+				<p>{@html paragraph}</p>
 			{/each}
 
 			<div class="share-row">

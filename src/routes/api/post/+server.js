@@ -6,6 +6,9 @@ const MAX_IMAGE_SIZE_BYTES = 2_000_000; // Bluesky's hard limit is 2,000,000 byt
 const MAX_VIDEO_SIZE_BYTES = 100 * 1024 * 1024;
 const MEDIA_CACHE_PREFIX = MEDIA_TOKEN_PREFIX;
 const LEGACY_MEDIA_CACHE_PREFIX = 'L4D_MEDIA_CACHE:';
+const DELETE_DELAY_BASE_MIN_MS = 2_000;
+const DELETE_DELAY_BASE_MAX_MS = 5_000;
+const DELETE_DELAY_MAX_MS = 60_000;
 
 let cachedSession = null;
 
@@ -111,6 +114,59 @@ function isAuthLikeFailure(status, message = '') {
 			value
 		)
 	);
+}
+
+function wait(ms) {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function randomBetween(min, max) {
+	return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function nextDeleteDelayMs(currentDelayMs, outcome = 'success') {
+	if (outcome === 'throttled') {
+		const raised = Math.max(
+			DELETE_DELAY_BASE_MAX_MS,
+			Math.min(DELETE_DELAY_MAX_MS, Math.round(currentDelayMs * 2))
+		);
+		const jitter = Math.max(500, Math.round(raised * 0.2));
+		return Math.min(DELETE_DELAY_MAX_MS, raised + randomBetween(0, jitter));
+	}
+
+	if (outcome === 'transient-error') {
+		const raised = Math.max(
+			DELETE_DELAY_BASE_MAX_MS,
+			Math.min(DELETE_DELAY_MAX_MS, Math.round(currentDelayMs * 1.5))
+		);
+		const jitter = Math.max(500, Math.round(raised * 0.15));
+		return Math.min(DELETE_DELAY_MAX_MS, raised + randomBetween(0, jitter));
+	}
+
+	if (currentDelayMs <= DELETE_DELAY_BASE_MAX_MS) {
+		return randomBetween(DELETE_DELAY_BASE_MIN_MS, DELETE_DELAY_BASE_MAX_MS);
+	}
+
+	const lowered = Math.max(
+		DELETE_DELAY_BASE_MIN_MS,
+		Math.round(currentDelayMs * 0.7)
+	);
+	const jitter = Math.max(250, Math.round(lowered * 0.1));
+	return Math.max(
+		DELETE_DELAY_BASE_MIN_MS,
+		lowered - randomBetween(0, jitter)
+	);
+}
+
+function classifyDeleteFailure(status, message = '') {
+	const value = String(message || '');
+	if (status === 429 || /rate|throttl|too many/i.test(value)) {
+		return 'throttled';
+	}
+	if (status >= 500 || /temporar|timeout|unavailable|reset|network/i.test(value)) {
+		return 'transient-error';
+	}
+	return 'permanent-error';
 }
 
 async function createSession() {
@@ -1079,7 +1135,7 @@ export async function DELETE({ request, url }) {
 			});
 		}
 
-		const session = await getSession();
+		let session = await getSession();
 		const parsedTargets = uris
 			.map((uri) => parsePostAtUri(uri))
 			.filter(Boolean)
@@ -1087,14 +1143,30 @@ export async function DELETE({ request, url }) {
 
 		const deleted = [];
 		const failed = [];
+		let deleteDelayMs = randomBetween(DELETE_DELAY_BASE_MIN_MS, DELETE_DELAY_BASE_MAX_MS);
+		console.log('[DELETE /api/post] starting bulk delete', {
+			totalTargets: parsedTargets.length,
+			initialDelayMs: deleteDelayMs
+		});
 
-		for (const target of parsedTargets) {
+		for (let index = 0; index < parsedTargets.length; index += 1) {
+			const target = parsedTargets[index];
+			console.log('[DELETE /api/post] deleting target', {
+				index: index + 1,
+				total: parsedTargets.length,
+				uri: target.uri,
+				currentDelayMs: deleteDelayMs
+			});
 			if (session.did && target.repo !== session.did) {
 				failed.push({ uri: target.uri, error: 'URI does not belong to authenticated repo.' });
+				console.warn('[DELETE /api/post] skipped target', {
+					uri: target.uri,
+					reason: 'URI does not belong to authenticated repo.'
+				});
 				continue;
 			}
 
-			const response = await fetch(`${BSKY_XRPC}/com.atproto.repo.deleteRecord`, {
+			let response = await fetch(`${BSKY_XRPC}/com.atproto.repo.deleteRecord`, {
 				method: 'POST',
 				headers: {
 					authorization: `Bearer ${session.accessJwt}`,
@@ -1107,21 +1179,71 @@ export async function DELETE({ request, url }) {
 				})
 			});
 
+			if (!response.ok) {
+				const errBody = await response.json().catch(() => ({}));
+				const errMessage = String(errBody?.message || errBody?.error || '');
+				if (isAuthLikeFailure(response.status, errMessage)) {
+					cachedSession = null;
+					session = await createSession();
+					response = await fetch(`${BSKY_XRPC}/com.atproto.repo.deleteRecord`, {
+						method: 'POST',
+						headers: {
+							authorization: `Bearer ${session.accessJwt}`,
+							'content-type': 'application/json'
+						},
+						body: JSON.stringify({
+							repo: session.did,
+							collection: 'app.bsky.feed.post',
+							rkey: target.rkey
+						})
+					});
+				}
+			}
+
 			if (response.ok) {
 				deleted.push(target.uri);
-				continue;
+				deleteDelayMs = nextDeleteDelayMs(deleteDelayMs, 'success');
+				console.log('[DELETE /api/post] deleted target', {
+					uri: target.uri,
+					nextDelayMs: deleteDelayMs
+				});
+			} else {
+				const errBody = await response.json().catch(() => ({}));
+				const errMessage = errBody.message || errBody.error || `Bluesky error ${response.status}`;
+				const failureType = classifyDeleteFailure(response.status, errMessage);
+				failed.push({
+					uri: target.uri,
+					error: errMessage
+				});
+
+				if (isAuthLikeFailure(response.status, errMessage)) {
+					cachedSession = null;
+				}
+
+				deleteDelayMs = nextDeleteDelayMs(deleteDelayMs, failureType);
+				console.warn('[DELETE /api/post] failed target', {
+					uri: target.uri,
+					status: response.status,
+					error: errMessage,
+					failureType,
+					nextDelayMs: deleteDelayMs
+				});
 			}
 
-			const errBody = await response.json().catch(() => ({}));
-			failed.push({
-				uri: target.uri,
-				error: errBody.message || errBody.error || `Bluesky error ${response.status}`
-			});
-
-			if (isAuthLikeFailure(response.status, errBody?.message || errBody?.error || '')) {
-				cachedSession = null;
+			if (index < parsedTargets.length - 1) {
+				console.log('[DELETE /api/post] waiting before next delete', {
+					waitMs: deleteDelayMs,
+					nextIndex: index + 2,
+					total: parsedTargets.length
+				});
+				await wait(deleteDelayMs);
 			}
 		}
+
+		console.log('[DELETE /api/post] bulk delete complete', {
+			deletedCount: deleted.length,
+			failedCount: failed.length
+		});
 
 		if (deleted.length === 0 && failed.length > 0) {
 			return new Response(JSON.stringify({ ok: false, error: 'No posts were deleted.', failed }), {
