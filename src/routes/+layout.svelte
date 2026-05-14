@@ -1,4 +1,5 @@
 <script>
+	import {fullPageEditor} from "$lib/fullPageEditor.js"
 	let {children} = $props()
 </script>
 
@@ -11,16 +12,20 @@
 	</div>
 	{@render children()}
 </div>
-<div class="footer">
-	<p class="meta">
-		<span>&copy; {new Date().getFullYear()} Love4Dogs.club</span>
-		<span class="sep" aria-hidden="true">•</span>
-		<span>All content is community-driven and belongs to its owners.</span>
-		<span class="sep" aria-hidden="true">•</span>
-		<span>Contribute yours!</span>
-	</p>
-	<p class="tagline">Made with ❤️ by animal lovers, for animal lovers.</p>
-</div>
+{#if !$fullPageEditor}
+	<div class="footer">
+		<p class="meta">
+			<span>&copy; {new Date().getFullYear()} Love4Dogs.club</span>
+			<span class="sep" aria-hidden="true">•</span>
+			<span
+				>All content is community-driven and belongs to its owners.</span
+			>
+			<span class="sep" aria-hidden="true">•</span>
+			<span>Contribute yours!</span>
+		</p>
+		<p class="tagline">Made with ❤️ by animal lovers, for animal lovers.</p>
+	</div>
+{/if}
 
 <style>
 	:global(html),

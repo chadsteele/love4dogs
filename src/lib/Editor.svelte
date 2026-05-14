@@ -1,5 +1,6 @@
 <script>
 	import {mount, onMount, unmount, untrack} from "svelte"
+	import {fullPageEditor} from "$lib/fullPageEditor.js"
 	import {EditorView} from "@codemirror/view"
 	import {EditorState} from "@codemirror/state"
 	import {html as htmlLang} from "@codemirror/lang-html"
@@ -14,6 +15,7 @@
 		Link as LinkIcon,
 		Maximize2,
 		Minimize2,
+		Paintbrush,
 		Strikethrough,
 		Underline,
 		Video as VideoIcon,
@@ -79,6 +81,20 @@
 	let mediaDeleteVisible = $state(false)
 	let mediaDeleteX = $state(0)
 	let mediaDeleteY = $state(0)
+	let stylePaintArmed = $state(false)
+	let stylePaintDecl = ""
+	let stylePaintActivationSignature = ""
+	let stylePaintLastAppliedSignature = ""
+	let stylePaintRemainingUses = 0
+	let stylePaintAwaitingFreshSelection = false
+	let lastEditorRange = null
+	let lastEditorExpandedRange = null
+
+	onMount(() => {
+		return () => {
+			fullPageEditor.set(false)
+		}
+	})
 
 	const effectiveUploadProgressActive = $derived(
 		uploadProgressActive || localUploadProgressActive,
@@ -1023,6 +1039,415 @@
 		button.setAttribute("aria-pressed", htmlMode ? "true" : "false")
 	}
 
+	function syncStylePaintButtonState() {
+		if (!containerEl) return
+		const button =
+			containerEl.querySelector('[data-action="stylePaint"]') ||
+			containerEl.querySelector('button[title="Style paint"]')
+		if (!button) return
+		button.classList.toggle("pell-button-selected", stylePaintArmed)
+		button.setAttribute("aria-pressed", stylePaintArmed ? "true" : "false")
+		button.disabled = htmlMode
+		button.setAttribute("aria-disabled", htmlMode ? "true" : "false")
+	}
+
+	function logStylePaint(event, data = {}) {
+		console.log("[Editor][StylePaint]", event, data)
+	}
+
+	function getSelectionSignature(contentEl) {
+		const range = getSelectionRange(contentEl)
+		if (!range) return ""
+		return [
+			range.startContainer?.nodeType || "",
+			range.startOffset,
+			range.endContainer?.nodeType || "",
+			range.endOffset,
+			range.toString(),
+		].join("|")
+	}
+
+	function getApplyRange(contentEl) {
+		const liveRange = getSelectionRange(contentEl)
+		if (liveRange && !liveRange.collapsed) return liveRange
+		return null
+	}
+
+	function signatureFromRange(range) {
+		if (!range) return ""
+		return [
+			range.startContainer?.nodeType || "",
+			range.startOffset,
+			range.endContainer?.nodeType || "",
+			range.endOffset,
+			range.toString(),
+		].join("|")
+	}
+
+	function getRangeForStyleCapture(contentEl) {
+		const liveRange = getSelectionRange(contentEl)
+		if (liveRange) return liveRange
+		if (!lastEditorRange) return null
+		if (!contentEl.contains(lastEditorRange.commonAncestorContainer)) {
+			return null
+		}
+		return lastEditorRange
+	}
+
+	function getStyleSourceElement(contentEl) {
+		const range = getRangeForStyleCapture(contentEl)
+		if (!range) return null
+		const fromNode =
+			range.startContainer?.nodeType === Node.TEXT_NODE
+				? range.startContainer.parentElement
+				: range.startContainer
+		if (!(fromNode instanceof Element)) return null
+		if (fromNode === contentEl) {
+			return contentEl.firstElementChild || contentEl
+		}
+		return fromNode
+	}
+
+	function buildStylePaintDeclaration(sourceEl) {
+		if (!(sourceEl instanceof Element)) return ""
+		const computed = window.getComputedStyle(sourceEl)
+		const styles = []
+
+		const color = computed.color
+		if (color) styles.push(["color", color])
+
+		const backgroundColor = computed.backgroundColor
+		if (backgroundColor && backgroundColor !== "rgba(0, 0, 0, 0)") {
+			styles.push(["background-color", backgroundColor])
+		}
+
+		const fontWeight = computed.fontWeight
+		if (fontWeight && fontWeight !== "400" && fontWeight !== "normal") {
+			styles.push(["font-weight", fontWeight])
+		}
+
+		const fontStyle = computed.fontStyle
+		if (fontStyle && fontStyle !== "normal") {
+			styles.push(["font-style", fontStyle])
+		}
+
+		const textDecorationLine = computed.textDecorationLine
+		if (textDecorationLine && textDecorationLine !== "none") {
+			styles.push(["text-decoration-line", textDecorationLine])
+			if (
+				computed.textDecorationStyle &&
+				computed.textDecorationStyle !== "solid"
+			) {
+				styles.push([
+					"text-decoration-style",
+					computed.textDecorationStyle,
+				])
+			}
+			if (computed.textDecorationColor) {
+				styles.push([
+					"text-decoration-color",
+					computed.textDecorationColor,
+				])
+			}
+		}
+
+		const fontSize = computed.fontSize
+		if (fontSize) styles.push(["font-size", fontSize])
+
+		const fontFamily = computed.fontFamily
+		if (fontFamily) styles.push(["font-family", fontFamily])
+
+		const declaration = styles.map(([k, v]) => `${k}: ${v};`).join(" ")
+		logStylePaint("captured-declaration", {
+			sourceTag: sourceEl.tagName,
+			sourceClass: sourceEl.className || "",
+			declaration,
+			styleCount: styles.length,
+		})
+		return declaration
+	}
+
+	function applyStylePaintToRange(contentEl, range) {
+		if (!contentEl || !range || range.collapsed || !stylePaintDecl)
+			return false
+		logStylePaint("apply-start", {
+			textLength: range.toString().length,
+			textPreview: range.toString().slice(0, 120),
+			declaration: stylePaintDecl,
+		})
+		const wrapper = document.createElement("span")
+		wrapper.setAttribute("style", stylePaintDecl)
+		try {
+			range.surroundContents(wrapper)
+		} catch {
+			const fragment = range.extractContents()
+			wrapper.appendChild(fragment)
+			range.insertNode(wrapper)
+		}
+
+		const sel = window.getSelection()
+		if (sel) {
+			const nextRange = document.createRange()
+			nextRange.setStartAfter(wrapper)
+			nextRange.collapse(true)
+			sel.removeAllRanges()
+			sel.addRange(nextRange)
+		}
+
+		dispatchEditorInput(contentEl)
+		logStylePaint("apply-complete", {
+			appliedTag: wrapper.tagName,
+			appliedStyle: wrapper.getAttribute("style") || "",
+		})
+		return true
+	}
+
+	function toggleStylePaintMode(contentEl) {
+		if (stylePaintArmed) {
+			logStylePaint("disarm-manual", {
+				reason: "button-toggle",
+				remainingUses: stylePaintRemainingUses,
+			})
+			stylePaintArmed = false
+			stylePaintDecl = ""
+			stylePaintActivationSignature = ""
+			stylePaintLastAppliedSignature = ""
+			stylePaintRemainingUses = 0
+			stylePaintAwaitingFreshSelection = false
+			syncStylePaintButtonState()
+			return
+		}
+
+		if (!contentEl || htmlMode) {
+			logStylePaint("arm-blocked", {
+				reason: !contentEl ? "missing-content" : "html-mode",
+			})
+			return
+		}
+		const sourceEl = getStyleSourceElement(contentEl)
+		if (!sourceEl) {
+			logStylePaint("arm-blocked", {
+				reason: "no-style-source",
+			})
+			return
+		}
+
+		const capturedDecl = buildStylePaintDeclaration(sourceEl)
+		if (!capturedDecl) {
+			logStylePaint("arm-blocked", {
+				reason: "empty-style-declaration",
+				sourceTag: sourceEl.tagName,
+			})
+			return
+		}
+
+		stylePaintDecl = capturedDecl
+		stylePaintArmed = true
+		stylePaintRemainingUses = 1
+		stylePaintLastAppliedSignature = ""
+		stylePaintAwaitingFreshSelection = false
+		const captureRange = getRangeForStyleCapture(contentEl)
+		if (captureRange) {
+			stylePaintActivationSignature = signatureFromRange(captureRange)
+		} else {
+			stylePaintActivationSignature = ""
+		}
+		logStylePaint("armed", {
+			sourceTag: sourceEl.tagName,
+			activationSignature: stylePaintActivationSignature,
+			declaration: stylePaintDecl,
+			remainingUses: stylePaintRemainingUses,
+		})
+		syncStylePaintButtonState()
+	}
+
+	function hasActiveTextSelection(contentEl) {
+		if (!contentEl || htmlMode) return false
+		const sel = window.getSelection()
+		if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return false
+		const range = sel.getRangeAt(0)
+		if (!contentEl.contains(range.commonAncestorContainer)) return false
+		return range.toString().trim().length > 0
+	}
+
+	function syncRemoveFormattingButtonState(contentEl = pellEditor?.content) {
+		if (!containerEl) return
+		const button =
+			containerEl.querySelector('[data-action="removeFormatting"]') ||
+			containerEl.querySelector('button[title="Remove formatting"]')
+		if (!button) return
+		const canRemove = hasActiveTextSelection(contentEl)
+		button.disabled = !canRemove
+		button.setAttribute("aria-disabled", canRemove ? "false" : "true")
+	}
+
+	function removeFormatting(contentEl) {
+		if (!contentEl || !hasActiveTextSelection(contentEl)) {
+			syncRemoveFormattingButtonState(contentEl)
+			return
+		}
+		const range = getSelectionRange(contentEl)
+		if (!range || range.collapsed) {
+			syncRemoveFormattingButtonState(contentEl)
+			return
+		}
+
+		contentEl.focus()
+		const selectedText = range.toString()
+		if (!selectedText.trim()) {
+			syncRemoveFormattingButtonState(contentEl)
+			return
+		}
+		const STRIPPABLE_TAGS = new Set([
+			"H1",
+			"H2",
+			"STRONG",
+			"B",
+			"EM",
+			"I",
+			"U",
+			"S",
+			"A",
+			"SPAN",
+			"FONT",
+			"MARK",
+			"SUB",
+			"SUP",
+			"SMALL",
+			"BIG",
+			"BLOCKQUOTE",
+		])
+		const normalizedSelectedText = selectedText.replace(/\s+/g, " ").trim()
+
+		function findFullySelectedFormattingElement() {
+			let node =
+				range.startContainer.nodeType === Node.TEXT_NODE
+					? range.startContainer.parentElement
+					: range.startContainer
+			while (node && node !== contentEl) {
+				if (
+					node instanceof Element &&
+					STRIPPABLE_TAGS.has(node.tagName) &&
+					node.contains(range.endContainer)
+				) {
+					const normalizedNodeText = (node.textContent || "")
+						.replace(/\s+/g, " ")
+						.trim()
+					if (
+						normalizedNodeText &&
+						normalizedNodeText === normalizedSelectedText
+					) {
+						return node
+					}
+				}
+				node = node.parentElement
+			}
+			return null
+		}
+
+		const fullySelectedFormattingElement =
+			findFullySelectedFormattingElement()
+		let replacement
+		if (fullySelectedFormattingElement) {
+			replacement = document.createTextNode(selectedText)
+			fullySelectedFormattingElement.replaceWith(replacement)
+		} else {
+			const marker = document.createElement("span")
+			marker.setAttribute("data-clear-format-marker", "")
+			range.deleteContents()
+			range.insertNode(marker)
+			replacement = document.createTextNode(selectedText)
+			marker.replaceWith(replacement)
+		}
+
+		for (const tagName of STRIPPABLE_TAGS) {
+			for (const el of contentEl.querySelectorAll(tagName)) {
+				if ((el.textContent || "").trim()) continue
+				if (el.querySelector("img,video,iframe,br")) continue
+				el.remove()
+			}
+		}
+
+		const sel = window.getSelection()
+		if (sel) {
+			const nextRange = document.createRange()
+			nextRange.setStartAfter(replacement)
+			nextRange.collapse(true)
+			sel.removeAllRanges()
+			sel.addRange(nextRange)
+		}
+
+		dispatchEditorInput(contentEl)
+		syncRemoveFormattingButtonState(contentEl)
+	}
+
+	function handleStylePaintSelection(contentEl) {
+		if (!stylePaintArmed || !stylePaintDecl || htmlMode) return
+		const range = getApplyRange(contentEl)
+		if (!range || range.collapsed) return
+		if (!range.toString().trim()) return
+		const signature = signatureFromRange(range)
+		if (stylePaintAwaitingFreshSelection) {
+			if (signature && signature !== stylePaintLastAppliedSignature) {
+				stylePaintAwaitingFreshSelection = false
+				logStylePaint("selection-ready", {
+					signature,
+					lastAppliedSignature: stylePaintLastAppliedSignature,
+				})
+			} else {
+				logStylePaint("apply-skipped", {
+					reason: "awaiting-fresh-selection",
+					signature,
+					lastAppliedSignature: stylePaintLastAppliedSignature,
+				})
+				return
+			}
+		}
+		if (!signature || signature === stylePaintActivationSignature) {
+			logStylePaint("apply-skipped", {
+				reason: !signature
+					? "missing-signature"
+					: "same-selection-as-activation",
+				signature,
+				activationSignature: stylePaintActivationSignature,
+			})
+			return
+		}
+		if (signature === stylePaintLastAppliedSignature) {
+			logStylePaint("apply-skipped", {
+				reason: "duplicate-selection-event",
+				signature,
+				lastAppliedSignature: stylePaintLastAppliedSignature,
+			})
+			return
+		}
+
+		const applied = applyStylePaintToRange(contentEl, range)
+		if (!applied) return
+		stylePaintLastAppliedSignature = signature
+		stylePaintActivationSignature = signature
+		stylePaintAwaitingFreshSelection = true
+		lastEditorExpandedRange = null
+		stylePaintRemainingUses = Math.max(0, stylePaintRemainingUses - 1)
+		logStylePaint("apply-use-consumed", {
+			remainingUses: stylePaintRemainingUses,
+		})
+		if (stylePaintRemainingUses > 0) {
+			return
+		}
+
+		logStylePaint("disarm-auto", {
+			reason: "all-uses-consumed",
+		})
+		stylePaintArmed = false
+		stylePaintDecl = ""
+		stylePaintActivationSignature = ""
+		stylePaintLastAppliedSignature = ""
+		stylePaintRemainingUses = 0
+		stylePaintAwaitingFreshSelection = false
+		syncStylePaintButtonState()
+	}
+
 	function getSelectionRange(contentEl) {
 		const sel = window.getSelection()
 		if (!sel || sel.rangeCount === 0) return null
@@ -1298,17 +1723,26 @@
 
 		const imageIcon = createElement(ImageIcon, iconProps).outerHTML
 		const videoIcon = createElement(VideoIcon, iconProps).outerHTML
+		const stylePaintIcon = createElement(Paintbrush, iconProps).outerHTML
+		const removeFormattingIcon = `<svg width="800px" height="800px" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none"><path stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 6h5m5 0h-5m0 0-2 6m-2 6 .667-2M5 5l14 14"/></svg>`
 		const maximizeIcon = createElement(Maximize2, iconProps).outerHTML
 		const minimizeIcon = createElement(Minimize2, iconProps).outerHTML
 
 		const allActions = [
 			...resolvedActions,
 			{
-				name: "htmlMode",
-				icon: '<span class="pell-html-mode-icon">&lt;/&gt;</span>',
-				title: "Toggle HTML mode",
-				result: () => toggleHtmlMode(),
+				name: "removeFormatting",
+				icon: removeFormattingIcon,
+				title: "Remove formatting",
+				result: () => removeFormatting(pellEditor?.content),
 			},
+			{
+				name: "stylePaint",
+				icon: stylePaintIcon,
+				title: "Style paint",
+				result: () => toggleStylePaintMode(pellEditor?.content),
+			},
+
 			{
 				name: "insertImage",
 				icon: imageIcon,
@@ -1316,14 +1750,24 @@
 				result: () => imageFileInputEl?.click(),
 			},
 			{
+				name: "htmlMode",
+				icon: '<span class="pell-html-mode-icon">&lt;/&gt;</span>',
+				title: "Toggle HTML mode",
+				result: () => toggleHtmlMode(),
+			},
+			{
 				name: "fullPage",
 				icon: maximizeIcon,
 				title: "Full page",
 				result: () => {
 					fullPageMode = !fullPageMode
-					const btn = containerEl?.querySelector(
-						'[title="Full page"]',
-					)
+					fullPageEditor.set(fullPageMode)
+					const btn =
+						containerEl?.querySelector(
+							'[data-action="fullPage"]',
+						) ||
+						containerEl?.querySelector('[title="Full page"]') ||
+						containerEl?.querySelector('[title="Exit full page"]')
 					if (btn) {
 						btn.innerHTML = fullPageMode
 							? minimizeIcon
@@ -1367,6 +1811,8 @@
 		lastValidHtml = String(pellEditor.content.innerHTML || "")
 		enforceMaxChars(pellEditor.content)
 		syncHtmlModeButtonState()
+		syncRemoveFormattingButtonState(pellEditor.content)
+		syncStylePaintButtonState()
 
 		// Add placeholder behaviour
 		const content = pellEditor.content
@@ -1557,6 +2003,21 @@
 		function onWindowResize() {
 			repositionMediaDeleteButton(content)
 		}
+		function onSelectionTrack() {
+			const currentRange = getSelectionRange(content)
+			if (currentRange) {
+				lastEditorRange = currentRange.cloneRange()
+				if (!currentRange.collapsed) {
+					lastEditorExpandedRange = currentRange.cloneRange()
+				}
+			}
+			syncRemoveFormattingButtonState(content)
+		}
+
+		function onSelectionCommit() {
+			onSelectionTrack()
+			handleStylePaintSelection(content)
+		}
 		content.addEventListener("dragover", onContentDragover)
 		content.addEventListener("dragleave", onContentDragleave)
 		content.addEventListener("drop", onContentDrop)
@@ -1565,7 +2026,12 @@
 		content.addEventListener("error", onContentMediaError, true)
 		content.addEventListener("pointermove", onContentPointerMove)
 		content.addEventListener("pointerdown", onContentPointerDown)
+		content.addEventListener("mouseup", onSelectionCommit)
+		content.addEventListener("keyup", onSelectionCommit)
+		content.addEventListener("focus", onSelectionTrack)
+		content.addEventListener("blur", onSelectionTrack)
 		content.addEventListener("scroll", onContentScroll)
+		document.addEventListener("selectionchange", onSelectionTrack)
 		window.addEventListener("resize", onWindowResize)
 
 		return () => {
@@ -1577,17 +2043,38 @@
 			content.removeEventListener("error", onContentMediaError, true)
 			content.removeEventListener("pointermove", onContentPointerMove)
 			content.removeEventListener("pointerdown", onContentPointerDown)
+			content.removeEventListener("mouseup", onSelectionCommit)
+			content.removeEventListener("keyup", onSelectionCommit)
+			content.removeEventListener("focus", onSelectionTrack)
+			content.removeEventListener("blur", onSelectionTrack)
 			content.removeEventListener("scroll", onContentScroll)
+			document.removeEventListener("selectionchange", onSelectionTrack)
 			window.removeEventListener("resize", onWindowResize)
 			hideMediaDeleteButton()
 			contentProxy = null
+			lastEditorRange = null
+			lastEditorExpandedRange = null
 			editorEl = null
 			pellEditor = null
 		}
 	})
 
 	$effect(() => {
+		if (htmlMode && stylePaintArmed) {
+			logStylePaint("disarm-auto", {
+				reason: "entered-html-mode",
+				remainingUses: stylePaintRemainingUses,
+			})
+			stylePaintArmed = false
+			stylePaintDecl = ""
+			stylePaintActivationSignature = ""
+			stylePaintLastAppliedSignature = ""
+			stylePaintRemainingUses = 0
+			stylePaintAwaitingFreshSelection = false
+		}
 		syncHtmlModeButtonState()
+		syncRemoveFormattingButtonState()
+		syncStylePaintButtonState()
 		if (!htmlMode && contentProxy) editorEl = contentProxy
 	})
 
@@ -1798,10 +2285,22 @@
 
 	.pell-wrapper.html-mode :global(.pell-content) {
 		display: none;
+		height: 0;
+		min-height: 0;
+	}
+
+	.pell-wrapper.html-mode {
+		height: auto;
+		min-height: 0;
+		max-height: none;
 	}
 
 	.pell-wrapper.html-mode
-		:global(.pell-button:not([title="Toggle HTML mode"])) {
+		:global(
+			.pell-button:not([title="Toggle HTML mode"]):not(
+					[title="Full page"]
+				):not([title="Exit full page"])
+		) {
 		opacity: 0.35;
 		max-height: none;
 		pointer-events: none;
@@ -1836,14 +2335,24 @@
 		padding: 0 6px;
 	}
 
+	.pell-wrapper :global(.pell-button svg) {
+		width: 16px;
+		height: 16px;
+	}
+
+	.pell-wrapper :global(.pell-button:disabled) {
+		opacity: 0.38;
+		cursor: default;
+		pointer-events: none;
+	}
+
 	.pell-wrapper :global(.pell-button:hover),
 	.pell-wrapper :global(.pell-button-selected) {
 		background: #e0dace;
 		border-color: #c9bfb0;
 	}
 
-	.pell-wrapper :global(.pell-button[title="Full page"]),
-	.pell-wrapper :global(.pell-button[title="Exit full page"]) {
+	.pell-wrapper :global(.pell-button[title="Toggle HTML mode"]) {
 		margin-left: auto;
 	}
 
@@ -1858,6 +2367,11 @@
 		font-weight: 700;
 		font-size: 0.76rem;
 		line-height: 1;
+	}
+
+	.pell-wrapper :global(.pell-button[title="Remove formatting"] svg) {
+		width: 18px;
+		height: 18px;
 	}
 
 	.pell-wrapper :global(.pell-content) {
@@ -1879,8 +2393,7 @@
 		word-break: break-word;
 		word-wrap: break-word;
 	}
-	.pell-wrapper :global(.pell-content),
-	.pell-wrapper.html-mode {
+	.pell-wrapper :global(.pell-content) {
 		height: 50dvh;
 		/* resize: none; */
 	}
@@ -1893,9 +2406,33 @@
 		max-height: 100dvh;
 	}
 
-	.pell-wrapper.full-page :global(.pell-content),
-	.pell-wrapper.full-page.html-mode {
+	.pell-wrapper.full-page :global(.pell-content) {
 		height: calc(100dvh - 42px);
+	}
+
+	.pell-wrapper.full-page.html-mode {
+		height: auto;
+		min-height: 0;
+	}
+
+	.pell-wrapper.full-page.html-mode :global(.pell-content) {
+		display: none;
+		height: 0;
+		min-height: 0;
+	}
+
+	.pell-wrapper.full-page.html-mode + .html-source {
+		position: fixed;
+		left: 0;
+		right: 0;
+		top: 42px;
+		bottom: 0;
+		z-index: 1000;
+		min-height: auto;
+		max-height: none;
+		height: auto;
+		border-radius: 0;
+		border-top: 0;
 	}
 
 	.pell-wrapper :global(.pell-content > *) {

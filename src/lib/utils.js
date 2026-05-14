@@ -612,3 +612,16 @@ export function minifyHtml(html = '') {
 
 	return result;
 }
+
+/**
+ * Expand compact tags produced by minifyHtml back to standard HTML tags.
+ * @param {string} html
+ * @returns {string}
+ */
+export function expandMinifiedHtmlTags(html = '') {
+	let result = String(html || '');
+	result = result.replace(/<d>/g, '<div>');
+	result = result.replace(/<d\s/g, '<div ');
+	result = result.replace(/<\/d>/g, '</div>');
+	return result;
+}

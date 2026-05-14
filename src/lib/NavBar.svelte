@@ -48,6 +48,8 @@
 	let navProfiles = $state([])
 	let navCurrentUuid = $state("")
 	let profileMenuOpen = $state(false)
+	let deleteAllConfirming = $state(false)
+	let deleteAllInProgress = $state(false)
 
 	const navCurrentProfile = $derived(
 		navProfiles.find((entry) => entry?.uuid === navCurrentUuid) || null,
@@ -125,6 +127,69 @@
 			return
 		}
 		onOpenAbout()
+	}
+
+	async function handleDeleteAllPosts() {
+		if (
+			!confirm(
+				"This will permanently delete ALL posts in your account. This cannot be undone. Continue?",
+			)
+		) {
+			deleteAllConfirming = false
+			return
+		}
+
+		try {
+			deleteAllInProgress = true
+			selectionMenuOpen = false
+
+			// Fetch all posts from the account
+			const feedResponse = await fetch("/api/feed?limit=100")
+			if (!feedResponse.ok) {
+				throw new Error("Failed to fetch feed")
+			}
+
+			const feedData = await feedResponse.json()
+			const allUris = feedData.feed?.map((item) => item.post.uri) || []
+
+			if (!allUris || allUris.length === 0) {
+				alert("No posts found to delete")
+				deleteAllConfirming = false
+				deleteAllInProgress = false
+				return
+			}
+
+			// Call the bulk delete API
+			const deleteResponse = await fetch("/api/post", {
+				method: "DELETE",
+				headers: {"content-type": "application/json"},
+				body: JSON.stringify({uris: allUris}),
+			})
+
+			if (!deleteResponse.ok) {
+				throw new Error("Delete request failed")
+			}
+
+			const deleteResult = await deleteResponse.json()
+			const deletedCount = deleteResult.deleted?.length || 0
+			const failedCount = deleteResult.failed?.length || 0
+
+			if (deletedCount > 0) {
+				alert(
+					`Successfully deleted ${deletedCount} posts${failedCount > 0 ? `. Failed: ${failedCount}` : "."}`,
+				)
+			} else {
+				alert("No posts were deleted")
+			}
+
+			deleteAllConfirming = false
+			deleteAllInProgress = false
+		} catch (error) {
+			console.error("Error deleting all posts:", error)
+			alert("Error deleting posts: " + (error.message || "Unknown error"))
+			deleteAllConfirming = false
+			deleteAllInProgress = false
+		}
 	}
 
 	$effect(() => {
@@ -293,7 +358,21 @@
 								<AlertOctagon size={16} /> Remove permanently
 							</button>
 						{/if}
-
+						{#if isLocalHost()}
+							<button
+								type="button"
+								disabled={deleteAllInProgress}
+								onclick={() => {
+									deleteAllConfirming = true
+									handleDeleteAllPosts()
+								}}
+							>
+								<AlertOctagon size={16} />
+								{deleteAllInProgress
+									? "Deleting..."
+									: "Delete all posts"}
+							</button>
+						{/if}
 						<div class="menu-sep"></div>
 						<button
 							type="button"

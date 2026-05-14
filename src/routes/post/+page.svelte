@@ -7,6 +7,7 @@
 		encryptContact,
 		gpsToHash,
 		hashToGps,
+		expandMinifiedHtmlTags,
 		isContactEncrypted,
 		lookupLocationDetails,
 		normalizeContactInput,
@@ -329,7 +330,7 @@
 	async function loadPostIntoEditor(post) {
 		const next = splitPostTextForEditor(post?.text || "")
 		title = next.title
-		draft = next.body
+		draft = expandMinifiedHtmlTags(next.body)
 		addressText = next.address
 		confirmedAddress = next.address
 		locationConfirmed = Boolean(next.address)

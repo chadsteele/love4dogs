@@ -12,6 +12,7 @@
 
 	let jsonData = $state(null)
 	let jsonLinks = $state([])
+	let chunkUris = $state([])
 	let loading = $state(true)
 	let error = $state("")
 	let currentView = $state("feed")
@@ -23,6 +24,77 @@
 
 	function buildBundleCacheKey(uuid = "") {
 		return `${SESSION_BUNDLE_CACHE_PREFIX}:${uuid}`
+	}
+
+	function parseChunkAltPayload(alt = "") {
+		const source = String(alt || "").trim()
+		if (!source) return null
+		try {
+			const parsed = JSON.parse(source)
+			if (!parsed || typeof parsed !== "object") return null
+			if (!Number.isFinite(Number(parsed?.i))) return null
+			if (!Object.prototype.hasOwnProperty.call(parsed, "h")) return null
+			return parsed
+		} catch {
+			return null
+		}
+	}
+
+	function collectChunkUrisFromPosts(posts = [], uuid = "") {
+		const expectedUuid = String(uuid || "").trim()
+		const uris = []
+		for (const post of Array.isArray(posts) ? posts : []) {
+			const uri = String(post?.uri || "").trim()
+			if (!uri || uris.includes(uri)) continue
+			const embed = post?.embed
+			const media =
+				embed?.$type === "app.bsky.embed.recordWithMedia#view"
+					? embed.media
+					: embed
+			const images =
+				media?.$type === "app.bsky.embed.images#view"
+					? media.images || []
+					: []
+			let isChunk = false
+			for (const image of images) {
+				const payload = parseChunkAltPayload(image?.alt || "")
+				if (!payload) continue
+				const payloadUuid = String(
+					payload?.u || payload?.uuid || "",
+				).trim()
+				if (expectedUuid && payloadUuid !== expectedUuid) continue
+				isChunk = true
+				break
+			}
+			if (isChunk) uris.push(uri)
+		}
+		return uris
+	}
+
+	function atUriToBskyUrl(uri = "") {
+		const match = String(uri || "")
+			.trim()
+			.match(/^at:\/\/([^/]+)\/app\.bsky\.feed\.post\/([^/?#]+)$/i)
+		if (!match) return ""
+		return `https://bsky.app/profile/${encodeURIComponent(match[1])}/post/${encodeURIComponent(match[2])}`
+	}
+
+	function updateChunkUris(uuid = "", bundle = null) {
+		const posts = Array.isArray(bundle?.posts) ? bundle.posts : []
+		chunkUris = collectChunkUrisFromPosts(posts, uuid)
+	}
+
+	function downloadChunkUris() {
+		if (!chunkUris.length) return
+		const blob = new Blob([`${chunkUris.join("\n")}\n`], {
+			type: "text/plain;charset=utf-8",
+		})
+		const url = URL.createObjectURL(blob)
+		const anchor = document.createElement("a")
+		anchor.href = url
+		anchor.download = `love4dogs-chunks-${page.params?.uuid || "bundle"}.txt`
+		anchor.click()
+		URL.revokeObjectURL(url)
 	}
 
 	function readBundleSessionCache(uuid = "") {
@@ -110,6 +182,7 @@
 				const {primary, subsequent} = sessionBundle?.combined || {}
 				jsonData = {...primary, html: subsequent?.join("")}
 				jsonLinks = Array.from(collectLinksFromValue(jsonData))
+				updateChunkUris(uuid, sessionBundle)
 				editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`
 				console.log("[profile/view] load:session-cache-hit", {
 					uuid,
@@ -122,6 +195,7 @@
 			if (cached) {
 				jsonData = cached
 				jsonLinks = Array.from(collectLinksFromValue(jsonData))
+				updateChunkUris(uuid, readBundleSessionCache(uuid))
 				editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`
 				console.log("[profile/view] load:cache-hit", {
 					uuid,
@@ -156,6 +230,7 @@
 			jsonData = {...primary, html: subsequent?.join("")}
 			writeCachedProfile(uuid, jsonData)
 			writeBundleSessionCache(uuid, loaded)
+			updateChunkUris(uuid, loaded)
 			editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`
 			jsonLinks = Array.from(collectLinksFromValue(jsonData))
 			console.log("[profile/view] load:success", {
@@ -210,6 +285,35 @@
 					</p>
 				{/if}
 				<div class="content-html">{@html jsonData?.html || ""}</div>
+
+				{#if chunkUris.length}
+					<section class="chunk-manifest">
+						<div class="chunk-manifest-header">
+							<div>
+								<p class="chunk-manifest-label">Chunks</p>
+								<h3>Standalone chunk posts</h3>
+							</div>
+							<button
+								type="button"
+								class="chunk-download"
+								onclick={downloadChunkUris}
+							>
+								Download list
+							</button>
+						</div>
+						<ul class="chunk-list">
+							{#each chunkUris as uri}
+								<li>
+									<a
+										href={atUriToBskyUrl(uri)}
+										target="_blank"
+										rel="noreferrer">{uri}</a
+									>
+								</li>
+							{/each}
+						</ul>
+					</section>
+				{/if}
 			</div>
 		</section>
 	{/if}
@@ -318,6 +422,58 @@
 	}
 
 	.content-html :global(a) {
+		word-break: break-all;
+	}
+
+	.chunk-manifest {
+		margin-top: 1rem;
+		padding: 0.9rem;
+		border-radius: 14px;
+		background: rgba(245, 239, 225, 0.9);
+		border: 1px solid rgba(58, 91, 65, 0.14);
+	}
+
+	.chunk-manifest-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		margin-bottom: 0.75rem;
+	}
+
+	.chunk-manifest-label {
+		margin: 0 0 0.25rem;
+		font-size: 0.8rem;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		color: #6d5f4c;
+	}
+
+	.chunk-manifest h3 {
+		margin: 0;
+		font-size: 1rem;
+		color: #2f2b24;
+	}
+
+	.chunk-download {
+		border: 1px solid rgba(58, 91, 65, 0.18);
+		border-radius: 999px;
+		padding: 0.45rem 0.8rem;
+		background: #fffaf1;
+		color: #38543b;
+		font-size: 0.9rem;
+		cursor: pointer;
+	}
+
+	.chunk-list {
+		margin: 0;
+		padding-left: 1.2rem;
+		display: grid;
+		gap: 0.35rem;
+	}
+
+	.chunk-list a {
+		color: #375d46;
 		word-break: break-all;
 	}
 

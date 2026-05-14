@@ -501,6 +501,7 @@ export async function publishChunkBundleToBsky({
 	endpoint = "/api/post",
 	uuid = "",
 	postText = "",
+	primaryPayload = {},
 	chunks = [],
 	primaryMedia = [],
 	replyAttachmentPool = [],
@@ -510,103 +511,33 @@ export async function publishChunkBundleToBsky({
 	const normalizedPrimaryMedia = Array.isArray(primaryMedia)
 		? primaryMedia.map((entry) => ({...entry}))
 		: []
+	const chunkCarrierPool = [
+		...normalizedPrimaryMedia,
+		...(Array.isArray(replyAttachmentPool) ? replyAttachmentPool : []),
+		...(Array.isArray(videoAttachments)
+			? videoAttachments.filter((entry) => entry?.blob)
+			: []),
+	].filter((entry) => entry && entry.blob)
 
-	const primaryChunkCount = Math.min(4, normalizedChunks.length)
-	const primaryChunks = normalizedChunks.slice(0, primaryChunkCount)
-
-	if (primaryChunks.length > 0 && normalizedPrimaryMedia.length === 0) {
+	if (normalizedChunks.length > 0 && chunkCarrierPool.length === 0) {
 		throw new Error(
-			"Unable to attach payload chunks on the primary post: at least one profile/background image is required.",
+			"Unable to attach payload chunks: add at least one image or video carrier.",
 		)
 	}
 
-	if (primaryChunks.length > 0) {
-		const primaryCarrierSeed = normalizedPrimaryMedia.map((entry) => ({
-			...entry,
-		}))
-		while (normalizedPrimaryMedia.length < primaryChunks.length) {
-			const seed =
-				primaryCarrierSeed[
-					normalizedPrimaryMedia.length % primaryCarrierSeed.length
-				]
-			normalizedPrimaryMedia.push({...seed})
-		}
-		for (let i = 0; i < primaryChunks.length; i += 1) {
-			const chunkEntry = primaryChunks[i]
-			const altPayload = buildChunkAltPayload(
-				{
-					uuid,
-					index: chunkEntry.index,
-					total: normalizedChunks.length,
-				},
-				chunkEntry?.bundleFragment || "",
-			)
-			normalizedPrimaryMedia[i] = {
-				...normalizedPrimaryMedia[i],
-				alt: JSON.stringify(altPayload),
-			}
-		}
-	}
-
-	const primaryFd = new FormData()
-	primaryFd.append("text", String(postText || ""))
-	if (normalizedPrimaryMedia.length > 0) {
-		primaryFd.append("uploadedMedia", JSON.stringify(normalizedPrimaryMedia))
-	}
-
-	const primaryJson = await postToBskyApi(fetchImpl, endpoint, primaryFd)
-	const primaryUri = String(primaryJson?.result?.uri || "")
-	const primaryCid = String(primaryJson?.result?.cid || "")
-	const replyRef =
-		primaryUri && primaryCid
-			? JSON.stringify({
-					root: {uri: primaryUri, cid: primaryCid},
-					parent: {uri: primaryUri, cid: primaryCid},
-				})
-			: null
-
-	const primaryVideo = Array.isArray(videoAttachments)
-		? videoAttachments.filter((entry) => entry?.blob).slice(0, 1)
-		: []
-	if (primaryVideo.length > 0) {
-		const videoFd = new FormData()
-		videoFd.append("text", "Video")
-		videoFd.append("uploadedMedia", JSON.stringify([primaryVideo[0]]))
-		if (replyRef) videoFd.append("reply", replyRef)
-		await postToBskyApi(fetchImpl, endpoint, videoFd)
-	}
-
-	const chunksForReplies = normalizedChunks.slice(primaryChunks.length)
 	const chunkGroups = []
-	for (let i = 0; i < chunksForReplies.length; i += 4) {
-		chunkGroups.push(chunksForReplies.slice(i, i + 4))
+	for (let i = 0; i < normalizedChunks.length; i += 4) {
+		chunkGroups.push(normalizedChunks.slice(i, i + 4))
 	}
 
+	const chunkResults = []
 	for (let i = 0; i < chunkGroups.length; i += 1) {
 		const chunkGroup = chunkGroups[i] || []
 		const mediaForPost = []
 
-		if (Array.isArray(replyAttachmentPool) && replyAttachmentPool.length > 0) {
-			for (const chunkEntry of chunkGroup) {
-				const chunkAltPayload = buildChunkAltPayload(
-					{
-						uuid,
-						index: chunkEntry.index,
-						total: normalizedChunks.length,
-					},
-					chunkEntry?.bundleFragment || "",
-				)
-				const attachment =
-					replyAttachmentPool[
-						(chunkEntry.index - 1) % replyAttachmentPool.length
-					]
-				mediaForPost.push({
-					...attachment,
-					alt: JSON.stringify(chunkAltPayload),
-				})
-			}
-		} else if (primaryVideo.length > 0 && chunkGroup.length === 1) {
-			const chunkEntry = chunkGroup[0]
+		for (const chunkEntry of chunkGroup) {
+			const carrier =
+				chunkCarrierPool[(chunkEntry.index - 1) % chunkCarrierPool.length]
 			const chunkAltPayload = buildChunkAltPayload(
 				{
 					uuid,
@@ -616,33 +547,63 @@ export async function publishChunkBundleToBsky({
 				chunkEntry?.bundleFragment || "",
 			)
 			mediaForPost.push({
-				...primaryVideo[0],
+				...carrier,
 				alt: JSON.stringify(chunkAltPayload),
 			})
 		}
 
-		if (mediaForPost.length === 0 && chunkGroup.length > 0) {
-			throw new Error(
-				"Unable to attach payload chunks: add at least one image carrier (profile, background, or editor image).",
-			)
+		if (mediaForPost.length === 0) {
+			continue
 		}
 
 		const chunkFd = new FormData()
-		chunkFd.append("text", `Payload ${i + 1}/${chunkGroups.length}`)
-		if (mediaForPost.length > 0) {
-			chunkFd.append("uploadedMedia", JSON.stringify(mediaForPost))
-		}
-		if (replyRef) chunkFd.append("reply", replyRef)
-
-		await postToBskyApi(fetchImpl, endpoint, chunkFd)
+		// chunkFd.append("text", `Chunk ${i + 1}/${chunkGroups.length}`)
+		chunkFd.append("uploadedMedia", JSON.stringify(mediaForPost))
+		const result = await postToBskyApi(fetchImpl, endpoint, chunkFd)
+		chunkResults.push(result?.result || null)
 	}
 
+	const chunkUris = chunkResults
+		.map((entry) => String(entry?.uri || "").trim())
+		.filter(Boolean)
+	const chunkManifest = buildChunkUriManifest(chunkUris)
+	const originPayload = {
+		u: uuid,
+		primary: primaryPayload,
+		chunks: chunkManifest,
+	}
+	const originMedia = normalizedPrimaryMedia.map((entry) => ({...entry}))
+	if (originMedia.length > 0) {
+		originMedia[0] = {
+			...originMedia[0],
+			alt: JSON.stringify(originPayload),
+		}
+	}
+
+	let originText = String(postText || "")
+	if (!originMedia.length && chunkUris.length > 0) {
+		const manifestText = buildOriginManifestText(chunkManifest)
+		originText = originText
+			? `${originText}\n\n${manifestText}`
+			: manifestText
+	}
+
+	const originFd = new FormData()
+	originFd.append("text", originText)
+	if (originMedia.length > 0) {
+		originFd.append("uploadedMedia", JSON.stringify(originMedia))
+	}
+
+	const originJson = await postToBskyApi(fetchImpl, endpoint, originFd)
+
 	return {
-		primaryResult: primaryJson?.result || null,
-		totalChunkPosts: chunkGroups.length,
+		originResult: originJson?.result || null,
+		primaryResult: originJson?.result || null,
+		chunkResults,
+		totalChunkPosts: chunkResults.length,
 		chunkCount: normalizedChunks.length,
-		primaryChunkCount,
-		replyChunkCount: chunksForReplies.length,
+		primaryChunkCount: 0,
+		replyChunkCount: 0,
 	}
 }
 
