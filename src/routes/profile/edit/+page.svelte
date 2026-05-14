@@ -764,47 +764,6 @@
 		const sourceUrl = String(url || "").trim()
 		const resolvedSourceUrl = resolveUploadSourceUrl(sourceUrl) || sourceUrl
 		if (!resolvedSourceUrl) return null
-		if (isBskyHostedUrl(resolvedSourceUrl)) {
-			const wantsImage =
-				preferredKind === "image" || isLikelyImageUrl(resolvedSourceUrl)
-			if (!wantsImage) return null
-			if (editorUploadCache.has(resolvedSourceUrl)) {
-				return editorUploadCache.get(resolvedSourceUrl)
-			}
-
-			const formData = new FormData()
-			formData.append("mode", "resolve-cdn-blob")
-			formData.append("sourceUrl", resolvedSourceUrl)
-			const response = await fetch("/api/post", {
-				method: "POST",
-				body: formData,
-			})
-			const json = await response.json().catch(() => ({}))
-			if (!response.ok || !json?.ok || !json?.blob) {
-				throw new Error(
-					json?.error ||
-						`Failed to resolve blob from CDN URL: ${resolvedSourceUrl}`,
-				)
-			}
-
-			const sourceName = resolvedSourceUrl.split("/").pop() || "image"
-			const result = {
-				kind: "image",
-				alt: sourceName,
-				blob: json.blob,
-				sourceName,
-				sourceUrl: resolvedSourceUrl,
-				bskyUrl: String(json.url || resolvedSourceUrl),
-				cacheUri: "",
-				cacheCid: "",
-				cached: true,
-			}
-			editorUploadCache.set(resolvedSourceUrl, result)
-			if (sourceUrl && sourceUrl !== resolvedSourceUrl) {
-				editorUploadCache.set(sourceUrl, result)
-			}
-			return result
-		}
 		if (isInlineMediaDataUrl(resolvedSourceUrl)) {
 			const response = await fetch(resolvedSourceUrl)
 			if (!response.ok)

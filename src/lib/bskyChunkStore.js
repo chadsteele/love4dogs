@@ -557,7 +557,7 @@ export async function publishChunkBundleToBsky({
 		}
 
 		const chunkFd = new FormData()
-		// chunkFd.append("text", `Chunk ${i + 1}/${chunkGroups.length}`)
+		chunkFd.append("text", postText || "❤️")
 		chunkFd.append("uploadedMedia", JSON.stringify(mediaForPost))
 		const result = await postToBskyApi(fetchImpl, endpoint, chunkFd)
 		chunkResults.push(result?.result || null)
@@ -588,15 +588,24 @@ export async function publishChunkBundleToBsky({
 			: manifestText
 	}
 
-	const originFd = new FormData()
-	originFd.append("text", originText)
-	if (originMedia.length > 0) {
-		originFd.append("uploadedMedia", JSON.stringify(originMedia))
-	}
+	       const originFd = new FormData()
+	       // Defensive: ensure text is always present and non-empty
+	       if (!originText || !originText.trim()) {
+		       console.error("[bskyChunkStore] Refusing to publish: missing or empty post text", { originText })
+		       throw new Error("Post text is required and was blank at publish time.")
+	       }
+	       originFd.append("text", originText)
+	       if (originMedia.length > 0) {
+		       originFd.append("uploadedMedia", JSON.stringify(originMedia))
+	       }
+	       // Debug: log outgoing FormData text value
+	       if (typeof window !== "undefined") {
+		       console.debug("[bskyChunkStore] Publishing with text:", originText)
+	       }
 
-	const originJson = await postToBskyApi(fetchImpl, endpoint, originFd)
+	       const originJson = await postToBskyApi(fetchImpl, endpoint, originFd)
 
-	return {
+	       return {
 		originResult: originJson?.result || null,
 		primaryResult: originJson?.result || null,
 		chunkResults,

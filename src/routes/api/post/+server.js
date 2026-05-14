@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/private';
 import { MEDIA_TOKEN_PREFIX } from '$lib/utils.js';
+import { createHash } from 'node:crypto';
 
 const BSKY_XRPC = 'https://bsky.social/xrpc';
 const MAX_IMAGE_SIZE_BYTES = 2_000_000; // Bluesky's hard limit is 2,000,000 bytes (not 2 MiB)
@@ -357,6 +358,72 @@ function buildMediaCacheToken(sourceUrl) {
 	return source;
 }
 
+function mediaTokenFromDigestHex(hex = '') {
+	return `${MEDIA_CACHE_PREFIX}${String(hex || '').toLowerCase().slice(0, 12)}`;
+}
+
+async function mediaTokenFromFile(file) {
+	const bytes = Buffer.from(await file.arrayBuffer());
+	const digestHex = createHash('sha256').update(bytes).digest('hex');
+	return mediaTokenFromDigestHex(digestHex);
+}
+
+async function fetchRemoteImageFile(sourceUrl) {
+	const source = String(sourceUrl || '').trim();
+	if (!isHttpUrl(source)) {
+		throw new Error('A valid source URL or inline source token is required.');
+	}
+
+	const res = await fetch(source, {
+		method: 'GET',
+		cache: 'no-store'
+	});
+	if (!res.ok) {
+		throw new Error(`Unable to fetch image URL: ${source}`);
+	}
+
+	const contentType = String(res.headers.get('content-type') || '').toLowerCase();
+	if (!contentType.startsWith('image/')) {
+		throw new Error('Only images are supported for URL caching.');
+	}
+
+	const bytes = Buffer.from(await res.arrayBuffer());
+	if (bytes.length <= 0) {
+		throw new Error('Media file is required.');
+	}
+	if (bytes.length > MAX_IMAGE_SIZE_BYTES) {
+		throw new Error('Each image must be 2 MB or smaller.');
+	}
+
+	let fileName = 'remote-image';
+	try {
+		const parsed = new URL(source);
+		fileName = decodeURIComponent(parsed.pathname.split('/').pop() || fileName);
+	} catch {
+		// Keep fallback file name.
+	}
+
+	return new File([bytes], fileName, {
+		type: contentType || 'image/jpeg'
+	});
+}
+
+function extractCacheMarker(text = '') {
+	const lines = String(text || '')
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter(Boolean);
+
+	for (let i = lines.length - 1; i >= 0; i -= 1) {
+		const line = lines[i];
+		if (line.startsWith(MEDIA_CACHE_PREFIX) || line.startsWith(LEGACY_MEDIA_CACHE_PREFIX)) {
+			return line;
+		}
+	}
+
+	return '';
+}
+
 function buildMediaCacheMarker(sourceUrl) {
 	// The token itself is the full marker (prefix + hash)
 	return buildMediaCacheToken(sourceUrl);
@@ -391,7 +458,8 @@ async function findCachedImageBlobBySourceUrl(session, sourceUrl) {
 		const records = Array.isArray(json?.records) ? json.records : [];
 		for (const record of records) {
 			const text = String(record?.value?.text || '');
-			if (text !== marker && text !== legacyMarker) continue;
+			const foundMarker = extractCacheMarker(text);
+			if (foundMarker !== marker && foundMarker !== legacyMarker) continue;
 			const embed = record?.value?.embed;
 			const blob = embed?.images?.[0]?.image || null;
 			if (!blob || typeof blob !== 'object') continue;
@@ -575,10 +643,6 @@ export async function POST({ request }) {
 			const sourceUrl = String(formData.get('sourceUrl') || '').trim();
 			const rawName = String(formData.get('profileName') || '').trim();
 			const rawDesc = String(formData.get('profileDescription') || '').trim();
-			const marker = buildMediaCacheMarker(sourceUrl);
-			const prefix = buildCachePostPrefix(rawName, rawDesc);
-			const cacheText = prefix ? `${prefix}\n${marker}` : marker;
-			const file = formData.get('file');
 			if (!isCacheableMediaSource(sourceUrl)) {
 				return new Response(JSON.stringify({ error: 'A valid source URL or inline source token is required.' }), {
 					status: 400,
@@ -586,14 +650,39 @@ export async function POST({ request }) {
 				});
 			}
 
+			let file = formData.get('file');
+			if (!(file instanceof File) || file.size <= 0) {
+				if (isHttpUrl(sourceUrl)) {
+					file = await fetchRemoteImageFile(sourceUrl);
+				}
+			}
+
+			let cacheToken = '';
+			if (sourceUrl.startsWith(MEDIA_CACHE_PREFIX)) {
+				cacheToken = buildMediaCacheToken(sourceUrl);
+			} else if (file instanceof File && file.size > 0) {
+				cacheToken = await mediaTokenFromFile(file);
+			}
+
+			if (!cacheToken) {
+				return new Response(JSON.stringify({ error: 'Unable to derive media cache token from source image.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+
+			const marker = buildMediaCacheMarker(cacheToken);
+			const prefix = buildCachePostPrefix(rawName, rawDesc);
+			const cacheText = prefix ? `${prefix}\n${marker}` : marker;
+
 			const session = await getSession();
-			const cached = await findCachedImageBlobBySourceUrl(session, sourceUrl);
+			const cached = await findCachedImageBlobBySourceUrl(session, cacheToken);
 			if (cached?.blob) {
 				return new Response(
 					JSON.stringify({
 						ok: true,
 						cached: true,
-						cacheToken: buildMediaCacheToken(sourceUrl),
+						cacheToken,
 						kind: 'image',
 						alt: file instanceof File ? file.name || 'Photo' : 'Photo',
 						blob: cached.blob,
@@ -699,7 +788,7 @@ export async function POST({ request }) {
 				JSON.stringify({
 					ok: true,
 					cached: false,
-					cacheToken: buildMediaCacheToken(sourceUrl),
+					cacheToken,
 					kind: 'image',
 					alt: file.name || 'Photo',
 					blob,
@@ -848,12 +937,7 @@ export async function POST({ request }) {
 			}
 		}
 
-		if (!rawText) {
-			return new Response(JSON.stringify({ error: 'Post text is required.' }), {
-				status: 400,
-				headers: { 'content-type': 'application/json' }
-			});
-		}
+
 
 		const textLength = [...rawText].length;
 		if (textLength > 300) {
