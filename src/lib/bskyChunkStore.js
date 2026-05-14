@@ -1,5 +1,150 @@
 const DEFAULT_CHUNK_ALT_PAYLOAD_TARGET_CHARS = 2000
 const DEFAULT_CONTENT_CHUNK_SIZE = 1800
+const STATIC_HTML_DICT_VERSION = 1
+function sortUniqueHtmlCandidates(candidates = []) {
+	const unique = [...new Set(candidates.map((entry) => String(entry || "")).filter(Boolean))]
+	return unique.sort((a, b) => {
+		if (b.length !== a.length) return b.length - a.length
+		if (a < b) return -1
+		if (a > b) return 1
+		return 0
+	})
+}
+
+const STATIC_HTML_DICT = sortUniqueHtmlCandidates([
+	"<figure><img src=",
+	"><figcaption>",
+	"></figcaption></figure>",
+	"</figcaption></figure>",
+	"</figure><figure>",
+	"<figcaption>",
+	"</figcaption>",
+	"<iframe src=",
+	"<iframe ",
+	"</iframe>",
+	" allowfullscreen",
+	" frameborder=0",
+	" width=",
+	" height=",
+	" style=",
+	" class=",
+	" href=",
+	" title=",
+	" referrerpolicy=no-referrer",
+	" fetchpriority=high",
+	" loading=lazy",
+	" decoding=async",
+	"<p><strong>",
+	"</strong></p>",
+	"<strong>",
+	"</strong>",
+	"<figure><img ",
+	"<figure>",
+	"</figure>",
+	"<img src=",
+	"<img ",
+	"<div>",
+	"</div>",
+	"<span",
+	"</span>",
+	"<p>",
+	"</p>",
+	"<section>",
+	"</section>",
+	"<article>",
+	"</article>",
+	"<header>",
+	"</header>",
+	"<footer>",
+	"</footer>",
+	"<main>",
+	"</main>",
+	"<aside>",
+	"</aside>",
+	"<nav>",
+	"</nav>",
+	"<table>",
+	"</table>",
+	"<thead>",
+	"</thead>",
+	"<tbody>",
+	"</tbody>",
+	"<tr>",
+	"</tr>",
+	"<td>",
+	"</td>",
+	"<th>",
+	"</th>",
+	"<colgroup>",
+	"</colgroup>",
+	"<video",
+	"</video>",
+	"<source src=",
+	" type=",
+	" controls",
+	" playsinline",
+	" muted",
+	" loop",
+	" poster=",
+	" allow=",
+	" referrerpolicy=",
+	"<ul>",
+	"</ul>",
+	"<ol>",
+	"</ol>",
+	"<li>",
+	"</li>",
+	" target=_blank",
+	" rel=noopener noreferrer",
+	" alt=",
+	" src=",
+	"src=",
+])
+
+function staticToken(index) {
+	return `\uE000${index}\uE001`
+}
+
+function compressWithStaticDict(html = "") {
+	let working = String(html || "")
+	if (!working) {
+		return {html: "", staticVersion: 0}
+	}
+
+	let changed = false
+	for (let i = 0; i < STATIC_HTML_DICT.length; i += 1) {
+		const needle = STATIC_HTML_DICT[i]
+		if (!needle || needle.length < 8) continue
+		const token = staticToken(i)
+		if (token.length >= needle.length) continue
+		const count = working.split(needle).length - 1
+		if (count < 2) continue
+		working = working.split(needle).join(token)
+		changed = true
+	}
+
+	if (!changed) {
+		return {html: String(html || ""), staticVersion: 0}
+	}
+
+	return {
+		html: working,
+		staticVersion: STATIC_HTML_DICT_VERSION,
+	}
+}
+
+function inflateWithStaticDict(html = "", staticVersion = 0) {
+	if (Number(staticVersion) !== STATIC_HTML_DICT_VERSION) {
+		return String(html || "")
+	}
+
+	let working = String(html || "")
+	for (let i = 0; i < STATIC_HTML_DICT.length; i += 1) {
+		const token = staticToken(i)
+		working = working.split(token).join(STATIC_HTML_DICT[i])
+	}
+	return working
+}
 
 function findCommonPrefix(values = []) {
 	if (!values.length) return ""
@@ -18,32 +163,8 @@ function compressCommonHtmlSubstrings(html = "") {
 	let working = String(html || "")
 	if (!working) return {html: "", dict: []}
 
-	const candidates = [
-		"<figure><img src=",
-		"></figcaption></figure>",
-		"><figcaption>",
-		"</figcaption></figure>",
-		"</figure><figure>",
-		"<figcaption>",
-		"</figcaption>",
-		" referrerpolicy=no-referrer",
-		" fetchpriority=high",
-		" loading=lazy",
-		" decoding=async",
-		"<p><strong>",
-		"</strong></p>",
-		"<strong>",
-		"</strong>",
-		"<figure>",
-		"</figure>",
-		"<p>",
-		"</p>",
-		" alt=",
-		" src=",
-	]
-
 	const dict = []
-	for (const needle of candidates) {
+	for (const needle of STATIC_HTML_DICT) {
 		if (!needle || needle.length < 8) continue
 		const count = working.split(needle).length - 1
 		if (count < 2) continue
@@ -97,7 +218,10 @@ function compressChunkHtmlForAlt(html = "") {
 		}
 	}
 
-	const dictCompression = compressCommonHtmlSubstrings(packed)
+	const staticCompression = compressWithStaticDict(packed)
+	const staticPacked = staticCompression.html
+	const staticVersion = staticCompression.staticVersion
+	const dictCompression = compressCommonHtmlSubstrings(staticPacked)
 	const withDict = dictCompression.html
 	const dict = dictCompression.dict
 
@@ -107,15 +231,19 @@ function compressChunkHtmlForAlt(html = "") {
 		candidatePayload.p = prefix
 		candidatePayload.f = 1
 	}
+	if (staticVersion > 0) {
+		candidatePayload.sv = staticVersion
+		candidatePayload.f = (candidatePayload.f || 0) | 4
+	}
 	if (dict.length > 0) {
 		candidatePayload.d = dict
-		candidatePayload.f = 2
+		candidatePayload.f = (candidatePayload.f || 0) | 2
 	}
 	if (JSON.stringify(candidatePayload).length >= baselinePayloadLength) {
 		return {html: source, prefix: "", dict: []}
 	}
 
-	return {html: withDict, prefix, dict}
+	return {html: withDict, prefix, dict, staticVersion}
 }
 
 export function buildChunkAltPayload(meta = {}, htmlFragment = "") {
@@ -133,7 +261,11 @@ export function buildChunkAltPayload(meta = {}, htmlFragment = "") {
 	}
 	if (compressed.dict?.length) {
 		payload.d = compressed.dict
-		payload.f = 2
+		payload.f = (payload.f || 0) | 2
+	}
+	if (Number(compressed?.staticVersion || 0) > 0) {
+		payload.sv = Number(compressed.staticVersion)
+		payload.f = (payload.f || 0) | 4
 	}
 	return payload
 }
@@ -151,6 +283,8 @@ export function inflateChunkAltPayloadHtml(payload = {}) {
 	if (prefix) {
 		html = html.replace(/~c~/g, prefix)
 	}
+
+	html = inflateWithStaticDict(html, payload?.sv)
 	return html
 }
 
