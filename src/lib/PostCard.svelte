@@ -594,7 +594,14 @@
 				pick(["canonicalurl", "canonicalUrl"]),
 			)
 
-			if (!profilePic && !backgroundPic && !canonicalurl) return null
+			if (
+				!profilePic &&
+				!backgroundPic &&
+				!canonicalurl &&
+				!name &&
+				!description
+			)
+				return null
 
 			return {
 				profilePic: profilePic || null,
@@ -710,19 +717,8 @@
 	const postVideo = $derived(post.video || null)
 	const uniqueImages = $derived(uniqueImageUrls(post.images || []))
 	const bodyImages = $derived.by(() => {
-		if (!profileData) return uniqueImages
-
-		const headerImageSet = new Set(
-			[profileData?.profilePic, profileData?.backgroundPic]
-				.map((image) => normalizeComparableImageUrl(image))
-				.filter(Boolean),
-		)
-		if (!headerImageSet.size) return uniqueImages
-
-		return uniqueImages.filter((image) => {
-			const normalized = normalizeComparableImageUrl(image)
-			return !headerImageSet.has(normalized)
-		})
+		if (profileData) return []
+		return uniqueImages
 	})
 	const sortedImages = $derived(sortCardImages(bodyImages, imageDimensions))
 	const threeImageFirstIsWidest = $derived.by(() => {
@@ -872,18 +868,9 @@
 		<ProfilePostHeader
 			profilePic={profileData.profilePic}
 			backgroundPic={profileData.backgroundPic}
-			title={parts.title}
-			name={parts.title}
+			title={profileData.profileName}
 			url={profileViewHref || postViewHref}
 		/>
-	{/if}
-
-	{#if !profileData && parts.title}
-		<h3 class="post-title">
-			<a class="post-title-link" href={postViewHref}>
-				{@html titleHtml}
-			</a>
-		</h3>
 	{/if}
 
 	<Linkify>

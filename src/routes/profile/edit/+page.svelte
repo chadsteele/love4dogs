@@ -16,7 +16,8 @@
 		isContactEncrypted,
 		normalizeContactInput,
 		lookupLocationDetails,
-		mediaTokenFromBuffer,
+		mediaTokenFromFile,
+		mediaTokenFromOrigin,
 		expandMinifiedHtmlTags,
 		minifyHtml,
 	} from "$lib/utils"
@@ -687,8 +688,10 @@
 	}
 
 	async function uploadMediaFile(file) {
-		const buffer = await file.arrayBuffer()
-		const sourceUrl = await mediaTokenFromBuffer(buffer)
+		const sourceUrl = await mediaTokenFromFile(file)
+		if (!sourceUrl) {
+			throw new Error(`Missing media origin for ${file.name}.`)
+		}
 		const formData = new FormData()
 		formData.append("mode", "cache-media-url")
 		formData.append("sourceUrl", sourceUrl)
@@ -760,9 +763,15 @@
 		}
 	}
 
-	async function uploadExternalMediaUrl(url, preferredKind = "") {
-		const sourceUrl = String(url || "").trim()
-		const resolvedSourceUrl = resolveUploadSourceUrl(sourceUrl) || sourceUrl
+	async function uploadExternalMediaUrl(
+		url,
+		preferredKind = "",
+		originUrl = "",
+	) {
+		const resolvedUrl = String(url || "").trim()
+		const sourceUrl = String(originUrl || resolvedUrl).trim()
+		const resolvedSourceUrl =
+			resolveUploadSourceUrl(resolvedUrl) || resolvedUrl
 		if (!resolvedSourceUrl) return null
 		if (isInlineMediaDataUrl(resolvedSourceUrl)) {
 			const response = await fetch(resolvedSourceUrl)
@@ -779,9 +788,7 @@
 				NORMALIZED_IMAGE_MAX_DIM,
 				NORMALIZED_IMAGE_MAX_DIM,
 			)
-			const token = await mediaTokenFromBuffer(
-				await normalized.arrayBuffer(),
-			)
+			const token = await mediaTokenFromOrigin(sourceUrl)
 			if (editorUploadCache.has(token)) {
 				const cached = editorUploadCache.get(token)
 				editorUploadCache.set(resolvedSourceUrl, cached)
@@ -793,8 +800,8 @@
 			const uploaded = await cacheMediaUrlInBsky(token, normalized)
 			const result = {
 				...uploaded,
-				sourceUrl: token,
-				alt: uploaded.alt || token,
+				sourceUrl,
+				alt: uploaded.alt || sourceUrl,
 			}
 			editorUploadCache.set(token, result)
 			if (sourceUrl) editorUploadCache.set(sourceUrl, result)
@@ -836,9 +843,7 @@
 				NORMALIZED_IMAGE_MAX_DIM,
 				NORMALIZED_IMAGE_MAX_DIM,
 			)
-			const token = await mediaTokenFromBuffer(
-				await normalized.arrayBuffer(),
-			)
+			const token = await mediaTokenFromOrigin(sourceUrl)
 			if (editorUploadCache.has(token)) {
 				const cached = editorUploadCache.get(token)
 				editorUploadCache.set(resolvedSourceUrl, cached)
@@ -855,7 +860,7 @@
 			})
 			const result = {
 				...uploaded,
-				sourceUrl: token,
+				sourceUrl,
 				alt: uploaded.alt || sourceName,
 			}
 			editorUploadCache.set(token, result)
@@ -930,6 +935,11 @@
 		for (const node of root.querySelectorAll(
 			"img[src],video[src],source[src],a[href]",
 		)) {
+			const dataOrigin = String(
+				node.getAttribute("data-origin") ||
+					node.getAttribute("data-original") ||
+					"",
+			).trim()
 			const rawUrl =
 				node.getAttribute("src") || node.getAttribute("href") || ""
 			if (!rawUrl) continue
@@ -962,7 +972,8 @@
 									? "video"
 									: ""
 			if (!mediaType) continue
-			candidates.push({node, url, mediaType})
+			if (mediaType === "image" && !dataOrigin) continue
+			candidates.push({node, url, mediaType, dataOrigin})
 		}
 
 		for (const img of root.querySelectorAll("img")) {
@@ -1036,6 +1047,7 @@
 								const uploaded = await uploadExternalMediaUrl(
 									entry.url,
 									entry.mediaType,
+									entry.dataOrigin,
 								)
 								if (uploaded) {
 									debugProfile(
@@ -1090,6 +1102,13 @@
 				changed = true
 			}
 			if (entry.node.tagName === "IMG") {
+				if (
+					entry.dataOrigin &&
+					entry.node.getAttribute("data-origin") !== entry.dataOrigin
+				) {
+					entry.node.setAttribute("data-origin", entry.dataOrigin)
+					changed = true
+				}
 				if (entry.node.hasAttribute("srcset")) {
 					entry.node.removeAttribute("srcset")
 					changed = true
@@ -1154,6 +1173,11 @@
 			if (!mediaType) continue
 			const uploaded = uploadedByUrl.get(url)
 			const existing = existingMediaByUrl.get(url)
+			const dataOrigin = String(
+				node.getAttribute("data-origin") ||
+					node.getAttribute("data-original") ||
+					"",
+			).trim()
 			extractedMedia.push({
 				kind: mediaType,
 				alt:
@@ -1162,7 +1186,11 @@
 					existing?.alt ||
 					uploaded?.alt ||
 					"Media",
-				sourceUrl: uploaded?.sourceUrl || existing?.sourceUrl || url,
+				sourceUrl:
+					(mediaType === "image" ? dataOrigin : "") ||
+					uploaded?.sourceUrl ||
+					existing?.sourceUrl ||
+					url,
 				url,
 				blob: uploaded?.blob || existing?.blob || null,
 				bskyUrl:

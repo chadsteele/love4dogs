@@ -6,6 +6,7 @@
 	import {html as htmlLang} from "@codemirror/lang-html"
 	import {oneDark} from "@codemirror/theme-one-dark"
 	import {basicSetup} from "codemirror"
+	import {mediaOriginFromFile, mediaTokenFromFile} from "$lib/utils"
 	import {
 		Bold,
 		Heading1 as H1,
@@ -304,6 +305,18 @@
 		return json
 	}
 
+	async function uploadCachedImage(file, sourceUrl) {
+		const fd = new FormData()
+		fd.append("mode", "cache-media-url")
+		fd.append("sourceUrl", sourceUrl)
+		fd.append("file", file)
+		const res = await fetch("/api/post", {method: "POST", body: fd})
+		const json = await res.json().catch(() => ({}))
+		if (!res.ok || !json?.ok || !json?.blob)
+			throw new Error(json?.error || "Upload failed.")
+		return json
+	}
+
 	function uploadFileWithProgress(file, onProgress, onUploadComplete) {
 		return new Promise((resolve, reject) => {
 			const fd = new FormData()
@@ -386,12 +399,15 @@
 		try {
 			const thumb = await createThumbnailDataUrl(file)
 			const alt = file.name || "Image"
+			const dataOrigin = mediaOriginFromFile(file)
 			insertHtmlAtCaret(
 				contentEl,
-				`<img src="${thumb}" alt="${alt.replace(/"/g, "&quot;")}" />`,
+				`<img src="${thumb}" data-origin="${dataOrigin.replace(/"/g, "&quot;")}" alt="${alt.replace(/"/g, "&quot;")}" />`,
 			)
 			const normalized = await normalizeImageForUpload(file)
-			const uploaded = await uploadFile(normalized)
+			const sourceUrl = await mediaTokenFromFile(file)
+			if (!sourceUrl) return
+			const uploaded = await uploadCachedImage(normalized, sourceUrl)
 			uploadedMedia = [
 				...uploadedMedia,
 				{
@@ -399,6 +415,7 @@
 					alt,
 					blob: uploaded.blob,
 					sourceName: file.name,
+					sourceUrl: dataOrigin,
 				},
 			]
 		} catch (err) {
@@ -522,6 +539,7 @@
 			if (SAFE_SRC.test(direct)) return direct
 
 			for (const attrName of [
+				"data-origin",
 				"data-src",
 				"data-lazy-src",
 				"data-original",
@@ -559,6 +577,7 @@
 			}
 			const image = document.createElement("img")
 			image.setAttribute("src", url)
+			image.setAttribute("data-origin", url)
 			if (title) image.setAttribute("alt", title)
 			return image
 		}
@@ -568,7 +587,21 @@
 				const tag = node.tagName.toLowerCase()
 				if (tag === "img" || tag === "video" || tag === "source") {
 					const resolved = resolveNodeMediaSrc(node)
-					if (resolved) node.setAttribute("src", resolved)
+					if (resolved) {
+						node.setAttribute("src", resolved)
+						if (
+							tag === "img" &&
+							!node.getAttribute("data-origin")
+						) {
+							node.setAttribute(
+								"data-origin",
+								String(
+									node.getAttribute("data-original") ||
+										resolved,
+								),
+							)
+						}
+					}
 					continue
 				}
 
@@ -636,6 +669,7 @@
 				if (
 					tag === "img" &&
 					(attr.name === "src" ||
+						attr.name === "data-origin" ||
 						attr.name === "srcset" ||
 						attr.name === "loading" ||
 						attr.name === "decoding" ||
@@ -1243,7 +1277,7 @@
 
 		stylePaintDecl = capturedDecl
 		stylePaintArmed = true
-		stylePaintRemainingUses = 1
+		stylePaintRemainingUses = 2
 		stylePaintLastAppliedSignature = ""
 		stylePaintAwaitingFreshSelection = false
 		const captureRange = getRangeForStyleCapture(contentEl)
@@ -2336,8 +2370,8 @@
 	}
 
 	.pell-wrapper :global(.pell-button svg) {
-		width: 16px;
-		height: 16px;
+		width: 14px;
+		height: 14px;
 	}
 
 	.pell-wrapper :global(.pell-button:disabled) {

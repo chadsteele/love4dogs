@@ -1130,10 +1130,14 @@ export async function loadMostRecentProfileBundleFromPublicBsky({
 	const groups = Array.from(groupsByRevision.values()).sort(
 		(a, b) => b.latestMs - a.latestMs,
 	)
+	const originCandidates = collectOriginPayloadCandidatesFromPosts(posts, {
+		uuid: id,
+	})
 
 	debugLog("latest-by-uuid candidate groups", {
 		uuid: id,
 		groupCount: groups.length,
+		originCandidateCount: originCandidates.length,
 		groups: groups.map((group) => ({
 			groupKey: group.groupKey,
 			rootUri: group.rootUri,
@@ -1143,6 +1147,52 @@ export async function loadMostRecentProfileBundleFromPublicBsky({
 	})
 
 	let lastError = null
+	for (const candidate of originCandidates) {
+		const manifestPosts = await fetchPostsByUrisFromPublicBsky(
+			fetchImpl,
+			candidate.chunkUris,
+			debugLog,
+			warnLog,
+		)
+		const mergedByUri = new Map()
+		for (const post of [candidate.post, ...manifestPosts]) {
+			const uri = String(post?.uri || "").trim()
+			if (!uri || mergedByUri.has(uri)) continue
+			mergedByUri.set(uri, post)
+		}
+		const candidatePosts = Array.from(mergedByUri.values())
+		const payloads = collectChunkPayloadsFromPosts(candidatePosts, {uuid: id})
+
+		debugLog("latest-by-uuid manifest candidate", {
+			uuid: id,
+			originUri: candidate.originUri,
+			manifestChunkPostCount: candidate.chunkUris.length,
+			recoveredChunkPayloadCount: payloads.length,
+		})
+
+		if (!payloads.length) continue
+		try {
+			const reconstructed = reconstructBundleFromChunkPayloads(payloads)
+			return {
+				uuid: id,
+				posts: candidatePosts,
+				payloads,
+				originPayload: candidate.originPayload,
+				chunkUris: candidate.chunkUris,
+				...reconstructed,
+			}
+		} catch (error) {
+			lastError = error
+			warnLog("latest-by-uuid manifest reconstruction failed", {
+				uuid: id,
+				originUri: candidate.originUri,
+				chunkUris: candidate.chunkUris,
+				error: error?.message || String(error),
+				details: error?.details || null,
+			})
+		}
+	}
+
 	for (const group of groups) {
 		const seedUris = Array.from(group.seedUris).filter(Boolean)
 		const seedPosts = posts.filter((post) => {
@@ -1337,4 +1387,146 @@ export function collectLinksFromValue(value, links = new Set()) {
 		}
 	}
 	return links
+}
+
+function normalizeChunkUriList(uris = []) {
+	return [...new Set(
+		(Array.isArray(uris) ? uris : [])
+			.map((uri) => String(uri || "").trim())
+			.filter((uri) => isValidPostAtUri(uri)),
+	)]
+}
+
+function parseChunkUriManifest(manifest = "") {
+	if (Array.isArray(manifest)) {
+		return normalizeChunkUriList(manifest)
+	}
+
+	const source = String(manifest || "").trim()
+	if (!source) return []
+
+	const matches = source.match(/at:\/\/[^\s]+\/app\.bsky\.feed\.post\/[^\s]+/gi) || []
+	return normalizeChunkUriList(matches)
+}
+
+function parseOriginPayloadValue(value = "", expectedUuid = "") {
+	const source = String(value || "").trim()
+	if (!source) return null
+
+	let parsed
+	try {
+		parsed = JSON.parse(source)
+	} catch {
+		return null
+	}
+	if (!parsed || typeof parsed !== "object") return null
+	if (!("primary" in parsed) || !("chunks" in parsed)) return null
+
+	const payloadUuid = String(parsed?.u || parsed?.uuid || parsed?.primary?.uuid || "").trim()
+	if (expectedUuid && payloadUuid !== expectedUuid) return null
+
+	const chunkUris = parseChunkUriManifest(parsed?.chunks)
+	if (!chunkUris.length) return null
+
+	return {
+		...parsed,
+		uuid: payloadUuid,
+		chunkUris,
+	}
+}
+
+function collectOriginPayloadCandidatesFromPosts(posts = [], {uuid} = {}) {
+	const expectedUuid = String(uuid || "").trim()
+	const candidates = []
+	const seenKeys = new Set()
+
+	for (const post of Array.isArray(posts) ? posts : []) {
+		const valuesToInspect = []
+		const text = String(post?.record?.text || post?.text || "").trim()
+		if (text) valuesToInspect.push(text)
+
+		const embed = post?.embed
+		const media =
+			embed?.$type === "app.bsky.embed.recordWithMedia#view"
+				? embed.media
+				: embed
+		const images =
+			media?.$type === "app.bsky.embed.images#view" ? media.images || [] : []
+		for (const image of images) {
+			const alt = String(image?.alt || "").trim()
+			if (alt) valuesToInspect.push(alt)
+		}
+
+		for (const value of valuesToInspect) {
+			const parsed = parseOriginPayloadValue(value, expectedUuid)
+			if (!parsed) continue
+			const postUri = String(post?.uri || "").trim()
+			const key = `${postUri}:${parsed.chunkUris.join("|")}`
+			if (seenKeys.has(key)) continue
+			seenKeys.add(key)
+			candidates.push({
+				post,
+				originUri: postUri,
+				originPayload: parsed,
+				chunkUris: parsed.chunkUris,
+				timestampMs: resolvePostTimestampMs(post),
+			})
+		}
+	}
+
+	return candidates.sort((a, b) => b.timestampMs - a.timestampMs)
+}
+
+async function fetchPostsByUrisFromPublicBsky(
+	fetchImpl,
+	uris = [],
+	debugLog = () => {},
+	warnLog = () => {},
+) {
+	const normalizedUris = normalizeChunkUriList(uris)
+	if (!normalizedUris.length) return []
+
+	const results = await Promise.all(
+		normalizedUris.map(async (uri) => {
+			try {
+				const posts = await fetchThreadPostsFromPublicBsky(
+					fetchImpl,
+					uri,
+					debugLog,
+					warnLog,
+				)
+				if (!posts.length) {
+					debugLog("manifest uri produced no posts", {uri})
+				}
+				return posts
+			} catch (error) {
+				warnLog("manifest uri fetch failed", {
+					uri,
+					error: error?.message || String(error),
+				})
+				return []
+			}
+		}),
+	)
+
+	const postsByUri = new Map()
+	for (const post of results.flat()) {
+		const uri = String(post?.uri || "").trim()
+		if (!uri || postsByUri.has(uri)) continue
+		postsByUri.set(uri, post)
+	}
+	return Array.from(postsByUri.values())
+}
+
+function buildChunkUriManifest(uris = []) {
+	const normalizedUris = normalizeChunkUriList(uris)
+	if (!normalizedUris.length) return ""
+	return normalizedUris.map((uri, index) => `${index + 1}. ${uri}`).join("\n")
+}
+
+function buildOriginManifestText(chunkManifest = []) {
+	const chunkUris = parseChunkUriManifest(chunkManifest)
+	if (!chunkUris.length) return "No chunks available."
+	const manifestLines = chunkUris.map((uri, index) => `Chunk ${index + 1}: ${uri}`)
+	return `Chunk Manifest:\n\n${manifestLines.join("\n")}`
 }

@@ -1,0 +1,567 @@
+/**
+ * Chunk Regression Test
+ *
+ * Publishes a large profile to Bluesky requiring 4+ chunk posts, then downloads
+ * the manifest and all chunks and verifies the reconstructed payload is whole and complete.
+ *
+ * Prerequisites:
+ *   - Dev server running: npm run dev
+ *   - Bluesky credentials in .env (BSKY_USERNAME / BSKY_PASSWORD)
+ *
+ * Usage:
+ *   node regression-test.mjs [--author=<handle>] [--server=<url>] [--wait=<ms>]
+ *
+ * Options:
+ *   --author   Bluesky handle or DID of the publishing account (default: BSKY_AUTHOR env or 'love4dogs.club')
+ *   --server   Local dev server base URL (default: TEST_SERVER_URL env or 'http://localhost:5173')
+ *   --wait     Milliseconds to wait for Bluesky indexing (default: 15000)
+ */
+
+import {
+	buildCombinedPayloadBundle,
+	buildChunkEntriesFromBundle,
+	publishChunkBundleToBsky,
+	loadMostRecentProfileBundleFromPublicBsky,
+	chunkHtmlByAltPayload,
+	measureChunkAltPayloadLength,
+} from './src/lib/bskyChunkStore.js';
+
+// ---------------------------------------------------------------------------
+// CLI argument parsing
+// ---------------------------------------------------------------------------
+
+function parseArgs(argv = process.argv.slice(2)) {
+	const args = {};
+	for (const arg of argv) {
+		const match = arg.match(/^--([^=]+)(?:=(.*))?$/);
+		if (match) args[match[1]] = match[2] ?? true;
+	}
+	return args;
+}
+
+const args = parseArgs();
+const BASE_URL = args.server || process.env.TEST_SERVER_URL || 'http://localhost:5173';
+const AUTHOR = args.author || process.env.BSKY_AUTHOR || 'love4dogs.club';
+const INDEX_WAIT_MS = Number(args.wait || process.env.TEST_INDEX_WAIT_MS || 15000);
+
+// ---------------------------------------------------------------------------
+// Assertion helpers
+// ---------------------------------------------------------------------------
+
+let passed = 0;
+let failed = 0;
+
+function pass(label) {
+	console.log(`  [PASS] ${label}`);
+	passed++;
+}
+
+function fail(label, detail = '') {
+	console.error(`  [FAIL] ${label}${detail ? ': ' + detail : ''}`);
+	failed++;
+}
+
+function assert(condition, label, detail = '') {
+	if (condition) {
+		pass(label);
+	} else {
+		fail(label, detail);
+	}
+}
+
+function assertEqual(actual, expected, label) {
+	if (actual === expected) {
+		pass(label);
+	} else {
+		fail(label, `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Unique ID generation (no crypto dependency)
+// ---------------------------------------------------------------------------
+
+function generateUuid() {
+	const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+	let result = '';
+	for (let i = 0; i < 12; i++) {
+		result += chars[Math.floor(Math.random() * chars.length)];
+	}
+	return result;
+}
+
+// ---------------------------------------------------------------------------
+// Dog image helpers
+// ---------------------------------------------------------------------------
+
+async function fetchRandomDogImageUrl() {
+	const res = await fetch('https://dog.ceo/api/breeds/image/random');
+	if (!res.ok) throw new Error(`dog.ceo API returned ${res.status}`);
+	const json = await res.json();
+	if (json.status !== 'success' || !json.message) {
+		throw new Error(`dog.ceo API bad response: ${JSON.stringify(json)}`);
+	}
+	return String(json.message);
+}
+
+async function fetchMultipleDogImages(count) {
+	const urls = [];
+	for (let i = 0; i < count; i++) {
+		urls.push(await fetchRandomDogImageUrl());
+	}
+	return urls;
+}
+
+// ---------------------------------------------------------------------------
+// Upload image to local dev server → get Bluesky blob reference
+// ---------------------------------------------------------------------------
+
+async function uploadDogImageToBluesky(imageUrl) {
+	// Download the image from dog.ceo
+	const imgRes = await fetch(imageUrl, { method: 'GET' });
+	if (!imgRes.ok) throw new Error(`Failed to download dog image: ${imgRes.status} ${imageUrl}`);
+	const imgBytes = await imgRes.arrayBuffer();
+	const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
+
+	// Upload via local server upload-media endpoint
+	const formData = new FormData();
+	formData.append('mode', 'upload-media');
+	formData.append('file', new Blob([imgBytes], { type: contentType }), 'dog.jpg');
+
+	const res = await fetch(`${BASE_URL}/api/post`, { method: 'POST', body: formData });
+	const json = await res.json().catch(() => ({}));
+	if (!res.ok || !json.ok) {
+		throw new Error(`Upload failed (${res.status}): ${json.error || 'unknown error'}`);
+	}
+
+	return {
+		kind: 'image',
+		alt: 'A dog photo',
+		blob: json.blob,
+		url: json.url,
+		did: json.did,
+		sourceUrl: imageUrl,
+	};
+}
+
+// ---------------------------------------------------------------------------
+// Build a large profile HTML content for subsequent payload
+// (must be large enough to force 4+ chunks)
+// ---------------------------------------------------------------------------
+
+function buildLargeProfileHtml(dogImageUrls, uuid) {
+	const loremBase =
+		'The dog happily bounded through the meadow, tail wagging furiously as it chased a butterfly ' +
+		'across the sun-dappled grass. Its owner laughed and called out, but the dog was too busy ' +
+		'reveling in the sheer joy of the moment to pay much attention. This is a test profile ' +
+		'created to verify that chunked Bluesky publishing works correctly end-to-end for profiles ' +
+		'that exceed the single-post payload limit. UUID: ' + uuid + '. ';
+
+	// Generate enough text to push well past the 4-chunk threshold (~8000 char JSON).
+	// Each figure adds ~300 chars, each paragraph block adds ~500 chars.
+	const sections = [];
+
+	sections.push(`<p>${loremBase.repeat(4)}</p>`);
+
+	for (let i = 0; i < dogImageUrls.length; i++) {
+		const url = dogImageUrls[i];
+		sections.push(
+			`<figure><img src="${url}" alt="Dog photo ${i + 1} — regression test image for profile ${uuid}" loading=lazy decoding=async fetchpriority=high>` +
+			`<figcaption>Dog photo ${i + 1}: captured on a beautiful day at the park. This lovely canine is full of energy and love.</figcaption></figure>`
+		);
+		sections.push(
+			`<p>Section ${i + 1}: ${loremBase.repeat(3)} This photo was taken during our regular morning walk. ` +
+			`The breed shown here is one of many wonderful companions that bring joy to families everywhere. ` +
+			`Photo index ${i + 1} of ${dogImageUrls.length}. Source: ${url}</p>`
+		);
+	}
+
+	sections.push(`<p><strong>About This Profile</strong></p>`);
+	sections.push(`<p>${loremBase.repeat(5)}</p>`);
+	sections.push(`<p>Profile UUID: ${uuid}. This section exists to ensure the total payload size ` +
+		`exceeds the four-chunk threshold required for this regression test. ` +
+		`Each chunk holds approximately 2000 characters of compressed JSON. ` +
+		`We repeat content here to pad the payload: ${loremBase.repeat(6)}</p>`);
+
+	sections.push(`<p><strong>Health &amp; Wellness</strong></p>`);
+	sections.push(`<p>${loremBase.repeat(4)} Vaccinations are current. Annual vet checkups are scheduled. ` +
+		`Dental hygiene is maintained with weekly brushing. A balanced diet and regular exercise ` +
+		`keep this dog in peak condition. ${loremBase.repeat(3)}</p>`);
+
+	sections.push(`<p><strong>Training Achievements</strong></p>`);
+	sections.push(`<p>${loremBase.repeat(4)} Completed beginner obedience, intermediate agility, and ` +
+		`advanced off-leash reliability courses. ${loremBase.repeat(3)}</p>`);
+
+	sections.push(`<p><strong>Contact Information</strong></p>`);
+	sections.push(`<p>${loremBase.repeat(3)} For inquiries about this profile please use the contact ` +
+		`form on the website. ${loremBase.repeat(4)}</p>`);
+
+	return sections.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Sleep helper
+// ---------------------------------------------------------------------------
+
+function sleep(ms) {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForCompleteProfileBundle({
+	fetchImpl = fetch,
+	uuid,
+	author,
+	expectedChunkCount,
+	timeoutMs = 120000,
+	intervalMs = 5000,
+}) {
+	const startedAt = Date.now();
+	let lastError = null;
+	let attempt = 0;
+
+	while (Date.now() - startedAt < timeoutMs) {
+		attempt += 1;
+		try {
+			const loaded = await loadMostRecentProfileBundleFromPublicBsky({
+				fetchImpl,
+				uuid,
+				author,
+				debug: false,
+				maxPages: 10,
+				pageLimit: 100,
+			});
+
+			const recoveredCount = Array.isArray(loaded?.payloads) ? loaded.payloads.length : 0;
+			console.log(
+				`  Poll ${attempt}: recovered ${recoveredCount}/${expectedChunkCount} chunk payloads`
+			);
+
+			if (recoveredCount === expectedChunkCount) {
+				return loaded;
+			}
+
+			lastError = new Error(
+				`Profile payload is incomplete (found ${recoveredCount}/${expectedChunkCount} chunks)`
+			);
+		} catch (error) {
+			lastError = error;
+			const details = error?.details
+				? ` ${JSON.stringify(error.details)}`
+				: '';
+			console.log(`  Poll ${attempt}: not ready yet - ${error.message || error}${details}`);
+		}
+
+		await sleep(intervalMs);
+	}
+
+	throw lastError || new Error('Timed out waiting for public Bluesky indexing.');
+}
+
+// ---------------------------------------------------------------------------
+// Main regression test
+// ---------------------------------------------------------------------------
+
+async function main() {
+	console.log('');
+	console.log('============================================================');
+	console.log('Chunk Regression Test - love4dogs');
+	console.log('============================================================');
+	console.log('');
+	console.log(`  Server : ${BASE_URL}`);
+	console.log(`  Author : ${AUTHOR}`);
+	console.log(`  Wait   : ${INDEX_WAIT_MS}ms`);
+	console.log('');
+
+	// ─── Step 1: Verify dev server is reachable ──────────────────────────────
+	console.log('Step 1: Verify dev server is reachable');
+	try {
+		const ping = await fetch(`${BASE_URL}/api/post?uri=at://invalid`, { method: 'GET' });
+		// We expect a 400 (invalid URI), not a connection error
+		assert(ping.status > 0, 'Dev server is reachable', `HTTP ${ping.status}`);
+	} catch (err) {
+		fail('Dev server is reachable', err.message);
+		console.error('\n  ERROR: Is the dev server running? Try: npm run dev\n');
+		process.exit(1);
+	}
+
+	// ─── Step 2: Fetch random dog images ─────────────────────────────────────
+	console.log('\nStep 2: Fetch 4 random dog images from dog.ceo');
+	const IMAGE_COUNT = 4;
+	let dogImageUrls;
+	try {
+		dogImageUrls = await fetchMultipleDogImages(IMAGE_COUNT);
+		assert(dogImageUrls.length === IMAGE_COUNT, `Fetched ${IMAGE_COUNT} dog image URLs`);
+		for (const url of dogImageUrls) {
+			assert(url.startsWith('https://'), `URL is HTTPS: ${url.slice(0, 60)}...`);
+		}
+	} catch (err) {
+		fail('Fetch dog images', err.message);
+		process.exit(1);
+	}
+
+	// ─── Step 3: Upload images to Bluesky via local server ───────────────────
+	console.log('\nStep 3: Upload images to Bluesky via local server');
+	const uploadedImages = [];
+	for (let i = 0; i < dogImageUrls.length; i++) {
+		const url = dogImageUrls[i];
+		try {
+			const uploaded = await uploadDogImageToBluesky(url);
+			uploadedImages.push(uploaded);
+			assert(
+				uploaded.blob && typeof uploaded.blob === 'object',
+				`Image ${i + 1}/${IMAGE_COUNT} uploaded: ${url.slice(0, 55)}...`
+			);
+		} catch (err) {
+			fail(`Image ${i + 1}/${IMAGE_COUNT} upload`, err.message);
+			process.exit(1);
+		}
+	}
+
+	// ─── Step 4: Build large profile payload ─────────────────────────────────
+	console.log('\nStep 4: Build large profile payload');
+	const uuid = generateUuid();
+	console.log(`  UUID: ${uuid}`);
+
+	const profileName = `Regression Test ${uuid}`;
+	const profileDescription =
+		`Automated regression test profile (${uuid}). ` +
+		'This profile is published to verify that 4+ chunk publishing and reconstruction works end-to-end. ' +
+		'It should be safe to delete after the test completes.';
+
+	const primaryPayload = {
+		uuid,
+		authorid: uuid,
+		stamp: Date.now().toString(36),
+		canonicalurl: `https://love4dogs.club/profile/view/${uuid}`,
+		name: profileName,
+		description: profileDescription,
+		profilePic: uploadedImages[0]?.url || null,
+		backgroundPic: uploadedImages[1]?.url || null,
+	};
+
+	const contentHtml = buildLargeProfileHtml(dogImageUrls, uuid);
+	console.log(`  Raw HTML content size: ${contentHtml.length} chars`);
+
+	// Split HTML content into subsequent payload chunks the same way the UI does
+	const subsequentPayload = chunkHtmlByAltPayload(contentHtml, 2000, { uuid });
+	console.log(`  Subsequent payload fragments (from HTML chunker): ${subsequentPayload.length}`);
+
+	assert(typeof primaryPayload.uuid === 'string', 'Primary payload has uuid');
+	assert(typeof primaryPayload.name === 'string', 'Primary payload has name');
+	assert(subsequentPayload.length > 0, 'Subsequent payload is non-empty');
+
+	// ─── Step 5: Build combined bundle and verify 4+ chunk entries ───────────
+	console.log('\nStep 5: Build combined bundle — verify 4+ chunks required');
+	const bundle = buildCombinedPayloadBundle(primaryPayload, subsequentPayload, {
+		uuid,
+		maxPayloadChars: 2000,
+	});
+	const chunkEntries = buildChunkEntriesFromBundle(bundle);
+
+	console.log(`  Combined JSON size      : ${bundle.combinedJson.length} chars`);
+	console.log(`  Bundle fragments        : ${bundle.fragments.length}`);
+	console.log(`  Chunk entries           : ${chunkEntries.length}`);
+	for (const entry of chunkEntries) {
+		const payloadLen = measureChunkAltPayloadLength(entry.bundleFragment, {
+			uuid,
+			index: entry.index,
+			total: entry.total,
+		});
+		console.log(`    Chunk ${String(entry.index).padStart(2)} / ${entry.total}: fragment ${entry.bundleFragment.length} chars → alt payload ${payloadLen} chars`);
+	}
+
+	assert(chunkEntries.length >= 4, `At least 4 chunks required (got ${chunkEntries.length})`);
+
+	if (chunkEntries.length < 4) {
+		console.error('\n  FATAL: Profile is too small to generate 4+ chunks. Increase content size.\n');
+		process.exit(1);
+	}
+
+	// Verify all chunk alt payloads are within the 2000-char limit
+	let allWithinLimit = true;
+	for (const entry of chunkEntries) {
+		const payloadLen = measureChunkAltPayloadLength(entry.bundleFragment, {
+			uuid,
+			index: entry.index,
+			total: entry.total,
+		});
+		if (payloadLen > 2000) {
+			allWithinLimit = false;
+			fail(`Chunk ${entry.index} payload within 2000-char limit`, `${payloadLen} chars`);
+		}
+	}
+	if (allWithinLimit) pass('All chunk alt payloads within 2000-char limit');
+
+	// ─── Step 6: Publish chunk bundle to Bluesky ─────────────────────────────
+	console.log('\nStep 6: Publish chunk bundle to Bluesky');
+	const postText = [profileName, profileDescription.slice(0, 80)]
+		.filter(Boolean)
+		.join('\n')
+		.slice(0, 295);
+
+	let publishResult;
+	try {
+		publishResult = await publishChunkBundleToBsky({
+			fetchImpl: fetch,
+			endpoint: `${BASE_URL}/api/post`,
+			uuid,
+			postText,
+			primaryPayload,
+			chunks: chunkEntries,
+			primaryMedia: uploadedImages.map((img) => ({
+				kind: 'image',
+				alt: img.alt,
+				blob: img.blob,
+			})),
+			replyAttachmentPool: [],
+			videoAttachments: [],
+		});
+	} catch (err) {
+		fail('publishChunkBundleToBsky', err.message);
+		console.error('\n  Publish error:', err);
+		process.exit(1);
+	}
+
+	const originUri = publishResult?.originResult?.uri || publishResult?.primaryResult?.uri || '';
+	assert(typeof originUri === 'string' && originUri.startsWith('at://'), `Origin post URI: ${originUri}`);
+	assert(
+		Array.isArray(publishResult?.chunkResults) && publishResult.chunkResults.length > 0,
+		`Chunk posts created: ${publishResult?.chunkResults?.length}`
+	);
+	assert(publishResult.chunkCount >= 4, `chunkCount >= 4 (got ${publishResult.chunkCount})`);
+
+	const expectedChunkPosts = Math.ceil(chunkEntries.length / 4);
+	assertEqual(
+		publishResult.chunkResults.length,
+		expectedChunkPosts,
+		`Expected ${expectedChunkPosts} chunk post(s) for ${chunkEntries.length} chunk entries`
+	);
+
+	console.log('');
+	console.log('  Published URIs:');
+	console.log(`    Origin : ${originUri}`);
+	for (let i = 0; i < publishResult.chunkResults.length; i++) {
+		const uri = publishResult.chunkResults[i]?.uri || '(no uri)';
+		console.log(`    Chunk post ${i + 1}: ${uri}`);
+	}
+
+	// ─── Step 7: Wait for Bluesky indexing ───────────────────────────────────
+	console.log(`\nStep 7: Waiting ${INDEX_WAIT_MS / 1000}s before polling public Bluesky...`);
+	await sleep(INDEX_WAIT_MS);
+	pass(`Waited ${INDEX_WAIT_MS}ms`);
+
+	// ─── Step 8: Download from public Bluesky ────────────────────────────────
+	console.log('\nStep 8: Download manifest and chunks from public Bluesky');
+	let loaded;
+	try {
+		loaded = await waitForCompleteProfileBundle({
+			fetchImpl: fetch,
+			uuid,
+			author: AUTHOR,
+			expectedChunkCount: chunkEntries.length,
+			timeoutMs: Math.max(INDEX_WAIT_MS * 8, 120000),
+			intervalMs: 5000,
+		});
+	} catch (err) {
+		fail('loadMostRecentProfileBundleFromPublicBsky', err.message);
+		if (err.details) console.error('  Details:', JSON.stringify(err.details, null, 2));
+		console.error('\n  Tip: Try increasing --wait or rerun later if public indexing is delayed.\n');
+		process.exit(1);
+	}
+
+	assert(loaded !== null && typeof loaded === 'object', 'Profile bundle loaded');
+	assert(typeof loaded.combinedJson === 'string' && loaded.combinedJson.length > 0, 'combinedJson is non-empty');
+	assert(Array.isArray(loaded.fragments) && loaded.fragments.length > 0, 'Fragments list is non-empty');
+	assert(Array.isArray(loaded.payloads), 'Payloads list present');
+
+	const reconstructedChunkCount = loaded.payloads.length;
+	console.log(`  Payloads recovered   : ${reconstructedChunkCount}`);
+	console.log(`  Fragments recovered  : ${loaded.fragments.length}`);
+	console.log(`  combinedJson length  : ${loaded.combinedJson.length} chars`);
+
+	// ─── Step 9: Verify chunk count matches ──────────────────────────────────
+	console.log('\nStep 9: Verify chunk count');
+	assert(
+		reconstructedChunkCount === chunkEntries.length,
+		`Recovered ${reconstructedChunkCount} chunk payloads (expected ${chunkEntries.length})`
+	);
+
+	// ─── Step 10: Verify reconstructed payload matches original ──────────────
+	console.log('\nStep 10: Verify reconstructed payload is whole and complete');
+
+	// Parse both sides
+	let originalParsed, reconstructedParsed;
+	try {
+		originalParsed = JSON.parse(bundle.combinedJson);
+	} catch (err) {
+		fail('Original bundle.combinedJson is valid JSON', err.message);
+		process.exit(1);
+	}
+	try {
+		reconstructedParsed = JSON.parse(loaded.combinedJson);
+	} catch (err) {
+		fail('Reconstructed combinedJson is valid JSON', err.message);
+		process.exit(1);
+	}
+
+	pass('Both original and reconstructed are valid JSON');
+
+	// Compare structure
+	const origStr = JSON.stringify(originalParsed);
+	const reconStr = JSON.stringify(reconstructedParsed);
+	assert(origStr === reconStr, 'Reconstructed JSON matches original exactly');
+
+	// Deep-dive field checks on the primary payload
+	const recoPrimary = reconstructedParsed?.primary;
+	assertEqual(recoPrimary?.uuid, uuid, 'primary.uuid matches');
+	assertEqual(recoPrimary?.name, profileName, 'primary.name matches');
+	assert(recoPrimary?.description?.includes(uuid), 'primary.description contains UUID');
+	assert(recoPrimary?.canonicalurl?.includes(uuid), 'primary.canonicalurl contains UUID');
+
+	// Verify all subsequent fragments are present and join correctly
+	const recoSubsequent = reconstructedParsed?.subsequent;
+	assert(Array.isArray(recoSubsequent), 'subsequent is an array');
+	assert(
+		Array.isArray(recoSubsequent) && recoSubsequent.length === subsequentPayload.length,
+		`subsequent has ${recoSubsequent?.length} fragments (expected ${subsequentPayload.length})`
+	);
+
+	// Verify the reconstructed HTML round-trips correctly
+	if (Array.isArray(recoSubsequent)) {
+		const reconstructedHtml = recoSubsequent.join('');
+		const originalHtml = subsequentPayload.join('');
+		assert(reconstructedHtml === originalHtml, 'Reconstructed HTML content matches original');
+		// Spot-check: all dog image URLs present in reconstructed HTML
+		let allUrlsPresent = true;
+		for (const url of dogImageUrls) {
+			if (!reconstructedHtml.includes(url)) {
+				allUrlsPresent = false;
+				fail(`Dog image URL present in reconstructed HTML: ${url.slice(0, 60)}...`);
+			}
+		}
+		if (allUrlsPresent) pass('All dog image URLs present in reconstructed HTML');
+	}
+
+	// ─── Summary ─────────────────────────────────────────────────────────────
+	console.log('');
+	console.log('============================================================');
+	if (failed === 0) {
+		console.log('ALL TESTS PASSED');
+	} else {
+		console.log(`${failed} TEST(S) FAILED, ${passed} PASSED`);
+	}
+	console.log('============================================================');
+	console.log('');
+	console.log(`  UUID         : ${uuid}`);
+	console.log(`  Origin URI   : ${originUri}`);
+	console.log(`  Chunks       : ${chunkEntries.length} (across ${publishResult?.chunkResults?.length} post(s))`);
+	console.log(`  Total checks : ${passed + failed} (${passed} passed, ${failed} failed)`);
+	console.log('');
+
+	if (failed > 0) process.exit(1);
+}
+
+main().catch((err) => {
+	console.error('\nFATAL UNHANDLED ERROR:', err);
+	process.exit(1);
+});

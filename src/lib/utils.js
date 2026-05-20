@@ -16,8 +16,41 @@ export function mediaTokenFromHex(hex) {
 }
 
 /**
- * Build a media token by SHA-256 hashing an ArrayBuffer (browser-compatible).
- * @param {ArrayBuffer} buffer
+	 * Build a media token by SHA-256 hashing a source/origin string.
+	 * @param {string} value
+	 * @returns {Promise<string>}
+	 */
+export async function mediaTokenFromOrigin(value = '') {
+	const source = String(value || '').trim();
+	if (!source) return '';
+	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(source));
+	const hex = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
+	return mediaTokenFromHex(hex);
+	}
+
+/**
+	 * Build a stable media origin from a locally selected file.
+	 * @param {File} file
+	 * @returns {string}
+	 */
+export function mediaOriginFromFile(file) {
+	const raw = String(file?.webkitRelativePath || file?.path || file?.name || '').trim();
+	return raw.replace(/\\/g, '/');
+	}
+
+/**
+	 * Build a media token from a locally selected file origin.
+	 * @param {File} file
+	 * @returns {Promise<string>}
+	 */
+export async function mediaTokenFromFile(file) {
+	return mediaTokenFromOrigin(mediaOriginFromFile(file));
+	}
+
+/**
+	 * @deprecated Prefer mediaTokenFromOrigin or mediaTokenFromFile.
+	 * Build a media token by SHA-256 hashing an ArrayBuffer (browser-compatible).
+	 * @param {ArrayBuffer} buffer
  * @returns {Promise<string>}
  */
 export async function mediaTokenFromBuffer(buffer) {

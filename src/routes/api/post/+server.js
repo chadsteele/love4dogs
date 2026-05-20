@@ -536,8 +536,8 @@ export async function GET({ url }) {
 			});
 		}
 
-		const session = await getSession();
-		const res = await fetch(
+		let session = await getSession();
+		let res = await fetch(
 			`${BSKY_XRPC}/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}&depth=0`,
 			{
 				headers: {
@@ -548,15 +548,35 @@ export async function GET({ url }) {
 		);
 
 		if (!res.ok) {
-			if (res.status === 401 || res.status === 403) cachedSession = null;
-			const errBody = await res.json().catch(() => ({}));
-			return new Response(
-				JSON.stringify({ error: errBody.message || errBody.error || 'Unable to load post.' }),
-				{
-					status: res.status,
-					headers: { 'content-type': 'application/json' }
+			let errBody = await res.json().catch(() => ({}));
+			const errMessage = String(errBody?.message || errBody?.error || '');
+			if (isAuthLikeFailure(res.status, errMessage)) {
+				cachedSession = null;
+				session = await createSession();
+				res = await fetch(
+					`${BSKY_XRPC}/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}&depth=0`,
+					{
+						headers: {
+							authorization: `Bearer ${session.accessJwt}`,
+							accept: 'application/json'
+						}
+					}
+				);
+				if (!res.ok) {
+					errBody = await res.json().catch(() => ({}));
 				}
-			);
+			}
+
+			if (!res.ok) {
+				if (res.status === 401 || res.status === 403) cachedSession = null;
+				return new Response(
+					JSON.stringify({ error: errBody.message || errBody.error || 'Unable to load post.' }),
+					{
+						status: res.status,
+						headers: { 'content-type': 'application/json' }
+					}
+				);
+			}
 		}
 
 		const json = await res.json();

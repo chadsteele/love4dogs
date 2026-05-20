@@ -2,7 +2,7 @@
 	const MAX_IMAGE_SIZE_BYTES = 2_000_000
 	const NORMALIZED_IMAGE_MAX_DIM = 1800
 	import {User, Pencil} from "lucide-svelte"
-	import {mediaTokenFromBuffer} from "$lib/utils"
+	import {mediaTokenFromFile} from "$lib/utils"
 
 	let {
 		profileUploadedMedia = $bindable([]),
@@ -174,8 +174,10 @@
 			NORMALIZED_IMAGE_MAX_DIM,
 			NORMALIZED_IMAGE_MAX_DIM,
 		)
-		const buffer = await normalized.arrayBuffer()
-		const sourceUrl = await mediaTokenFromBuffer(buffer)
+		const sourceUrl = await mediaTokenFromFile(file)
+		if (!sourceUrl) {
+			throw new Error("Media origin is required for upload.")
+		}
 		const formData = new FormData()
 		formData.append("mode", "cache-media-url")
 		formData.append("sourceUrl", sourceUrl)
