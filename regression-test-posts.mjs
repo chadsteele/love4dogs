@@ -156,9 +156,10 @@ async function fetchAuthorFeedPostsFromPublicBsky(fetchImpl, author, options = {
 	const pageLimit = Math.max(1, Math.min(100, Number(options?.pageLimit || 100)));
 	const postsByUri = new Map();
 	let cursor = '';
+	const publicXrpc = 'https://public.api.bsky.app/xrpc';
 
 	for (let page = 1; page <= maxPages; page += 1) {
-		const feedUrl = `https://api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(actor)}&limit=${encodeURIComponent(String(pageLimit))}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
+		const feedUrl = `${publicXrpc}/app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(actor)}&limit=${encodeURIComponent(String(pageLimit))}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
 		const response = await fetchImpl(feedUrl);
 		if (!response.ok) break;
 

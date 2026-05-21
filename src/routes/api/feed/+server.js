@@ -1,6 +1,6 @@
 import { env } from '$env/dynamic/private';
 
-const BSKY_PUBLIC_XRPC_HOSTS = ['https://api.bsky.app/xrpc', 'https://public.api.bsky.app/xrpc'];
+const BSKY_PUBLIC_XRPC_HOSTS = ['https://public.api.bsky.app/xrpc'];
 const BSKY_AUTH_XRPC = 'https://bsky.social/xrpc';
 const ACCOUNT_HANDLE = 'love4dogs.club';
 

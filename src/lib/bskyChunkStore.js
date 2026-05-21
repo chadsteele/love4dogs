@@ -1,6 +1,7 @@
 const DEFAULT_CHUNK_ALT_PAYLOAD_TARGET_CHARS = 2000
 const DEFAULT_CONTENT_CHUNK_SIZE = 1800
 const STATIC_HTML_DICT_VERSION = 1
+const BSKY_PUBLIC_XRPC = "https://public.api.bsky.app/xrpc"
 function sortUniqueHtmlCandidates(candidates = []) {
 	const unique = [...new Set(candidates.map((entry) => String(entry || "")).filter(Boolean))]
 	return unique.sort((a, b) => {
@@ -821,7 +822,7 @@ function collectPostsFromThreadNode(node, posts = [], seenUris = new Set()) {
 async function fetchThreadPostsFromPublicBsky(fetchImpl, uri, debugLog, warnLog) {
 	const targetUri = String(uri || "").trim()
 	if (!targetUri) return []
-	const threadUrl = `https://api.bsky.app/xrpc/app.bsky.feed.getPostThread?uri=${encodeURIComponent(targetUri)}&depth=100&parentHeight=100`
+	const threadUrl = `${BSKY_PUBLIC_XRPC}/app.bsky.feed.getPostThread?uri=${encodeURIComponent(targetUri)}&depth=100&parentHeight=100`
 
 	try {
 		const response = await fetchImpl(threadUrl)
@@ -865,7 +866,7 @@ async function fetchAuthorFeedPostsFromPublicBsky(
 	let cursor = ""
 
 	for (let page = 1; page <= maxPages; page += 1) {
-		const feedUrl = `https://api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(actor)}&limit=${encodeURIComponent(String(pageLimit))}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`
+		const feedUrl = `${BSKY_PUBLIC_XRPC}/app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(actor)}&limit=${encodeURIComponent(String(pageLimit))}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`
 		try {
 			const response = await fetchImpl(feedUrl)
 			debugLog("author feed response", {
@@ -1036,7 +1037,7 @@ export async function loadMostRecentProfileBundleFromPublicBsky({
 	const postsByUri = new Map()
 	const searchQueries = [`${id} canonicalurl`.trim(), id].filter(Boolean)
 	for (const query of searchQueries) {
-		const searchUrl = `https://api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(query)}&author=${encodeURIComponent(author)}&limit=${encodeURIComponent(String(pageLimit))}`
+		const searchUrl = `${BSKY_PUBLIC_XRPC}/app.bsky.feed.searchPosts?q=${encodeURIComponent(query)}&author=${encodeURIComponent(author)}&limit=${encodeURIComponent(String(pageLimit))}`
 		try {
 			const response = await fetchImpl(searchUrl)
 			debugLog("latest-by-uuid public search response", {
@@ -1245,7 +1246,7 @@ export async function loadMostRecentProfileBundleFromPublicBsky({
 
 			if (typeof window === "undefined" && group.legacyToken) {
 				const fallbackQuery = `${id} ${group.legacyToken}`.trim()
-				const fallbackSearchUrl = `https://api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(fallbackQuery)}&author=${encodeURIComponent(author)}&limit=${encodeURIComponent(String(pageLimit))}`
+				const fallbackSearchUrl = `${BSKY_PUBLIC_XRPC}/app.bsky.feed.searchPosts?q=${encodeURIComponent(fallbackQuery)}&author=${encodeURIComponent(author)}&limit=${encodeURIComponent(String(pageLimit))}`
 				try {
 					const response = await fetchImpl(fallbackSearchUrl)
 					if (response.ok) {
