@@ -7,6 +7,7 @@
 		"dev": "vite dev",
 		"build": "vite build",
 		"test:regression:chunks": "node regression-test.mjs",
+		"test:regression:posts": "node regression-test-posts.mjs",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''"
 	},
