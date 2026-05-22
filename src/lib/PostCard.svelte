@@ -23,6 +23,7 @@
 	} = $props()
 	let showImageModal = $state(false)
 	let activeImageIndex = $state(0)
+	let imageOrientations = $state({})
 
 	const BSKY_HANDLE = "love4dogs.club"
 
@@ -198,6 +199,41 @@
 		showImageModal = true
 	}
 
+	function imageOrientationKey(image = "") {
+		return normalizeComparableImageUrl(image) || String(image || "").trim()
+	}
+
+	function getImageOrientation(image = "") {
+		return imageOrientations[imageOrientationKey(image)] || "unknown"
+	}
+
+	function updateImageOrientation(image = "", width = 0, height = 0) {
+		const key = imageOrientationKey(image)
+		if (!key || !width || !height) return
+
+		const nextOrientation =
+			width > height
+				? "landscape"
+				: height > width
+					? "portrait"
+					: "square"
+
+		if (imageOrientations[key] === nextOrientation) return
+		imageOrientations = {
+			...imageOrientations,
+			[key]: nextOrientation,
+		}
+	}
+
+	function handleImageLoad(image = "", event) {
+		const target = event.currentTarget
+		updateImageOrientation(
+			image,
+			Number(target?.naturalWidth || 0),
+			Number(target?.naturalHeight || 0),
+		)
+	}
+
 	function closeImageModal() {
 		showImageModal = false
 	}
@@ -302,7 +338,7 @@
 		if (!text) return ""
 
 		const canonicalPattern =
-			/https?:\/\/(?:www\.)?(?:love4dogs\.club|localhost(?::\d+)?)\/profile\/view\/[^\s"'<>]+/i
+			/https?:\/\/(?:www\.)?(?:love4dogs\.club|localhost(?::\d+)?)\/(?:profile|post)\/(?:view|edit)\/[^\s"'<>]+/i
 		const canonicalMatch = text.match(canonicalPattern)
 		if (canonicalMatch?.[0]) {
 			return cleanExtractedUrl(canonicalMatch[0])
@@ -363,7 +399,7 @@
 		}
 
 		const escapedPattern = new RegExp(
-			"https?:\\\\/\\\\/(?:www\\\\.)?(?:love4dogs\\\\.club|localhost(?::\\\\d+)?)\\\\/profile\\\\/view\\\\/[^\\\\s\"'<>]+",
+			"https?:\\\\/\\\\/(?:www\\\\.)?(?:love4dogs\\\\.club|localhost(?::\\\\d+)?)\\\\/(?:profile|post)\\\\/(?:view|edit)\\\\/[^\\\\s\"'<>]+",
 			"i",
 		)
 		const escapedMatch = source.match(escapedPattern)
@@ -380,7 +416,7 @@
 				if (feature?.$type !== "app.bsky.richtext.facet#link") continue
 				const uri = String(feature?.uri || "").trim()
 				if (!uri) continue
-				if (/\/profile\/view\//i.test(uri)) {
+				if (/\/(?:profile|post)\/(?:view|edit)\//i.test(uri)) {
 					return rewriteLove4DogsUrlForLocalhost(
 						cleanExtractedUrl(uri),
 					)
@@ -433,7 +469,9 @@
 		const canonical = String(url || "").trim()
 		if (!canonical) return null
 
-		const viewMatch = canonical.match(/profile\/view\/([^/]+)/i)
+		const viewMatch = canonical.match(
+			/(?:profile|post)\/(?:view|edit)\/([^/]+)/i,
+		)
 		if (viewMatch) {
 			return {
 				uuid: viewMatch[1],
@@ -476,7 +514,7 @@
 				.filter(Boolean)
 
 			const viewIndex = segments.findIndex((segment) =>
-				/^view$/i.test(segment),
+				/^(view|edit)$/i.test(segment),
 			)
 			if (viewIndex >= 0 && segments[viewIndex + 2]) {
 				return segments[viewIndex + 2]
@@ -514,13 +552,8 @@
 		return buildViewPath(rawCanonical, fallbackTitle, "/profile/view", "")
 	}
 
-	function buildPostViewPath(rawCanonical = "", fallbackTitle = "") {
-		return buildViewPath(
-			rawCanonical,
-			fallbackTitle,
-			"/post/view",
-			"/post/view",
-		)
+	function buildPostEditPath(rawCanonical = "", fallbackTitle = "") {
+		return buildViewPath(rawCanonical, fallbackTitle, "/post/edit", "/post")
 	}
 
 	function extractProfileDataFromBundle(alt = "") {
@@ -734,8 +767,8 @@
 
 		return null
 	})
-	const postViewHref = $derived.by(() =>
-		buildPostViewPath(canonicalUrl || "", parts?.title || ""),
+	const postEditHref = $derived.by(() =>
+		buildPostEditPath(canonicalUrl || "", parts?.title || ""),
 	)
 	const displayTitle = $derived.by(() => {
 		if (profileData) return ""
@@ -760,6 +793,24 @@
 	const cardImages = $derived.by(() => {
 		if (profileData) return []
 		return uniqueImages.slice(0, 4)
+	})
+	const imageLayoutMode = $derived.by(() => {
+		const count = cardImages.length
+		if (count <= 1) return "single"
+		if (count === 2) {
+			const orientations = cardImages.map((image) =>
+				getImageOrientation(image),
+			)
+			if (
+				orientations.every((orientation) => orientation === "landscape")
+			) {
+				return "two-stacked"
+			}
+			return "two-side"
+		}
+		if (count === 3) return "three-dynamic"
+		if (count === 4) return "four-grid"
+		return "grid"
 	})
 
 	$effect(() => {
@@ -855,10 +906,10 @@
 			backgroundPic={profileData.backgroundPic}
 			title={profileData.profileName}
 			description={profileData.profileDescription}
-			url={profileViewHref || postViewHref}
+			url={profileViewHref || postEditHref}
 		/>
 	{:else if displayTitle || displayDescription}
-		<a class="post-view-link" href={postViewHref}>
+		<a class="post-view-link" href={postEditHref}>
 			{#if displayTitle}
 				<h3 class="post-title">{displayTitle}</h3>
 			{/if}
@@ -887,21 +938,29 @@
 	{#if cardImages.length}
 		<div
 			class="post-images"
-			class:single-image={cardImages.length === 1}
-			class:two-images={cardImages.length === 2}
-			class:three-images={cardImages.length === 3}
-			class:four-images={cardImages.length === 4}
+			class:single-image={imageLayoutMode === "single"}
+			class:two-images-stacked={imageLayoutMode === "two-stacked"}
+			class:two-images-side={imageLayoutMode === "two-side"}
+			class:three-images={imageLayoutMode === "three-dynamic"}
+			class:four-images={imageLayoutMode === "four-grid"}
 		>
 			{#each cardImages as image, index}
 				<button
 					type="button"
 					class="post-image-btn"
-					class:image-large-left={cardImages.length === 3 &&
-						index === 0}
+					class:img-portrait={imageLayoutMode === "three-dynamic" &&
+						getImageOrientation(image) === "portrait"}
+					class:img-landscape={imageLayoutMode === "three-dynamic" &&
+						getImageOrientation(image) === "landscape"}
 					onclick={() => openImageModal(index)}
 					aria-label={`Open image ${index + 1} of ${cardImages.length}`}
 				>
-					<img src={image} alt="Dog post" loading="lazy" />
+					<img
+						src={image}
+						alt="Dog post"
+						loading="lazy"
+						onload={(event) => handleImageLoad(image, event)}
+					/>
 				</button>
 			{/each}
 		</div>
@@ -1128,15 +1187,13 @@
 		cursor: pointer;
 		width: 100%;
 		text-align: left;
-	}
-
-	.post-image-btn.image-large-left {
-		grid-row: span 2;
+		display: block;
+		overflow: hidden;
+		border-radius: 9px;
 	}
 
 	.post-images {
 		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 0.45rem;
 		margin-top: 0.65rem;
 	}
@@ -1145,37 +1202,53 @@
 		grid-template-columns: 1fr;
 	}
 
-	.post-images.two-images {
-		grid-template-columns: repeat(2, minmax(0, 1fr));
+	.post-images.two-images-stacked {
+		grid-template-columns: 1fr;
 	}
 
-	.post-images.three-images,
+	.post-images.two-images-side,
 	.post-images.four-images {
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
 
 	.post-images.three-images {
-		grid-template-rows: repeat(2, minmax(110px, 1fr));
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		grid-auto-rows: 180px;
+		grid-auto-flow: dense;
 	}
 
 	.post-images img {
 		width: 100%;
-		aspect-ratio: 1 / 1;
-		height: auto;
+		height: 100%;
 		object-fit: cover;
 		border-radius: 9px;
 		box-shadow: 0 2px 7px rgba(39, 23, 10, 0.12);
 		display: block;
 	}
 
-	.post-images.single-image img,
-	.post-images .post-image-btn.image-large-left img {
+	.post-images.single-image img {
+		height: auto;
+		max-height: 520px;
+	}
+
+	.post-images.two-images-stacked img {
+		aspect-ratio: 16 / 10;
+	}
+
+	.post-images.two-images-side img {
 		aspect-ratio: 4 / 5;
 	}
 
-	.post-images.single-image img {
-		aspect-ratio: 16 / 10;
-		max-height: 460px;
+	.post-images.four-images img {
+		aspect-ratio: 1 / 1;
+	}
+
+	.post-image-btn.img-portrait {
+		grid-row: span 2;
+	}
+
+	.post-image-btn.img-landscape {
+		grid-column: span 2;
 	}
 
 	.post-video {
