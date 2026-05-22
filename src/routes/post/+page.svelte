@@ -696,10 +696,6 @@
 
 <main class="page">
 	<NavBar />
-	<nav class="topline">
-		<a class="back" href="/">＜ Back home</a>
-		<h1>Create a post</h1>
-	</nav>
 
 	<article
 		class="panel compose"
@@ -717,39 +713,42 @@
 			</p>
 		{/if}
 
-		<div class="title-row">
+		<h1>{editingPostUri ? "Edit post" : "Create a post"}</h1>
+
+		<label>
 			<input
-				class="title-input"
 				type="text"
 				bind:value={title}
-				placeholder="Title (required)"
+				placeholder="Title"
 				maxlength="50"
 				required
+				style="font-size: 1.25rem; font-weight: 600;"
 			/>
-			<span
-				class="title-counter"
-				class:title-danger={[...title].length > 45}
-			>
-				{50 - [...title].length}
-			</span>
-		</div>
+		</label>
+		<p class="char-count" class:danger={[...title].length > 45}>
+			{50 - [...title].length}/50
+		</p>
 
-		<textarea
-			bind:value={draft}
-			bind:this={textareaEl}
-			placeholder={"Share your ❤️ for dogs..."}
-			rows="7"
-			class:is-dragging={isDraggingFiles}
-			ondragover={(event) => mediaUploadManager?.handleDragOver(event)}
-			ondragleave={(event) => mediaUploadManager?.handleDragLeave(event)}
-			ondrop={(event) => mediaUploadManager?.handleDropFiles(event)}
-		></textarea>
+		<label>
+			<textarea
+				bind:value={draft}
+				bind:this={textareaEl}
+				placeholder={"Write your post..."}
+				rows="7"
+				class:is-dragging={isDraggingFiles}
+				ondragover={(event) =>
+					mediaUploadManager?.handleDragOver(event)}
+				ondragleave={(event) =>
+					mediaUploadManager?.handleDragLeave(event)}
+				ondrop={(event) => mediaUploadManager?.handleDropFiles(event)}
+			></textarea>
+		</label>
 		{#if isDraggingFiles}
 			<p class="drop-target-hint">Drop photos anywhere in this panel.</p>
 		{/if}
 		<div class="tags-drawer">
 			<div>
-				<label>
+				<label class="drawer-label">
 					<button
 						type="button"
 						class="tags-drawer-toggle"
@@ -772,61 +771,67 @@
 			{/if}
 		</div>
 
-		<div class="address-row">
-			<input
-				class="address-input"
-				type="text"
-				bind:value={addressText}
-				placeholder="Address (required)"
-				required
-			/>
-			{#if locationConfirmed}
-				<span class="address-confirmed-badge">✓ Confirmed</span>
-			{/if}
-		</div>
-
-		<div class="contact-row">
-			<input
-				class="contact-input"
-				type="text"
-				bind:value={contactinfo}
-				placeholder="Optional: you@email.com, +phone, @username.bsky.social, or other contact info"
-				maxlength="200"
-				readonly={isContactEncrypted(contactinfo)}
-				oninput={() => {
-					if (isContactEncrypted(contactinfo)) return
-					contactinfo = normalizeContactInput(contactinfo)
-				}}
-			/>
-
-			<button
-				class="lock-btn"
-				type="button"
-				disabled={!contactinfo.trim()}
-				title={isContactEncrypted(contactinfo)
-					? "Decrypt contact info"
-					: "Encrypt contact info"}
-				onclick={() => {
-					if (!isContactEncrypted(contactinfo)) {
-						const normalized = normalizeContactInput(
-							contactinfo.trim(),
-						)
-						contactinfo =
-							CONTACT_LOCK_PREFIX + encryptContact(normalized)
-					} else {
-						contactinfo = decryptContact(
-							contactinfo.slice(CONTACT_LOCK_PREFIX.length),
-						)
-					}
-				}}
-			>
-				{#if isContactEncrypted(contactinfo)}
-					<EyeOff size={16} />
-				{:else}
-					<Eye size={16} />
+		<label>
+			<span>Location</span>
+			<div class="address-row">
+				<input
+					class="address-input"
+					type="text"
+					bind:value={addressText}
+					placeholder="Location is required, but exact address is not"
+					required
+				/>
+				{#if locationConfirmed}
+					<span class="address-confirmed-badge">✓ Confirmed</span>
 				{/if}
-			</button>
-		</div>
+			</div>
+		</label>
+
+		<label>
+			<span>Private</span>
+			<div class="contact-row">
+				<input
+					class="contact-input"
+					type="text"
+					bind:value={contactinfo}
+					placeholder="Optional: you@email.com, +phone, @username.bsky.social, or other contact info"
+					maxlength="200"
+					readonly={isContactEncrypted(contactinfo)}
+					oninput={() => {
+						if (isContactEncrypted(contactinfo)) return
+						contactinfo = normalizeContactInput(contactinfo)
+					}}
+				/>
+
+				<button
+					class="lock-btn"
+					type="button"
+					disabled={!contactinfo.trim()}
+					title={isContactEncrypted(contactinfo)
+						? "Decrypt contact info"
+						: "Encrypt contact info"}
+					onclick={() => {
+						if (!isContactEncrypted(contactinfo)) {
+							const normalized = normalizeContactInput(
+								contactinfo.trim(),
+							)
+							contactinfo =
+								CONTACT_LOCK_PREFIX + encryptContact(normalized)
+						} else {
+							contactinfo = decryptContact(
+								contactinfo.slice(CONTACT_LOCK_PREFIX.length),
+							)
+						}
+					}}
+				>
+					{#if isContactEncrypted(contactinfo)}
+						<EyeOff size={16} />
+					{:else}
+						<Eye size={16} />
+					{/if}
+				</button>
+			</div>
+		</label>
 		{#if contactinfo.trim().length > 0}
 			<div
 				class="contact-notice"
@@ -854,7 +859,7 @@
 			</div>
 		{/if}
 
-		<p class="counter" class:danger={remainingChars() < 0}>
+		<p class="char-count" class:danger={remainingChars() < 0}>
 			{remainingChars()} chars left
 		</p>
 
@@ -874,29 +879,11 @@
 			disabled={posting}
 		>
 			{#snippet actions()}
-				<div class="toolbar-right">
+				<div class="actions-row">
+					<div aria-hidden="true"></div>
 					<button
-						class="cancel-btn"
 						type="button"
-						onclick={cancelCompose}
-						disabled={posting}
-					>
-						<span>Cancel</span>
-					</button>
-					{#if editingPostUri}
-						<button
-							class="delete-btn"
-							type="button"
-							onclick={deletePost}
-							disabled={posting}
-						>
-							<Trash2 size={16} />
-							<span>Delete</span>
-						</button>
-					{/if}
-					<button
-						class="post-btn"
-						type="button"
+						class="primary"
 						onclick={submitPost}
 						disabled={posting}
 					>
@@ -909,6 +896,25 @@
 									: "Submit"}</span
 						>
 					</button>
+					<div class="actions-right">
+						<button
+							type="button"
+							onclick={cancelCompose}
+							disabled={posting}
+						>
+							<span>Cancel</span>
+						</button>
+						{#if editingPostUri}
+							<button
+								type="button"
+								onclick={deletePost}
+								disabled={posting}
+							>
+								<Trash2 size={16} />
+								<span>Delete</span>
+							</button>
+						{/if}
+					</div>
 				</div>
 			{/snippet}
 		</MediaUploadManager>
@@ -994,32 +1000,26 @@
 
 <style>
 	.page {
-		max-width: 920px;
+		max-width: 1080px;
 		margin: 0 auto;
 		padding: 1rem;
-	}
-	.topline {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 1rem;
-		margin-bottom: 1rem;
-	}
-	.back {
-		text-decoration: none;
-		color: #1f5135;
-		font-weight: 600;
+		display: grid;
+		gap: 0.8rem;
+		min-width: 0;
 	}
 	h1 {
 		margin: 0;
 		font-size: 1.25rem;
+		margin-bottom: 0.6rem;
 	}
 	.panel {
 		background: rgba(255, 250, 241, 0.9);
 		border: 1px solid rgba(58, 91, 65, 0.18);
 		border-radius: 16px;
-		padding: 1rem;
-		box-shadow: 0 10px 26px rgba(65, 42, 20, 0.12);
+		padding: 0.9rem;
+		box-shadow: 0 8px 20px rgba(65, 42, 20, 0.1);
+		min-width: 0;
+		overflow-x: hidden;
 	}
 	.compose {
 		position: relative;
@@ -1034,49 +1034,35 @@
 		font-weight: 600;
 		color: #2f5f3f;
 	}
+	label {
+		display: grid;
+		gap: 0.3rem;
+		margin-bottom: 0.55rem;
+	}
+	input,
+	textarea {
+		width: 100%;
+		box-sizing: border-box;
+		border: 1px solid #d7c8b6;
+		border-radius: 12px;
+		padding: 0.6rem 0.7rem;
+		font: inherit;
+	}
+	textarea {
+		resize: vertical;
+		min-height: 160px;
+	}
 	.compose.drag-active {
 		border-color: #55724d;
 		background: #ece8d7;
 		box-shadow: 0 0 0 2px rgba(85, 114, 77, 0.22);
 	}
-	.title-row {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		margin-bottom: 0.5rem;
-	}
-	.title-input {
-		flex: 1;
-		font: inherit;
-		font-weight: 700;
-		font-size: 1.05rem;
-		border: 1px solid #d7c8b6;
-		border-radius: 12px;
-		padding: 0.6rem 0.75rem;
-		box-sizing: border-box;
-	}
-	.title-counter {
-		font-size: 0.8rem;
-		color: #8a8a8a;
-		white-space: nowrap;
-	}
-	.title-danger {
-		color: #b94a4a;
-		font-weight: 600;
-	}
-	textarea {
-		width: 100%;
-		border: 1px solid #d7c8b6;
-		border-radius: 12px;
-		padding: 0.75rem;
-		font: inherit;
-		resize: vertical;
-		box-sizing: border-box;
-		min-height: 160px;
-	}
 	textarea.is-dragging {
 		background: #ece8d7;
 		border-color: #55724d;
+	}
+	.drawer-label {
+		margin-bottom: 0;
 	}
 	.drop-target-hint {
 		margin: 0.45rem 0 0;
@@ -1179,10 +1165,10 @@
 		flex-shrink: 0;
 		margin-top: 1px;
 	}
-	.post-btn {
+	button {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.35rem;
+		gap: 0.38rem;
 		border: 1px solid #bdad9e;
 		background: #fff;
 		border-radius: 999px;
@@ -1190,48 +1176,19 @@
 		font: inherit;
 		cursor: pointer;
 	}
-	.post-btn {
+	button.primary {
 		background: #3b6e4f;
 		border-color: #305741;
 		color: #fff;
 	}
-	.cancel-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.35rem;
-		border: 1px solid #bdad9e;
-		background: #fff;
-		color: #5f665f;
-		border-radius: 999px;
-		padding: 0.45rem 0.8rem;
-		font: inherit;
-		cursor: pointer;
-	}
-	.cancel-btn:hover {
-		background: #f4eee4;
-	}
-	.delete-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.35rem;
-		border: 1px solid #b04030;
-		background: #fff;
-		color: #b04030;
-		border-radius: 999px;
-		padding: 0.45rem 0.8rem;
-		font: inherit;
-		cursor: pointer;
-	}
-	.delete-btn:hover {
-		background: #fdf0ee;
+	button:disabled {
+		cursor: not-allowed;
+		opacity: 0.58;
 	}
 	.warning,
 	.success {
-		display: flex;
-		align-items: center;
-		gap: 0.35rem;
-		font-size: 0.9rem;
-		margin: 0.7rem 0 0;
+		margin: 0.4rem 0 0;
+		font-size: 0.88rem;
 	}
 	.warning {
 		color: #8e2f21;
@@ -1239,22 +1196,14 @@
 	.success {
 		color: #24633f;
 	}
-	.counter {
-		font-size: 0.85rem;
-		color: #506157;
-		margin: 0.65rem 0 0;
+	.char-count {
+		margin: 0;
 		text-align: right;
+		font-size: 0.78rem;
+		color: #56695f;
 	}
-	.counter.danger {
+	.char-count.danger {
 		color: #8e2f21;
-	}
-	.image-alt-editor-wrap {
-		margin-top: 0.7rem;
-	}
-	.image-alt-editor-label {
-		margin: 0 0 0.35rem;
-		font-size: 0.85rem;
-		color: #506157;
 	}
 	.tags-drawer {
 		margin-top: 0.6rem;
@@ -1279,6 +1228,20 @@
 	}
 	.tags-drawer-content {
 		margin-top: 0.45rem;
+	}
+	.actions-row {
+		display: grid;
+		grid-template-columns: 1fr auto 1fr;
+		align-items: center;
+		width: 100%;
+		gap: 0.6rem;
+		margin-top: 1rem;
+	}
+	.actions-right {
+		display: inline-flex;
+		align-items: center;
+		justify-self: end;
+		gap: 0.45rem;
 	}
 	.modal-overlay {
 		position: fixed;
@@ -1365,5 +1328,15 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.7rem;
+	}
+
+	@media (max-width: 900px) {
+		.actions-row {
+			grid-template-columns: 1fr;
+		}
+		.actions-row > button,
+		.actions-right {
+			justify-self: start;
+		}
 	}
 </style>

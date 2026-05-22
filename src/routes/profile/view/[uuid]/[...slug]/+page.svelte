@@ -261,7 +261,7 @@
 	<title>Profile | Love4Dogs</title>
 </svelte:head>
 
-<main class="page">
+<main class="page profile-view-page">
 	<NavBar {currentView} {editProfileUrl} onSetView={setView} />
 
 	{#if loading}

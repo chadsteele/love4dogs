@@ -126,7 +126,7 @@
 	<title>Post View | Love4Dogs</title>
 </svelte:head>
 
-<main class="page">
+<main class="page post-view-page">
 	<NavBar {currentView} onSetView={setView} />
 
 	{#if loading}
