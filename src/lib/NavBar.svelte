@@ -815,7 +815,7 @@
 		}
 	}
 
-	@media (max-width: 900px) {
+	@media (max-width: 960px) {
 		.title-rest {
 			display: block;
 		}
@@ -848,7 +848,7 @@
 		}
 
 		.post-route-btn::before {
-			content: "+";
+			/* content: "+"; */
 			font-size: 1.45rem;
 			line-height: 1;
 			font-weight: 700;

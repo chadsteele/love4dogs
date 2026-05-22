@@ -1088,18 +1088,20 @@
 
 	.post-title {
 		margin: 0;
-		font-size: 1.1rem;
+		margin-left: 2rem;
+		font-family: inherit;
+		font-size: 1.35rem;
 		line-height: 1.05;
-		font-weight: 800;
-		color: #202020;
+		font-weight: 700;
+		color: #1f1f1f;
 		word-break: break-word;
 	}
 
 	.post-description {
 		margin: 0.35rem 0 0;
 		font-size: 0.92rem;
-		line-height: 1.35;
-		color: #374151;
+		line-height: var(--line-height-body);
+		color: var(--color-text-body);
 		word-break: break-word;
 	}
 

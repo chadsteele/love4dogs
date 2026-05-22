@@ -28,6 +28,18 @@
 {/if}
 
 <style>
+	:global(:root) {
+		--font-family-base: "Avenir Next", "Trebuchet MS", sans-serif;
+		--font-size-title: 1.35rem;
+		--font-size-card-title: 1.35rem;
+		--font-size-card-description: 0.95rem;
+		--line-height-title: 1.05;
+		--line-height-body: 1.35;
+		--font-weight-title: 800;
+		--color-text-strong: #202020;
+		--color-text-body: #374151;
+	}
+
 	:global(html),
 	:global(body) {
 		min-height: 100%;
@@ -35,8 +47,18 @@
 
 	:global(body) {
 		margin: 0;
-		font-family: "Avenir Next", "Trebuchet MS", sans-serif;
+		font-family: var(--font-family-base);
+		line-height: var(--line-height-body);
+		color: var(--color-text-body);
 		background: #10140f;
+	}
+
+	:global(button),
+	:global(input),
+	:global(textarea),
+	:global(select) {
+		font: inherit;
+		color: inherit;
 	}
 
 	:global(body),
