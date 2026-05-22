@@ -1,6 +1,10 @@
 import { env } from '$env/dynamic/private';
+import { extractPostTypeFromTags } from '$lib/postTypeTags.js';
 
-const BSKY_PUBLIC_XRPC_HOSTS = ['https://public.api.bsky.app/xrpc'];
+const BSKY_PUBLIC_XRPC_HOSTS = [
+	'https://public.api.bsky.app/xrpc',
+	'https://api.bsky.app/xrpc'
+];
 const BSKY_AUTH_XRPC = 'https://bsky.social/xrpc';
 const ACCOUNT_HANDLE = 'love4dogs.club';
 
@@ -70,6 +74,104 @@ function countTopTags(posts, limit = 20) {
 		.map(([tag, count]) => ({ tag, count }));
 }
 
+function extractIdentityFromCanonicalUrl(canonicalUrl = '') {
+	const source = String(canonicalUrl || '').trim();
+	if (!source) return '';
+	const match = source.match(/\/profile\/view\/([^/?#]+)/i);
+	if (match?.[1]) return match[1].trim().toLowerCase();
+	return source.toLowerCase();
+}
+
+function extractIdentityFromAlt(alt = '') {
+	const source = String(alt || '').trim();
+	if (!source) return '';
+
+	try {
+		const parsed = JSON.parse(source);
+		const directUuid = String(parsed?.u || parsed?.uuid || '').trim();
+		if (directUuid) return directUuid.toLowerCase();
+
+		const canonicalUrl = String(
+			parsed?.canonicalurl || parsed?.canonicalUrl || '',
+		).trim();
+		if (canonicalUrl) {
+			const identity = extractIdentityFromCanonicalUrl(canonicalUrl);
+			if (identity) return identity;
+		}
+	} catch {
+		// Fall through to plain-text matching below.
+	}
+
+	const textMatch = source.match(/\/profile\/view\/([^/?#]+)/i);
+	if (textMatch?.[1]) return textMatch[1].trim().toLowerCase();
+
+	return '';
+}
+
+function extractPostIdentity(postWrapper) {
+	const post = postWrapper?.post || postWrapper || {};
+	const record = post.record || {};
+	const imageIdentity = [];
+	const embed = post.embed;
+	const media =
+		embed?.$type === 'app.bsky.embed.recordWithMedia#view'
+			? embed.media
+			: embed;
+	const images =
+		media?.$type === 'app.bsky.embed.images#view'
+			? media.images || []
+			: [];
+
+	for (const image of images) {
+		const identity = extractIdentityFromAlt(image?.alt || '');
+		if (identity) imageIdentity.push(identity);
+	}
+
+	const videoIdentity = extractIdentityFromAlt(media?.alt || '');
+	return imageIdentity[0] || videoIdentity || '';
+}
+
+function dedupePosts(posts = []) {
+	const byIdentity = new Map();
+	const order = [];
+
+	for (const post of posts) {
+		const identity = String(post?.displayKey || post?.uri || '').trim();
+		if (!identity) continue;
+
+		if (!byIdentity.has(identity)) {
+			byIdentity.set(identity, post);
+			order.push(identity);
+			continue;
+		}
+
+		const existing = byIdentity.get(identity);
+		const existingType = String(existing?.postType || '').trim().toLowerCase();
+		const candidateType = String(post?.postType || '').trim().toLowerCase();
+
+		if (existingType !== 'profile' && candidateType === 'profile') {
+			console.log('[feed] collapsed duplicate identity', {
+				identity,
+				keptUri: post.uri,
+				droppedUri: existing?.uri || '',
+				keptType: candidateType,
+				droppedType: existingType,
+			});
+			byIdentity.set(identity, post);
+		} else {
+			console.log('[feed] skipped duplicate identity', {
+				identity,
+				keptUri: existing?.uri || '',
+				droppedUri: post.uri,
+				keptType: existingType,
+				droppedType: candidateType,
+			});
+		}
+	}
+
+	return order.map((identity) => byIdentity.get(identity)).filter(Boolean);
+}
+
 function mapPost(postWrapper) {
 	const post = postWrapper.post;
 	const record = post.record || {};
@@ -97,8 +199,11 @@ function mapPost(postWrapper) {
 		};
 	}
 
+	const identityKey = extractPostIdentity(postWrapper) || post.uri || '';
+
 	return {
 		uri: post.uri,
+		displayKey: identityKey,
 		cid: post.cid,
 		text: record.text || '',
 		facets: Array.isArray(record.facets) ? record.facets : [],
@@ -106,6 +211,7 @@ function mapPost(postWrapper) {
 		images,
 		imageAlts,
 		video,
+		postType: extractPostTypeFromTags(record?.tags),
 		replyCount: post.replyCount || 0,
 		repostCount: post.repostCount || 0,
 		likeCount: post.likeCount || 0,
@@ -184,12 +290,21 @@ export async function GET({ url }) {
 	const sort = url.searchParams.get('sort') === 'top' ? 'top' : 'latest';
 	const limit = Math.min(Math.max(1, Number(url.searchParams.get('limit')) || 20), 100);
 	const cursor = url.searchParams.get('cursor')?.trim() || '';
+	const forceRefresh = url.searchParams.get('refresh') === '1';
+	const cacheBuster = forceRefresh ? Date.now() : null;
 	const publicFetchOptions = {
 		method: 'GET',
 		mode: 'cors',
 		credentials: 'omit',
+		cache: forceRefresh ? 'no-store' : 'default',
 		headers: {
-			Accept: 'application/json'
+			Accept: 'application/json',
+			...(forceRefresh
+				? {
+					'Cache-Control': 'no-cache, no-store, max-age=0',
+					Pragma: 'no-cache'
+				}
+				: {})
 		}
 	};
 
@@ -199,6 +314,9 @@ export async function GET({ url }) {
 		let searchPath = `app.bsky.feed.searchPosts?q=${encodeURIComponent(query)}&author=${encodeURIComponent(ACCOUNT_HANDLE)}&limit=${limit}${sort === 'top' ? '&sort=top' : ''}`;
 		if (cursor) {
 			searchPath += `&cursor=${encodeURIComponent(cursor)}`;
+		}
+		if (cacheBuster) {
+			searchPath += `&_=${cacheBuster}`;
 		}
 		const { response: searchRes, failures: searchFailures } = await xrpcGet(
 			searchPath,
@@ -220,6 +338,7 @@ export async function GET({ url }) {
 		let posts = (searchJson.posts || [])
 			.filter((post) => !isReplyPost(post))
 			.map((post) => mapPost({ post }));
+		posts = dedupePosts(posts);
 		posts = await hydratePostComments(posts);
 
 		return new Response(
@@ -236,6 +355,9 @@ export async function GET({ url }) {
 	let authorFeedPath = `app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(ACCOUNT_HANDLE)}&limit=${limit}`;
 	if (cursor) {
 		authorFeedPath += `&cursor=${encodeURIComponent(cursor)}`;
+	}
+	if (cacheBuster) {
+		authorFeedPath += `&_=${cacheBuster}`;
 	}
 	const { response: authorFeedRes, failures: authorFeedFailures } = await xrpcGet(
 		authorFeedPath,
@@ -260,7 +382,8 @@ export async function GET({ url }) {
 	);
 	const commonRecentTags = countTopTags(feedItems, 20);
 
-	let posts = await hydratePostComments(feedItems.map(mapPost));
+	let posts = dedupePosts(feedItems.map(mapPost));
+	posts = await hydratePostComments(posts);
 
 	return new Response(
 		JSON.stringify({

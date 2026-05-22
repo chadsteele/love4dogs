@@ -26,106 +26,23 @@ import {
 	chunkHtmlByAltPayload,
 	measureChunkAltPayloadLength,
 } from './src/lib/bskyChunkStore.js';
-
-function parseArgs(argv = process.argv.slice(2)) {
-	const args = {};
-	for (const arg of argv) {
-		const match = arg.match(/^--([^=]+)(?:=(.*))?$/);
-		if (match) args[match[1]] = match[2] ?? true;
-	}
-	return args;
-}
+import {
+	parseArgs,
+	resolveTestConfig,
+	createAssertions,
+	generateUuid,
+	fetchMultipleDogImages,
+	uploadDogImageToBluesky,
+	sleep,
+} from './regression-test-common.mjs';
 
 const args = parseArgs();
-const BASE_URL = args.server || process.env.TEST_SERVER_URL || 'http://localhost:5173';
-const AUTHOR = args.author || process.env.BSKY_AUTHOR || 'love4dogs.club';
-const INDEX_WAIT_MS = Number(args.wait || process.env.TEST_INDEX_WAIT_MS || 15000);
-
-let passed = 0;
-let failed = 0;
-
-function pass(label) {
-	console.log(`  [PASS] ${label}`);
-	passed += 1;
-}
-
-function fail(label, detail = '') {
-	console.error(`  [FAIL] ${label}${detail ? ': ' + detail : ''}`);
-	failed += 1;
-}
-
-function assert(condition, label, detail = '') {
-	if (condition) {
-		pass(label);
-	} else {
-		fail(label, detail);
-	}
-}
-
-function assertEqual(actual, expected, label) {
-	if (actual === expected) {
-		pass(label);
-	} else {
-		fail(label, `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
-}
-}
-
-function generateUuid() {
-	const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-	let result = '';
-	for (let i = 0; i < 12; i += 1) {
-		result += chars[Math.floor(Math.random() * chars.length)];
-	}
-	return result;
-}
-
-// ---------------------------------------------------------------------------
-// Dog image helpers
-// ---------------------------------------------------------------------------
-
-async function fetchRandomDogImageUrl() {
-	const res = await fetch('https://dog.ceo/api/breeds/image/random');
-	if (!res.ok) throw new Error(`dog.ceo API returned ${res.status}`);
-	const json = await res.json();
-	if (json.status !== 'success' || !json.message) {
-		throw new Error(`dog.ceo API bad response: ${JSON.stringify(json)}`);
-	}
-	return String(json.message);
-}
-
-async function fetchMultipleDogImages(count) {
-	const urls = [];
-	for (let i = 0; i < count; i += 1) {
-		urls.push(await fetchRandomDogImageUrl());
-	}
-	return urls;
-}
-
-async function uploadDogImageToBluesky(imageUrl) {
-	const imgRes = await fetch(imageUrl, { method: 'GET' });
-	if (!imgRes.ok) throw new Error(`Failed to download dog image: ${imgRes.status} ${imageUrl}`);
-	const imgBytes = await imgRes.arrayBuffer();
-	const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
-
-	const formData = new FormData();
-	formData.append('mode', 'upload-media');
-	formData.append('file', new Blob([imgBytes], { type: contentType }), 'dog.jpg');
-
-	const res = await fetch(`${BASE_URL}/api/post`, { method: 'POST', body: formData });
-	const json = await res.json().catch(() => ({}));
-	if (!res.ok || !json.ok) {
-		throw new Error(`Upload failed (${res.status}): ${json.error || 'unknown error'}`);
-	}
-
-	return {
-		kind: 'image',
-		alt: 'A dog photo',
-		blob: json.blob,
-		url: json.url,
-		did: json.did,
-		sourceUrl: imageUrl,
-	};
-}
+const {
+	baseUrl: BASE_URL,
+	author: AUTHOR,
+	indexWaitMs: INDEX_WAIT_MS,
+} = resolveTestConfig(args);
+const { pass, fail, assert, assertEqual, counts } = createAssertions();
 
 function buildLargePostHtml(uuid) {
 	const loremBase =
@@ -142,11 +59,6 @@ function buildLargePostHtml(uuid) {
 
 	return sections.join('\n');
 }
-
-function sleep(ms) {
-	return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 
 async function fetchAuthorFeedPostsFromPublicBsky(fetchImpl, author, options = {}) {
 	const actor = String(author || '').trim();
@@ -258,7 +170,11 @@ async function main() {
 	for (let i = 0; i < dogImageUrls.length; i += 1) {
 		const url = dogImageUrls[i];
 		try {
-			const uploaded = await uploadDogImageToBluesky(url);
+			const uploaded = await uploadDogImageToBluesky({
+				baseUrl: BASE_URL,
+				imageUrl: url,
+				fetchImpl: fetch,
+			});
 			uploadedImages.push(uploaded);
 			assert(uploaded.blob && typeof uploaded.blob === 'object', `Carrier image ${i + 1}/${dogImageUrls.length} uploaded`);
 		} catch (err) {
@@ -268,7 +184,7 @@ async function main() {
 	}
 	const primaryPayload = {
 		uuid,
-		type: 'post-regression',
+		type: 'post',
 		title,
 		canonicalurl: `https://love4dogs.club/post/view/${uuid}`,
 		summary: `Automated regression test post for chunked publishing (${uuid}).`,
@@ -296,6 +212,7 @@ async function main() {
 	assert(chunkEntries.length >= 4, `At least 4 chunks required (got ${chunkEntries.length})`);
 	assert(subsequentPayload.length > 0, 'Post subsequent payload is non-empty');
 	assertEqual(primaryPayload.uuid, uuid, 'Primary payload UUID matches');
+	assertEqual(primaryPayload.type, 'post', 'Primary payload has type=post');
 	assertEqual(uploadedImages.length, dogImageUrls.length, 'Uploaded image count matches source count');
 
 	let publishResult;
@@ -304,6 +221,7 @@ async function main() {
 			fetchImpl: fetch,
 			endpoint: `${BASE_URL}/api/post`,
 			uuid,
+			postType: 'post',
 			postText: title,
 			primaryPayload,
 			chunks: chunkEntries,
@@ -373,11 +291,12 @@ async function main() {
 
 	console.log('');
 	console.log('============================================================');
-	console.log(`Test complete: ${passed} passed, ${failed} failed`);
+	const summary = counts();
+	console.log(`Test complete: ${summary.passed} passed, ${summary.failed} failed`);
 	console.log('============================================================');
 	console.log('');
 
-	process.exit(failed > 0 ? 1 : 0);
+	process.exit(counts().failed > 0 ? 1 : 0);
 }
 
 main().catch((err) => {

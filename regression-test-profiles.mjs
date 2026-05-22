@@ -25,124 +25,23 @@ import {
 	chunkHtmlByAltPayload,
 	measureChunkAltPayloadLength,
 } from './src/lib/bskyChunkStore.js';
-
-// ---------------------------------------------------------------------------
-// CLI argument parsing
-// ---------------------------------------------------------------------------
-
-function parseArgs(argv = process.argv.slice(2)) {
-	const args = {};
-	for (const arg of argv) {
-		const match = arg.match(/^--([^=]+)(?:=(.*))?$/);
-		if (match) args[match[1]] = match[2] ?? true;
-	}
-	return args;
-}
+import {
+	parseArgs,
+	resolveTestConfig,
+	createAssertions,
+	generateUuid,
+	fetchMultipleDogImages,
+	uploadDogImageToBluesky,
+	sleep,
+} from './regression-test-common.mjs';
 
 const args = parseArgs();
-const BASE_URL = args.server || process.env.TEST_SERVER_URL || 'http://localhost:5173';
-const AUTHOR = args.author || process.env.BSKY_AUTHOR || 'love4dogs.club';
-const INDEX_WAIT_MS = Number(args.wait || process.env.TEST_INDEX_WAIT_MS || 15000);
-
-// ---------------------------------------------------------------------------
-// Assertion helpers
-// ---------------------------------------------------------------------------
-
-let passed = 0;
-let failed = 0;
-
-function pass(label) {
-	console.log(`  [PASS] ${label}`);
-	passed++;
-}
-
-function fail(label, detail = '') {
-	console.error(`  [FAIL] ${label}${detail ? ': ' + detail : ''}`);
-	failed++;
-}
-
-function assert(condition, label, detail = '') {
-	if (condition) {
-		pass(label);
-	} else {
-		fail(label, detail);
-	}
-}
-
-function assertEqual(actual, expected, label) {
-	if (actual === expected) {
-		pass(label);
-	} else {
-		fail(label, `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Unique ID generation (no crypto dependency)
-// ---------------------------------------------------------------------------
-
-function generateUuid() {
-	const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-	let result = '';
-	for (let i = 0; i < 12; i++) {
-		result += chars[Math.floor(Math.random() * chars.length)];
-	}
-	return result;
-}
-
-// ---------------------------------------------------------------------------
-// Dog image helpers
-// ---------------------------------------------------------------------------
-
-async function fetchRandomDogImageUrl() {
-	const res = await fetch('https://dog.ceo/api/breeds/image/random');
-	if (!res.ok) throw new Error(`dog.ceo API returned ${res.status}`);
-	const json = await res.json();
-	if (json.status !== 'success' || !json.message) {
-		throw new Error(`dog.ceo API bad response: ${JSON.stringify(json)}`);
-	}
-	return String(json.message);
-}
-
-async function fetchMultipleDogImages(count) {
-	const urls = [];
-	for (let i = 0; i < count; i++) {
-		urls.push(await fetchRandomDogImageUrl());
-	}
-	return urls;
-}
-
-// ---------------------------------------------------------------------------
-// Upload image to local dev server → get Bluesky blob reference
-// ---------------------------------------------------------------------------
-
-async function uploadDogImageToBluesky(imageUrl) {
-	// Download the image from dog.ceo
-	const imgRes = await fetch(imageUrl, { method: 'GET' });
-	if (!imgRes.ok) throw new Error(`Failed to download dog image: ${imgRes.status} ${imageUrl}`);
-	const imgBytes = await imgRes.arrayBuffer();
-	const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
-
-	// Upload via local server upload-media endpoint
-	const formData = new FormData();
-	formData.append('mode', 'upload-media');
-	formData.append('file', new Blob([imgBytes], { type: contentType }), 'dog.jpg');
-
-	const res = await fetch(`${BASE_URL}/api/post`, { method: 'POST', body: formData });
-	const json = await res.json().catch(() => ({}));
-	if (!res.ok || !json.ok) {
-		throw new Error(`Upload failed (${res.status}): ${json.error || 'unknown error'}`);
-	}
-
-	return {
-		kind: 'image',
-		alt: 'A dog photo',
-		blob: json.blob,
-		url: json.url,
-		did: json.did,
-		sourceUrl: imageUrl,
-	};
-}
+const {
+	baseUrl: BASE_URL,
+	author: AUTHOR,
+	indexWaitMs: INDEX_WAIT_MS,
+} = resolveTestConfig(args);
+const { pass, fail, assert, assertEqual, counts } = createAssertions();
 
 // ---------------------------------------------------------------------------
 // Build a large profile HTML content for subsequent payload
@@ -197,14 +96,6 @@ function buildLargeProfileHtml(dogImageUrls, uuid) {
 		`form on the website. ${loremBase.repeat(4)}</p>`);
 
 	return sections.join('\n');
-}
-
-// ---------------------------------------------------------------------------
-// Sleep helper
-// ---------------------------------------------------------------------------
-
-function sleep(ms) {
-	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function waitForCompleteProfileBundle({
@@ -305,7 +196,11 @@ async function main() {
 	for (let i = 0; i < dogImageUrls.length; i++) {
 		const url = dogImageUrls[i];
 		try {
-			const uploaded = await uploadDogImageToBluesky(url);
+			const uploaded = await uploadDogImageToBluesky({
+				baseUrl: BASE_URL,
+				imageUrl: url,
+				fetchImpl: fetch,
+			});
 			uploadedImages.push(uploaded);
 			assert(
 				uploaded.blob && typeof uploaded.blob === 'object',
@@ -329,6 +224,7 @@ async function main() {
 		'It should be safe to delete after the test completes.';
 
 	const primaryPayload = {
+		type: 'profile',
 		uuid,
 		authorid: uuid,
 		stamp: Date.now().toString(36),
@@ -347,6 +243,7 @@ async function main() {
 	console.log(`  Subsequent payload fragments (from HTML chunker): ${subsequentPayload.length}`);
 
 	assert(typeof primaryPayload.uuid === 'string', 'Primary payload has uuid');
+	assertEqual(primaryPayload.type, 'profile', 'Primary payload has type=profile');
 	assert(typeof primaryPayload.name === 'string', 'Primary payload has name');
 	assert(subsequentPayload.length > 0, 'Subsequent payload is non-empty');
 
@@ -405,6 +302,7 @@ async function main() {
 			fetchImpl: fetch,
 			endpoint: `${BASE_URL}/api/post`,
 			uuid,
+			postType: 'profile',
 			postText,
 			primaryPayload,
 			chunks: chunkEntries,
@@ -545,20 +443,22 @@ async function main() {
 	// ─── Summary ─────────────────────────────────────────────────────────────
 	console.log('');
 	console.log('============================================================');
-	if (failed === 0) {
+	if (counts().failed === 0) {
 		console.log('ALL TESTS PASSED');
 	} else {
-		console.log(`${failed} TEST(S) FAILED, ${passed} PASSED`);
+		const summary = counts();
+		console.log(`${summary.failed} TEST(S) FAILED, ${summary.passed} PASSED`);
 	}
 	console.log('============================================================');
 	console.log('');
 	console.log(`  UUID         : ${uuid}`);
 	console.log(`  Origin URI   : ${originUri}`);
 	console.log(`  Chunks       : ${chunkEntries.length} (across ${publishResult?.chunkResults?.length} post(s))`);
-	console.log(`  Total checks : ${passed + failed} (${passed} passed, ${failed} failed)`);
+	const summary = counts();
+	console.log(`  Total checks : ${summary.total} (${summary.passed} passed, ${summary.failed} failed)`);
 	console.log('');
 
-	if (failed > 0) process.exit(1);
+	if (counts().failed > 0) process.exit(1);
 }
 
 main().catch((err) => {

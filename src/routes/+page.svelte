@@ -1,7 +1,7 @@
 <script>
 	import {onMount} from "svelte"
 	import {isLocalHost} from "$lib/utils"
-	import {CircleAlert, Map as MapIcon} from "lucide-svelte"
+	import {CircleAlert, Map as MapIcon, RefreshCw} from "lucide-svelte"
 	import About from "$lib/About.svelte"
 	import PostCard from "$lib/PostCard.svelte"
 	import NavBar from "$lib/NavBar.svelte"
@@ -162,7 +162,7 @@
 		}
 	}
 
-	async function loadFeed() {
+	async function loadFeed({forceFresh = false} = {}) {
 		const requestId = ++lastFeedRequestId
 		loadingPosts = true
 		feedError = ""
@@ -176,7 +176,13 @@
 				sort: searchSort,
 				limit: 20,
 			})
-			const res = await fetch(`/api/feed?${params.toString()}`)
+			if (forceFresh) {
+				params.set("refresh", "1")
+				params.set("ts", String(Date.now()))
+			}
+			const res = await fetch(`/api/feed?${params.toString()}`, {
+				cache: forceFresh ? "no-store" : "default",
+			})
 			const json = await res.json()
 
 			if (!res.ok) {
@@ -285,7 +291,9 @@
 		const res = await fetch(`/api/post?uri=${encodeURIComponent(uri)}`)
 		const json = await res.json().catch(() => ({}))
 		if (!res.ok) {
-			throw new Error(json.error || "Unable to load post.")
+			const error = new Error(json.error || "Unable to load post.")
+			error.status = res.status
+			throw error
 		}
 		return json.post
 	}
@@ -296,6 +304,7 @@
 
 		loadingHistory = true
 		const updates = {}
+		const staleUris = []
 		for (const uri of missing) {
 			try {
 				const post = await fetchPostByUri(uri)
@@ -307,7 +316,15 @@
 					replyCount: Number(post.replyCount) || 0,
 					comments: Array.isArray(post.comments) ? post.comments : [],
 				}
-			} catch {
+			} catch (error) {
+				const message = String(error?.message || "").toLowerCase()
+				const status = Number(error?.status || 0)
+				if (
+					status === 404 ||
+					(status === 400 && /not found/.test(message))
+				) {
+					staleUris.push(uri)
+				}
 				// Keep rendering even if some saved posts are unavailable.
 			}
 		}
@@ -315,39 +332,63 @@
 		if (Object.keys(updates).length) {
 			myPostsByUri = {...myPostsByUri, ...updates}
 		}
+
+		if (staleUris.length) {
+			const staleSet = new Set(staleUris)
+			myPostUris = myPostUris.filter((uri) => !staleSet.has(uri))
+			saveStoredList(LOCAL_MY_POSTS_KEY, myPostUris)
+		}
 		loadingHistory = false
 	}
 
 	function visiblePosts() {
+		const seen = new Set()
+		const dedupe = (items = []) => {
+			const next = []
+			for (const item of items) {
+				const key = String(item?.displayKey || item?.uri || "").trim()
+				if (!key || seen.has(key)) continue
+				seen.add(key)
+				next.push(item)
+			}
+			return next
+		}
+
 		if (currentView === "history") {
-			return myPostUris.map((uri) => {
-				return (
-					myPostsByUri[uri] || {
-						uri,
-						text: "Post not found.",
-						createdAt: null,
-						images: [],
-						video: null,
-						facets: [],
-						comments: [],
-						likeCount: 0,
-						repostCount: 0,
-						replyCount: 0,
-					}
-				)
-			})
+			return dedupe(
+				myPostUris.map((uri) => {
+					return (
+						myPostsByUri[uri] || {
+							uri,
+							text: "Post not found.",
+							createdAt: null,
+							images: [],
+							video: null,
+							facets: [],
+							comments: [],
+							likeCount: 0,
+							repostCount: 0,
+							replyCount: 0,
+						}
+					)
+				}),
+			)
 		}
 
 		if (currentView === "trash") {
-			return posts.filter((post) => trashedUris.includes(post.uri))
+			return dedupe(
+				posts.filter((post) => trashedUris.includes(post.uri)),
+			)
 		}
 
 		if (currentView === "bookmarks") {
-			return posts.filter((post) => bookmarkedUris.includes(post.uri))
+			return dedupe(
+				posts.filter((post) => bookmarkedUris.includes(post.uri)),
+			)
 		}
 
-		if (!trashedUris.length) return posts
-		return posts.filter((post) => !trashedUris.includes(post.uri))
+		if (!trashedUris.length) return dedupe(posts)
+		return dedupe(posts.filter((post) => !trashedUris.includes(post.uri)))
 	}
 
 	function allVisibleSelected() {
@@ -674,9 +715,21 @@
 					{/if}
 				</div>
 				{#if currentView === "feed"}
-					<a href="/map" class="map-view-btn">
-						<MapIcon size={14} /> Map View
-					</a>
+					<div class="feed-header-actions">
+						<button
+							type="button"
+							class="refresh-feed-btn"
+							onclick={() => loadFeed({forceFresh: true})}
+							disabled={loadingPosts}
+							aria-label="Refresh search results from Bluesky"
+							title="Refresh from Bluesky"
+						>
+							<RefreshCw size={14} />
+						</button>
+						<a href="/map" class="map-view-btn">
+							<MapIcon size={14} /> Map View
+						</a>
+					</div>
 				{/if}
 			</div>
 
@@ -686,16 +739,21 @@
 				<p class="warning"><CircleAlert size={15} /> {feedError}</p>
 			{:else if visiblePosts().length === 0}
 				{#if searchTerm.trim().length > 0 && currentView === "feed"}
-					<p class="muted">No posts match this search.</p>
-					<p class="muted empty-search-results">
-						Search Results: empty
-					</p>
+					<div class="empty-search-state">
+						<p class="muted">No posts match this search.</p>
+						<p class="muted empty-search-results">
+							Search Results: empty
+						</p>
+						<a class="create-post-btn" href="/post">
+							Create a post
+						</a>
+					</div>
 				{:else}
 					<p class="muted">No posts match this view.</p>
 				{/if}
 			{:else}
 				<div class="post-list">
-					{#each visiblePosts() as post}
+					{#each visiblePosts() as post (post.displayKey || post.uri)}
 						<PostCard
 							{post}
 							selectable={myPostUris.includes(post.uri)}
@@ -784,6 +842,12 @@
 		gap: 0.75rem;
 	}
 
+	.feed-header-actions {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+	}
+
 	.feed-header-left {
 		display: flex;
 		align-items: center;
@@ -857,6 +921,29 @@
 		white-space: nowrap;
 	}
 
+	.refresh-feed-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 30px;
+		height: 30px;
+		border-radius: 999px;
+		border: 1px solid rgba(59, 110, 79, 0.3);
+		background: rgba(59, 110, 79, 0.1);
+		color: #305741;
+		cursor: pointer;
+	}
+
+	.refresh-feed-btn:hover {
+		background: rgba(59, 110, 79, 0.2);
+		border-color: #305741;
+	}
+
+	.refresh-feed-btn:disabled {
+		opacity: 0.5;
+		cursor: default;
+	}
+
 	.map-view-btn:hover {
 		background: rgba(59, 110, 79, 0.2);
 		border-color: #305741;
@@ -906,6 +993,33 @@
 
 	.empty-search-results {
 		margin-top: -0.45rem;
+	}
+
+	.empty-search-state {
+		display: grid;
+		justify-items: start;
+		gap: 0.45rem;
+		margin-top: 0.5rem;
+	}
+
+	.create-post-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.45rem 0.8rem;
+		border-radius: 999px;
+		border: 1px solid rgba(59, 110, 79, 0.34);
+		background: #3b6e4f;
+		color: #fff;
+		text-decoration: none;
+		font-size: 0.88rem;
+		font-weight: 700;
+		box-shadow: 0 4px 12px rgba(59, 110, 79, 0.18);
+	}
+
+	.create-post-btn:hover {
+		background: #305741;
+		border-color: #305741;
 	}
 
 	.warning {

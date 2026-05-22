@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/private';
 import { MEDIA_TOKEN_PREFIX } from '$lib/utils.js';
+import { extractHashtags, normalizePostType, upsertTypeTag } from '$lib/postTypeTags.js';
 import { createHash } from 'node:crypto';
 
 const BSKY_XRPC = 'https://bsky.social/xrpc';
@@ -17,11 +18,6 @@ function getCredentials() {
 	const identifier = env.BSKY_USERNAME || env.username;
 	const secret = env.BSKY_PASSWORD || env.password;
 	return { identifier, secret };
-}
-
-function getHashtags(text) {
-	const matches = text.match(/(^|\s)#([\p{L}\p{N}_-]+)/gu) || [];
-	return matches.map((tag) => tag.replace(/^[\s#]+/, '').toLowerCase());
 }
 
 function utf8ByteLength(text) {
@@ -569,6 +565,24 @@ export async function GET({ url }) {
 
 			if (!res.ok) {
 				if (res.status === 401 || res.status === 403) cachedSession = null;
+				const normalizedError = String(
+					errBody?.message || errBody?.error || ''
+				).toLowerCase();
+				const notFoundLike =
+					res.status === 404 ||
+					(res.status === 400 &&
+						/post not found|record not found|could not locate record|not found/.test(
+							normalizedError
+						));
+				if (notFoundLike) {
+					return new Response(
+						JSON.stringify({ error: 'Post not found.' }),
+						{
+							status: 404,
+							headers: { 'content-type': 'application/json' }
+						}
+					);
+				}
 				return new Response(
 					JSON.stringify({ error: errBody.message || errBody.error || 'Unable to load post.' }),
 					{
@@ -1100,7 +1114,8 @@ export async function POST({ request }) {
 			}
 		}
 
-		const tags = getHashtags(rawText).slice(0, 20);
+		const requestedPostType = normalizePostType(formData.get('postType'));
+		const tags = upsertTypeTag(extractHashtags(rawText), requestedPostType);
 		const record = {
 			$type: 'app.bsky.feed.post',
 			text: rawText,

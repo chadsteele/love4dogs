@@ -4,10 +4,12 @@
 		backgroundPic = "",
 		title = "",
 		name = "",
+		description = "",
 		url = "",
 	} = $props()
 
 	const headerTitle = $derived(String(title || name || "").trim())
+	const headerDescription = $derived(String(description || "").trim())
 
 	function asUrl(value) {
 		return typeof value === "string" ? value : ""
@@ -38,7 +40,12 @@
 
 	{#if headerTitle}
 		<div class="title-row" class:no-avatar={!asUrl(profilePic)}>
-			<h3 class="title">{headerTitle}</h3>
+			<div class="title-stack">
+				<h3 class="title">{headerTitle}</h3>
+				{#if headerDescription}
+					<p class="description">{headerDescription}</p>
+				{/if}
+			</div>
 		</div>
 	{/if}
 </button>
@@ -100,12 +107,25 @@
 		min-height: auto;
 	}
 
+	.title-stack {
+		display: grid;
+		gap: 0.22rem;
+	}
+
 	.title {
 		margin: 0;
 		font-size: clamp(1.1rem, calc(var(--avatar-size) * 0.5), 1.6rem);
 		line-height: 0.95;
 		font-weight: 700;
 		color: #1f1f1f;
+		word-break: break-word;
+	}
+
+	.description {
+		margin: 0;
+		font-size: 0.92rem;
+		line-height: 1.35;
+		color: #3f3f3f;
 		word-break: break-word;
 	}
 

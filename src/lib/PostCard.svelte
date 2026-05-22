@@ -10,7 +10,6 @@
 	import PostImageViewer from "$lib/PostImageViewer.svelte"
 	import Share from "$lib/Share.svelte"
 	import ProfilePostHeader from "$lib/ProfilePostHeader.svelte"
-	import Linkify from "$lib/Linkify.svelte"
 
 	import {siBluesky} from "simple-icons"
 
@@ -22,7 +21,6 @@
 		selectionEnabled = true,
 		onToggleSelect = () => {},
 	} = $props()
-	let imageDimensions = $state({})
 	let showImageModal = $state(false)
 	let activeImageIndex = $state(0)
 
@@ -43,28 +41,6 @@
 		})
 	}
 	const utf8Encoder = new TextEncoder()
-
-	function sortCardImages(images = [], dimensions = {}) {
-		if (!Array.isArray(images) || images.length <= 1) return [...images]
-
-		const result = [...images]
-		const sortableEnd = Math.min(4, result.length)
-		const sortable = result.slice(1, sortableEnd)
-		const originalOrder = new Map(
-			sortable.map((image, index) => [image, index]),
-		)
-
-		sortable.sort((left, right) => {
-			const leftWidth = dimensions[left]?.width || 0
-			const rightWidth = dimensions[right]?.width || 0
-			if (leftWidth !== rightWidth) return rightWidth - leftWidth
-			return (
-				(originalOrder.get(left) || 0) - (originalOrder.get(right) || 0)
-			)
-		})
-
-		return [result[0], ...sortable, ...result.slice(sortableEnd)]
-	}
 
 	function uniqueImageUrls(images = []) {
 		if (!Array.isArray(images) || images.length === 0) return []
@@ -516,30 +492,35 @@
 		return ""
 	}
 
-	function buildProfileViewPath(rawCanonical = "", fallbackTitle = "") {
+	function buildViewPath(
+		rawCanonical = "",
+		fallbackTitle = "",
+		basePath = "",
+		fallbackReturn = "",
+	) {
 		const source = String(rawCanonical || "").trim()
 		const parsed = extractUuidFromCanonical(source)
 		const uuid = String(parsed?.uuid || "").trim()
-		if (!uuid) return ""
+		if (!uuid) return fallbackReturn
 
 		const slugFromCanonical = extractSlugFromCanonical(source, uuid)
 		const fallbackSlug = slugifyProfileTitle(fallbackTitle) || uuid
 		const slug = slugFromCanonical || fallbackSlug
 
-		return `/profile/view/${encodeURIComponent(uuid)}/${encodeURIComponent(slug)}`
+		return `${basePath}/${encodeURIComponent(uuid)}/${encodeURIComponent(slug)}`
+	}
+
+	function buildProfileViewPath(rawCanonical = "", fallbackTitle = "") {
+		return buildViewPath(rawCanonical, fallbackTitle, "/profile/view", "")
 	}
 
 	function buildPostViewPath(rawCanonical = "", fallbackTitle = "") {
-		const source = String(rawCanonical || "").trim()
-		const parsed = extractUuidFromCanonical(source)
-		const uuid = String(parsed?.uuid || "").trim()
-		if (!uuid) return "/post/view"
-
-		const slugFromCanonical = extractSlugFromCanonical(source, uuid)
-		const fallbackSlug = slugifyProfileTitle(fallbackTitle) || uuid
-		const slug = slugFromCanonical || fallbackSlug
-
-		return `/post/view/${encodeURIComponent(uuid)}/${encodeURIComponent(slug)}`
+		return buildViewPath(
+			rawCanonical,
+			fallbackTitle,
+			"/post/view",
+			"/post/view",
+		)
 	}
 
 	function extractProfileDataFromBundle(alt = "") {
@@ -615,24 +596,75 @@
 		}
 	}
 
+	function extractPostDataFromBundle(alt = "") {
+		if (!alt) return null
+		const source = String(alt || "").trim()
+		if (!source) return null
+
+		try {
+			const parsed = JSON.parse(source)
+
+			const candidates = [
+				parsed,
+				parsed?.primary,
+				parsed?.combined?.primary,
+			]
+
+			if (typeof parsed?.h === "string" && parsed.h.trim()) {
+				try {
+					const inner = JSON.parse(parsed.h)
+					candidates.push(
+						inner,
+						inner?.primary,
+						inner?.combined?.primary,
+					)
+				} catch {
+					// Keep best-effort parsing from known candidate roots.
+				}
+			}
+
+			const pick = (keys = []) => {
+				for (const candidate of candidates) {
+					if (!candidate || typeof candidate !== "object") continue
+					for (const key of keys) {
+						const rawValue = candidate?.[key]
+						if (typeof rawValue !== "string") continue
+						const value = rawValue.trim()
+						if (value) return value
+					}
+				}
+				return ""
+			}
+
+			const title = pick(["title", "name", "n"])
+			const description = pick(["summary", "description", "desc"])
+
+			if (!title && !description) return null
+
+			return {
+				title: title || null,
+				description: description || null,
+			}
+		} catch {
+			return null
+		}
+	}
+
 	function detectProfilePost(inputPost = {}, fallbackCanonicalUrl = "") {
 		if (!inputPost) return null
-
-		const validImages = uniqueImageUrls(inputPost?.images || [])
-			.map((image) =>
-				rewriteLove4DogsUrlForLocalhost(String(image || "").trim()),
-			)
-			.filter((image) => /^https?:\/\//i.test(image))
+		const explicitType = String(inputPost?.postType || "")
+			.trim()
+			.toLowerCase()
+		if (explicitType && explicitType !== "profile") return null
 
 		const withImageFallback = (profile = null) => {
 			if (!profile) return null
-			const nextProfilePic = profile?.profilePic || validImages[0] || null
-			const nextBackgroundPic =
-				profile?.backgroundPic || validImages[1] || null
+			const nextProfilePic = profile?.profilePic || null
+			if (!nextProfilePic) return null
 			return {
 				...profile,
 				profilePic: nextProfilePic,
-				backgroundPic: nextBackgroundPic,
+				backgroundPic: profile?.backgroundPic || null,
 			}
 		}
 
@@ -660,32 +692,7 @@
 			})
 		}
 
-		const hasChunkMetadata = (inputPost?.imageAlts || []).some((alt) => {
-			try {
-				const parsed = JSON.parse(String(alt || ""))
-				return Boolean(parsed?.u && parsed?.i && parsed?.t)
-			} catch {
-				return false
-			}
-		})
-
-		if (!hasChunkMetadata || !fallbackCanonicalUrl) return null
-
-		if (!validImages.length) return null
-
-		const parts = getPostParts(inputPost)
-		const profilePic = validImages[0] || ""
-		const backgroundPic = validImages[1] || ""
-
-		if (!profilePic && !backgroundPic) return null
-
-		return {
-			profilePic: profilePic || null,
-			backgroundPic: backgroundPic || null,
-			profileName: parts?.title || null,
-			profileDescription: parts?.body || null,
-			canonicalUrl: fallbackCanonicalUrl,
-		}
+		return null
 	}
 
 	const parts = $derived(getPostParts(post))
@@ -693,6 +700,14 @@
 	const detectedProfileData = $derived(detectProfilePost(post, canonicalUrl))
 	const profileData = $derived.by(() => {
 		if (!detectedProfileData) return null
+		if (
+			String(post?.postType || "")
+				.trim()
+				.toLowerCase() !== "profile"
+		) {
+			return null
+		}
+		if (!detectedProfileData?.profilePic) return null
 		return {
 			...detectedProfileData,
 			canonicalUrl:
@@ -706,9 +721,35 @@
 			parts?.title || "",
 		)
 	})
+	const detectedPostData = $derived.by(() => {
+		if (profileData) return null
+
+		for (const alt of post?.imageAlts || []) {
+			const payload = extractPostDataFromBundle(alt)
+			if (payload) return payload
+		}
+
+		const videoPayload = extractPostDataFromBundle(post?.video?.alt || "")
+		if (videoPayload) return videoPayload
+
+		return null
+	})
 	const postViewHref = $derived.by(() =>
 		buildPostViewPath(canonicalUrl || "", parts?.title || ""),
 	)
+	const displayTitle = $derived.by(() => {
+		if (profileData) return ""
+		if (parts?.title) return parts.title
+		return String(detectedPostData?.title || "").trim()
+	})
+	const displayDescription = $derived.by(() => {
+		if (profileData) return ""
+		const directDescription = String(post?.description || "").trim()
+		if (directDescription) return directDescription
+		const bodyDescription = String(parts?.body || "").trim()
+		if (bodyDescription) return bodyDescription
+		return String(detectedPostData?.description || "").trim()
+	})
 	const titleHref = $derived(canonicalUrl)
 	const titleHtml = $derived(escapeHtml(parts.title))
 	const bodyLines = $derived(buildBodyLines(parts.body, parts.bodyFacets))
@@ -716,25 +757,9 @@
 	const comments = $derived(post.comments || [])
 	const postVideo = $derived(post.video || null)
 	const uniqueImages = $derived(uniqueImageUrls(post.images || []))
-	const bodyImages = $derived.by(() => {
+	const cardImages = $derived.by(() => {
 		if (profileData) return []
-		return uniqueImages
-	})
-	const sortedImages = $derived(sortCardImages(bodyImages, imageDimensions))
-	const threeImageFirstIsWidest = $derived.by(() => {
-		if (sortedImages.length !== 3) return false
-		const [first, second, third] = sortedImages
-		const firstWidth = imageDimensions[first]?.width
-		const secondWidth = imageDimensions[second]?.width
-		const thirdWidth = imageDimensions[third]?.width
-		if (
-			!Number.isFinite(firstWidth) ||
-			!Number.isFinite(secondWidth) ||
-			!Number.isFinite(thirdWidth)
-		) {
-			return false
-		}
-		return firstWidth >= secondWidth && firstWidth >= thirdWidth
+		return uniqueImages.slice(0, 4)
 	})
 
 	$effect(() => {
@@ -766,7 +791,7 @@
 			backgroundPic: profileData?.backgroundPic || null,
 			headerImageCount: headerImages.length,
 			galleryBeforeCount: uniqueImages.length,
-			galleryAfterCount: bodyImages.length,
+			galleryAfterCount: cardImages.length,
 			removedCount: removedImages.length,
 			removedImages,
 		})
@@ -787,46 +812,6 @@
 		console.warn("[PostCard] missing canonical URL", {
 			...collectCanonicalDebug(post),
 		})
-	})
-
-	$effect(() => {
-		if (typeof window === "undefined") return
-		const images = bodyImages
-		if (!images.length) return
-
-		let cancelled = false
-		for (const image of images) {
-			if (!image || imageDimensions[image]) continue
-
-			const probe = new Image()
-			probe.onload = () => {
-				if (cancelled) return
-				imageDimensions = {
-					...imageDimensions,
-					[image]: {
-						width: probe.naturalWidth,
-						height: probe.naturalHeight,
-						area: probe.naturalWidth * probe.naturalHeight,
-					},
-				}
-			}
-			probe.onerror = () => {
-				if (cancelled) return
-				imageDimensions = {
-					...imageDimensions,
-					[image]: {
-						width: 0,
-						height: 0,
-						area: 0,
-					},
-				}
-			}
-			probe.src = image
-		}
-
-		return () => {
-			cancelled = true
-		}
 	})
 </script>
 
@@ -869,13 +854,21 @@
 			profilePic={profileData.profilePic}
 			backgroundPic={profileData.backgroundPic}
 			title={profileData.profileName}
+			description={profileData.profileDescription}
 			url={profileViewHref || postViewHref}
 		/>
+	{:else if displayTitle || displayDescription}
+		<a class="post-view-link" href={postViewHref}>
+			{#if displayTitle}
+				<h3 class="post-title">{displayTitle}</h3>
+			{/if}
+			{#if displayDescription}
+				<p class="post-description">
+					{displayDescription}
+				</p>
+			{/if}
+		</a>
 	{/if}
-
-	<Linkify>
-		{post?.description || profileData?.profileDescription || ""}
-	</Linkify>
 
 	{#if !profileData && parts.body}
 		<div class="post-text">
@@ -891,24 +884,22 @@
 			{/each}
 		</div>
 	{/if}
-	{#if sortedImages.length}
+	{#if cardImages.length}
 		<div
 			class="post-images"
-			class:single-image={sortedImages.length === 1}
-			class:two-images={sortedImages.length === 2}
-			class:three-images={sortedImages.length === 3}
-			class:four-images={sortedImages.length >= 4}
+			class:single-image={cardImages.length === 1}
+			class:two-images={cardImages.length === 2}
+			class:three-images={cardImages.length === 3}
+			class:four-images={cardImages.length === 4}
 		>
-			{#each sortedImages as image, index}
+			{#each cardImages as image, index}
 				<button
 					type="button"
 					class="post-image-btn"
-					class:image-wide={sortedImages.length === 1 ||
-						(sortedImages.length === 3 &&
-							((threeImageFirstIsWidest && index === 0) ||
-								(!threeImageFirstIsWidest && index === 2)))}
+					class:image-large-left={cardImages.length === 3 &&
+						index === 0}
 					onclick={() => openImageModal(index)}
-					aria-label={`Open image ${index + 1} of ${sortedImages.length}`}
+					aria-label={`Open image ${index + 1} of ${cardImages.length}`}
 				>
 					<img src={image} alt="Dog post" loading="lazy" />
 				</button>
@@ -931,7 +922,7 @@
 
 	<PostImageViewer
 		open={showImageModal}
-		images={sortedImages}
+		images={cardImages}
 		activeIndex={activeImageIndex}
 		onClose={closeImageModal}
 		onChangeIndex={(index) => (activeImageIndex = index)}
@@ -1083,22 +1074,33 @@
 		border-color: #2d5f9a;
 	}
 
-	.post-title {
-		margin: 0 2.2rem 0 2.2rem;
-		font-size: 1.02rem;
-		font-weight: 700;
-		line-height: 1.3;
-	}
-
-	.post-title-link {
+	.post-view-link {
+		display: block;
 		color: inherit;
 		text-decoration: none;
-		cursor: pointer;
+		margin-top: 0.15rem;
 	}
 
-	.post-title-link:hover,
-	.post-title-link:focus-visible {
-		text-decoration: underline;
+	.post-view-link:hover .post-title,
+	.post-view-link:hover .post-description {
+		color: #1a4a7a;
+	}
+
+	.post-title {
+		margin: 0;
+		font-size: 1.1rem;
+		line-height: 1.05;
+		font-weight: 800;
+		color: #202020;
+		word-break: break-word;
+	}
+
+	.post-description {
+		margin: 0.35rem 0 0;
+		font-size: 0.92rem;
+		line-height: 1.35;
+		color: #374151;
+		word-break: break-word;
 	}
 
 	.post-text {
@@ -1126,15 +1128,19 @@
 		text-align: left;
 	}
 
-	.post-image-btn.image-wide {
-		grid-column: 1 / -1;
+	.post-image-btn.image-large-left {
+		grid-row: span 2;
 	}
 
 	.post-images {
 		display: grid;
-		grid-template-columns: 1fr;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 0.45rem;
 		margin-top: 0.65rem;
+	}
+
+	.post-images.single-image {
+		grid-template-columns: 1fr;
 	}
 
 	.post-images.two-images {
@@ -1144,6 +1150,10 @@
 	.post-images.three-images,
 	.post-images.four-images {
 		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.post-images.three-images {
+		grid-template-rows: repeat(2, minmax(110px, 1fr));
 	}
 
 	.post-images img {
@@ -1157,8 +1167,12 @@
 	}
 
 	.post-images.single-image img,
-	.post-images .post-image-btn.image-wide img {
-		aspect-ratio: auto;
+	.post-images .post-image-btn.image-large-left img {
+		aspect-ratio: 4 / 5;
+	}
+
+	.post-images.single-image img {
+		aspect-ratio: 16 / 10;
 		max-height: 460px;
 	}
 

@@ -15,6 +15,7 @@
 		isLocalHost,
 		upsertApproxPostInCache,
 	} from "$lib/utils"
+	import {extractHashtags} from "$lib/postTypeTags"
 	import {
 		ChevronDown,
 		ChevronRight,
@@ -95,11 +96,6 @@
 		if (typeof localStorage === "undefined") return
 		localStorage.setItem(LOCAL_CONTACT_KEY, contactinfo)
 	})
-
-	function extractHashtags(text = "") {
-		const matches = text.match(/(^|\s)#([\p{L}\p{N}_-]+)/gu) || []
-		return matches.map((tag) => tag.replace(/^[\s#]+/, "").toLowerCase())
-	}
 
 	function incrementLocalTags(tags) {
 		if (typeof window === "undefined" || !tags.length) return
@@ -510,6 +506,7 @@
 		try {
 			const formData = new FormData()
 			formData.append("text", finalText)
+			formData.append("postType", "post")
 			if (uploadedMedia.length > 0) {
 				const htmlChunks = splitHtmlIntoImageAltChunks(
 					trimmedImageAltHtml,

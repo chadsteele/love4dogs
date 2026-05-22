@@ -635,6 +635,7 @@ export async function publishChunkBundleToBsky({
 	fetchImpl = fetch,
 	endpoint = "/api/post",
 	uuid = "",
+	postType = "",
 	postText = "",
 	primaryPayload = {},
 	chunks = [],
@@ -693,6 +694,7 @@ export async function publishChunkBundleToBsky({
 
 		const chunkFd = new FormData()
 		chunkFd.append("text", postText || "❤️")
+		if (postType) chunkFd.append("postType", postType)
 		chunkFd.append("uploadedMedia", JSON.stringify(mediaForPost))
 		const result = await postToBskyApi(fetchImpl, endpoint, chunkFd)
 		chunkResults.push(result?.result || null)
@@ -730,6 +732,7 @@ export async function publishChunkBundleToBsky({
 		       throw new Error("Post text is required and was blank at publish time.")
 	       }
 	       originFd.append("text", originText)
+	       if (postType) originFd.append("postType", postType)
 	       if (originMedia.length > 0) {
 		       originFd.append("uploadedMedia", JSON.stringify(originMedia))
 	       }

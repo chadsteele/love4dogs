@@ -1755,6 +1755,7 @@
 				subsequentPostsPayload,
 			)
 			const primaryPayloadForBundle = {
+				type: "profile",
 				uuid,
 				authorid: uuid,
 				stamp: profileRecordStamp,
@@ -1865,6 +1866,7 @@
 				fetchImpl: fetch,
 				endpoint: "/api/post",
 				uuid,
+				postType: "profile",
 				postText,
 				chunks,
 				primaryMedia,
