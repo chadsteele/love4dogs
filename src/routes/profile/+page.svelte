@@ -36,6 +36,11 @@
 		publishChunkBundleToBsky,
 		replacePostUriViaApi,
 	} from "$lib/bskyChunkStore"
+	import {
+		BlueskySchemaRecord,
+		getOrCreateSharedAuthorId,
+		PROFILE_TAG,
+	} from "$lib/schema"
 	import ShowAdmin from "$lib/ShowAdmin.svelte"
 
 	const LEGACY_PROFILE_STORAGE_KEY = "love4dogs.profile-v2"
@@ -55,6 +60,7 @@
 	const DEBUG_PROFILE = false
 
 	let uuid = $state("")
+	const sharedAuthorId = $derived.by(() => getOrCreateSharedAuthorId(uuid))
 
 	let email = $state("")
 	let profileName = $state("")
@@ -1359,21 +1365,28 @@
 		return CONTACT_LOCK_PREFIX + encryptContact(normalized)
 	}
 
-	const primaryPostPayload = $derived({
-		uuid,
-		authorid: uuid,
-		stamp: profileRecordStamp,
-		canonicalurl,
-		email: encryptEmailForPayload(email),
-		profilePic:
-			selectedProfileImage?.bskyUrl || selectedProfileImage?.url || null,
-		backgroundPic:
-			selectedBackgroundImage?.bskyUrl ||
-			selectedBackgroundImage?.url ||
-			null,
-		name: profileName,
-		description: profileDescription,
-	})
+	const primaryPostPayload = $derived.by(() =>
+		new BlueskySchemaRecord({
+			uuid,
+			authorid: sharedAuthorId,
+			stamp: profileRecordStamp,
+			canonicalurl,
+			title: profileName,
+			profilePic:
+				selectedProfileImage?.bskyUrl ||
+				selectedProfileImage?.url ||
+				null,
+			backgroundPic:
+				selectedBackgroundImage?.bskyUrl ||
+				selectedBackgroundImage?.url ||
+				null,
+			description: profileDescription,
+			html: "",
+			tags: [PROFILE_TAG],
+			// Keep encrypted contact in the root payload for backward compatibility.
+			email: encryptEmailForPayload(email),
+		}).toJSON(),
+	)
 
 	const subsequentPostsPayload = $derived(
 		minifiedChunkEntries.map((entry, index) => ({
@@ -2003,23 +2016,27 @@
 				subsequentPostsPayload,
 			)
 			const primaryPayloadForBundle = {
-				uuid,
-				authorid: uuid,
-				stamp: profileRecordStamp,
-				canonicalurl: publishedCanonicalUrl,
+				...new BlueskySchemaRecord({
+					uuid,
+					authorid: sharedAuthorId,
+					stamp: profileRecordStamp,
+					canonicalurl: publishedCanonicalUrl,
+					title: profileName,
+					profilePic:
+						publishProfileImage?.bskyUrl ||
+						selectedProfileImage?.bskyUrl ||
+						selectedProfileImage?.url ||
+						null,
+					backgroundPic:
+						publishBackgroundImage?.bskyUrl ||
+						selectedBackgroundImage?.bskyUrl ||
+						selectedBackgroundImage?.url ||
+						null,
+					description: profileDescription,
+					html: "",
+					tags: [PROFILE_TAG],
+				}).toJSON(),
 				email: encryptEmailForPayload(email),
-				profilePic:
-					publishProfileImage?.bskyUrl ||
-					selectedProfileImage?.bskyUrl ||
-					selectedProfileImage?.url ||
-					null,
-				backgroundPic:
-					publishBackgroundImage?.bskyUrl ||
-					selectedBackgroundImage?.bskyUrl ||
-					selectedBackgroundImage?.url ||
-					null,
-				name: profileName,
-				description: profileDescription,
 			}
 			const combinedBundle = buildBskyCombinedPayloadBundle(
 				primaryPayloadForBundle,
@@ -2114,6 +2131,7 @@
 				endpoint: "/api/post",
 				uuid,
 				postText,
+				tags: [PROFILE_TAG],
 				chunks,
 				primaryMedia,
 				replyAttachmentPool: attachmentPool,

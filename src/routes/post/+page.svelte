@@ -506,7 +506,6 @@
 		try {
 			const formData = new FormData()
 			formData.append("text", finalText)
-			formData.append("postType", "post")
 			if (uploadedMedia.length > 0) {
 				const htmlChunks = splitHtmlIntoImageAltChunks(
 					trimmedImageAltHtml,

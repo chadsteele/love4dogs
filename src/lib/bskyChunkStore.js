@@ -636,6 +636,7 @@ export async function publishChunkBundleToBsky({
 	endpoint = "/api/post",
 	uuid = "",
 	postType = "",
+	tags = [],
 	postText = "",
 	primaryPayload = {},
 	chunks = [],
@@ -647,6 +648,11 @@ export async function publishChunkBundleToBsky({
 	const normalizedPrimaryMedia = Array.isArray(primaryMedia)
 		? primaryMedia.map((entry) => ({...entry}))
 		: []
+	const normalizedTags = [...new Set(
+		(Array.isArray(tags) ? tags : [])
+			.map((entry) => String(entry || "").trim().toLowerCase())
+			.filter(Boolean),
+	)]
 	const chunkCarrierPool = [
 		...normalizedPrimaryMedia,
 		...(Array.isArray(replyAttachmentPool) ? replyAttachmentPool : []),
@@ -695,6 +701,9 @@ export async function publishChunkBundleToBsky({
 		const chunkFd = new FormData()
 		chunkFd.append("text", postText || "❤️")
 		if (postType) chunkFd.append("postType", postType)
+		if (normalizedTags.length > 0) {
+			chunkFd.append("tags", JSON.stringify(normalizedTags))
+		}
 		chunkFd.append("uploadedMedia", JSON.stringify(mediaForPost))
 		const result = await postToBskyApi(fetchImpl, endpoint, chunkFd)
 		chunkResults.push(result?.result || null)
@@ -733,6 +742,10 @@ export async function publishChunkBundleToBsky({
 	       }
 	       originFd.append("text", originText)
 	       if (postType) originFd.append("postType", postType)
+	       if (normalizedTags.length > 0) {
+		       originFd.append("tags", JSON.stringify(normalizedTags)
+		       )
+	       }
 	       if (originMedia.length > 0) {
 		       originFd.append("uploadedMedia", JSON.stringify(originMedia))
 	       }

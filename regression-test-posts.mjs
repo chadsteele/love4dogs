@@ -184,10 +184,12 @@ async function main() {
 	}
 	const primaryPayload = {
 		uuid,
-		type: 'post',
+		authorid: `author-${uuid}`,
 		title,
 		canonicalurl: `https://love4dogs.club/post/view/${uuid}`,
-		summary: `Automated regression test post for chunked publishing (${uuid}).`,
+		description: `Automated regression test post for chunked publishing (${uuid}).`,
+		html: largePostHtml,
+		tags: ['regression', 'chunking', 'test'],
 	};
 	const subsequentPayload = chunkHtmlByAltPayload(largePostHtml, 2000, { uuid });
 	const bundle = buildCombinedPayloadBundle(primaryPayload, subsequentPayload, {
@@ -212,7 +214,7 @@ async function main() {
 	assert(chunkEntries.length >= 4, `At least 4 chunks required (got ${chunkEntries.length})`);
 	assert(subsequentPayload.length > 0, 'Post subsequent payload is non-empty');
 	assertEqual(primaryPayload.uuid, uuid, 'Primary payload UUID matches');
-	assertEqual(primaryPayload.type, 'post', 'Primary payload has type=post');
+	assert(!primaryPayload.tags.includes('profile'), 'Primary payload does not include profile tag');
 	assertEqual(uploadedImages.length, dogImageUrls.length, 'Uploaded image count matches source count');
 
 	let publishResult;
@@ -221,7 +223,7 @@ async function main() {
 			fetchImpl: fetch,
 			endpoint: `${BASE_URL}/api/post`,
 			uuid,
-			postType: 'post',
+			tags: primaryPayload.tags,
 			postText: title,
 			primaryPayload,
 			chunks: chunkEntries,

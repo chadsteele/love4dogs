@@ -222,20 +222,20 @@ async function main() {
 		`Automated regression test profile (${uuid}). ` +
 		'This profile is published to verify that 4+ chunk publishing and reconstruction works end-to-end. ' +
 		'It should be safe to delete after the test completes.';
+	const contentHtml = buildLargeProfileHtml(dogImageUrls, uuid);
 
 	const primaryPayload = {
-		type: 'profile',
 		uuid,
-		authorid: uuid,
+		authorid: `author-${uuid}`,
 		stamp: Date.now().toString(36),
 		canonicalurl: `https://love4dogs.club/profile/view/${uuid}`,
-		name: profileName,
+		title: profileName,
 		description: profileDescription,
 		profilePic: uploadedImages[0]?.url || null,
 		backgroundPic: uploadedImages[1]?.url || null,
+		html: contentHtml,
+		tags: ['profile', 'regression', 'chunking'],
 	};
-
-	const contentHtml = buildLargeProfileHtml(dogImageUrls, uuid);
 	console.log(`  Raw HTML content size: ${contentHtml.length} chars`);
 
 	// Split HTML content into subsequent payload chunks the same way the UI does
@@ -243,8 +243,8 @@ async function main() {
 	console.log(`  Subsequent payload fragments (from HTML chunker): ${subsequentPayload.length}`);
 
 	assert(typeof primaryPayload.uuid === 'string', 'Primary payload has uuid');
-	assertEqual(primaryPayload.type, 'profile', 'Primary payload has type=profile');
-	assert(typeof primaryPayload.name === 'string', 'Primary payload has name');
+	assert(primaryPayload.tags.includes('profile'), 'Primary payload includes profile tag');
+	assert(typeof primaryPayload.title === 'string', 'Primary payload has title');
 	assert(subsequentPayload.length > 0, 'Subsequent payload is non-empty');
 
 	// ─── Step 5: Build combined bundle and verify 4+ chunk entries ───────────
@@ -302,7 +302,7 @@ async function main() {
 			fetchImpl: fetch,
 			endpoint: `${BASE_URL}/api/post`,
 			uuid,
-			postType: 'profile',
+			tags: primaryPayload.tags,
 			postText,
 			primaryPayload,
 			chunks: chunkEntries,
@@ -412,9 +412,10 @@ async function main() {
 	// Deep-dive field checks on the primary payload
 	const recoPrimary = reconstructedParsed?.primary;
 	assertEqual(recoPrimary?.uuid, uuid, 'primary.uuid matches');
-	assertEqual(recoPrimary?.name, profileName, 'primary.name matches');
+	assertEqual(recoPrimary?.title, profileName, 'primary.title matches');
 	assert(recoPrimary?.description?.includes(uuid), 'primary.description contains UUID');
 	assert(recoPrimary?.canonicalurl?.includes(uuid), 'primary.canonicalurl contains UUID');
+	assert(Array.isArray(recoPrimary?.tags) && recoPrimary.tags.includes('profile'), 'primary.tags includes profile');
 
 	// Verify all subsequent fragments are present and join correctly
 	const recoSubsequent = reconstructedParsed?.subsequent;

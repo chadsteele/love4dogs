@@ -80,6 +80,27 @@ function buildFacets(text) {
 	return facets;
 }
 
+function parseExplicitTags(rawValue = '') {
+	const source = String(rawValue || '').trim();
+	if (!source) return [];
+
+	try {
+		const parsed = JSON.parse(source);
+		if (Array.isArray(parsed)) {
+			return parsed
+				.map((entry) => String(entry || '').trim().toLowerCase())
+				.filter(Boolean);
+		}
+	} catch {
+		// Fall back to comma/space separated parsing below.
+	}
+
+	return source
+		.split(/[\s,]+/)
+		.map((entry) => String(entry || '').trim().toLowerCase())
+		.filter(Boolean);
+}
+
 function buildImageEmbed(uploadedImages) {
 	if (!uploadedImages.length) return null;
 
@@ -1115,7 +1136,11 @@ export async function POST({ request }) {
 		}
 
 		const requestedPostType = normalizePostType(formData.get('postType'));
-		const tags = upsertTypeTag(extractHashtags(rawText), requestedPostType);
+		const explicitTags = parseExplicitTags(formData.get('tags'));
+		const tags = upsertTypeTag(
+			[...extractHashtags(rawText), ...explicitTags],
+			requestedPostType
+		);
 		const record = {
 			$type: 'app.bsky.feed.post',
 			text: rawText,

@@ -1,0 +1,634 @@
+<script>
+	import {extractPostTypeFromTags, extractHashtags} from "$lib/postTypeTags"
+	import {rewriteLove4DogsUrlForLocalhost} from "$lib/utils"
+	import {Heart, MessageCircle, Repeat2} from "lucide-svelte"
+	import {siBluesky} from "simple-icons"
+
+	let {post, onclick = () => {}} = $props()
+
+	const BSKY_HANDLE = "love4dogs.club"
+
+	function bskyUrl(uri = "") {
+		const rkey = uri.split("/").pop()
+		return `https://bsky.app/profile/${BSKY_HANDLE}/post/${rkey}`
+	}
+
+	function formatDate(iso = "") {
+		if (!iso) return ""
+		const d = new Date(iso)
+		const now = new Date()
+		const diff = now - d
+		const hours = Math.floor(diff / (1000 * 60 * 60))
+		const days = Math.floor(diff / (1000 * 60 * 60 * 24))
+
+		if (hours < 1) return "Now"
+		if (hours < 24) return `${hours}h ago`
+		if (days < 1) return "Today"
+		if (days === 1) return "Yesterday"
+		if (days < 7) return `${days}d ago`
+
+		return d.toLocaleDateString(undefined, {
+			month: "short",
+			day: "numeric",
+		})
+	}
+
+	function extractCanonicalUrl(inputPost = {}) {
+		const candidates = [
+			inputPost?.record?.facets,
+			inputPost?.facets,
+			inputPost?.embed?.external?.uri,
+		]
+
+		for (const candidate of candidates) {
+			if (Array.isArray(candidate)) {
+				for (const facet of candidate) {
+					const linkUri = facet?.features?.find(
+						(f) =>
+							f?.$type === "app.bsky.richtext.facet#link" &&
+							typeof f.uri === "string",
+					)?.uri
+					if (linkUri && /^https?:\/\//i.test(linkUri)) {
+						return linkUri
+					}
+				}
+			}
+		}
+
+		return ""
+	}
+
+	function extractProfileData(alt = "") {
+		if (!alt) return null
+		const source = String(alt || "").trim()
+		if (!source) return null
+
+		try {
+			const parsed = JSON.parse(source)
+			const candidates = [
+				parsed,
+				parsed?.primary,
+				parsed?.combined?.primary,
+			]
+
+			if (typeof parsed?.h === "string" && parsed.h.trim()) {
+				try {
+					const inner = JSON.parse(parsed.h)
+					candidates.push(
+						inner,
+						inner?.primary,
+						inner?.combined?.primary,
+					)
+				} catch {}
+			}
+
+			const pick = (keys = []) => {
+				for (const candidate of candidates) {
+					if (!candidate || typeof candidate !== "object") continue
+					for (const key of keys) {
+						const rawValue = candidate?.[key]
+						if (typeof rawValue !== "string") continue
+						const value = rawValue.trim()
+						if (value) return value
+					}
+				}
+				return ""
+			}
+
+			const profilePic = pick(["profilePic", "profilepic"])
+			const backgroundPic = pick(["backgroundPic", "backgroundpic"])
+			const name = pick(["name", "title", "n"])
+			const description = pick(["description", "desc"])
+
+			if (!profilePic && !backgroundPic && !name && !description)
+				return null
+
+			return {
+				profilePic: profilePic || null,
+				backgroundPic: backgroundPic || null,
+				name: name || null,
+				description: description || null,
+			}
+		} catch {
+			return null
+		}
+	}
+
+	function normalizeImageUrl(value = "") {
+		const source = String(value || "").trim()
+		if (!source) return ""
+		if (!/^https?:\/\//i.test(source)) return ""
+		return rewriteLove4DogsUrlForLocalhost(source)
+	}
+
+	function getCardTitle() {
+		const titleMatch = String(post?.text || "")
+			.split("\n")[0]
+			.trim()
+		if (titleMatch) return titleMatch
+
+		for (const alt of post?.imageAlts || []) {
+			const parsed = extractProfileData(alt)
+			if (parsed?.name) return parsed.name
+		}
+
+		const videoAlt = extractProfileData(post?.video?.alt || "")
+		if (videoAlt?.name) return videoAlt.name
+
+		return "Untitled"
+	}
+
+	function getCardDescription() {
+		const text = String(post?.text || "")
+		const lines = text.split("\n")
+		if (lines.length > 1) {
+			return lines.slice(1).join("\n").trim()
+		}
+
+		for (const alt of post?.imageAlts || []) {
+			const parsed = extractProfileData(alt)
+			if (parsed?.description) return parsed.description
+		}
+
+		const videoAlt = extractProfileData(post?.video?.alt || "")
+		if (videoAlt?.description) return videoAlt.description
+
+		return ""
+	}
+
+	function getPrimaryImage() {
+		// Check for profile background pic first
+		for (const alt of post?.imageAlts || []) {
+			const parsed = extractProfileData(alt)
+			if (parsed?.backgroundPic) {
+				return normalizeImageUrl(parsed.backgroundPic)
+			}
+		}
+
+		const videoAlt = extractProfileData(post?.video?.alt || "")
+		if (videoAlt?.backgroundPic) {
+			return normalizeImageUrl(videoAlt.backgroundPic)
+		}
+
+		// Fall back to first post image
+		if (Array.isArray(post?.images) && post.images.length > 0) {
+			return normalizeImageUrl(post.images[0])
+		}
+
+		return null
+	}
+
+	function getProfilePic() {
+		for (const alt of post?.imageAlts || []) {
+			const parsed = extractProfileData(alt)
+			if (parsed?.profilePic) {
+				return normalizeImageUrl(parsed.profilePic)
+			}
+		}
+
+		const videoAlt = extractProfileData(post?.video?.alt || "")
+		if (videoAlt?.profilePic) {
+			return normalizeImageUrl(videoAlt.profilePic)
+		}
+
+		return null
+	}
+
+	const PILL_COLORS = [
+		{bg: "#bae6fd", color: "#0369a1"},
+		{bg: "#e9d5ff", color: "#6b21a8"},
+		{bg: "#fce7f3", color: "#9d174d"},
+		{bg: "#fed7aa", color: "#c2410c"},
+		{bg: "#99f6e4", color: "#0f766e"},
+		{bg: "#c7d2fe", color: "#3730a3"},
+		{bg: "#ffe4e6", color: "#be123c"},
+		{bg: "#fef08a", color: "#92400e"},
+	]
+
+	function getTypePills() {
+		const pills = []
+		let colorIndex = 0
+
+		// Type pill first (from post.type, post.postType, or l4d-type: tag)
+		const postType =
+			String(post?.type || post?.postType || "")
+				.trim()
+				.toLowerCase() || extractPostTypeFromTags(post?.tags || [])
+
+		if (postType && postType !== "post") {
+			pills.push({
+				label: postType.toUpperCase(),
+				style: PILL_COLORS[colorIndex % PILL_COLORS.length],
+			})
+			colorIndex++
+		}
+
+		// All remaining tags (strip l4d-type: and l4d- prefixes)
+		const tags = post?.tags || []
+		for (const tag of tags) {
+			const raw = String(tag || "")
+				.trim()
+				.toLowerCase()
+			if (!raw) continue
+			if (raw.startsWith("l4d-type:")) continue
+			const label = raw.replace(/^l4d-/, "").toUpperCase()
+			if (!label) continue
+			pills.push({
+				label,
+				style: PILL_COLORS[colorIndex % PILL_COLORS.length],
+			})
+			colorIndex++
+		}
+
+		return pills
+	}
+
+	const cardTitle = $derived(getCardTitle())
+	const cardDescription = $derived(getCardDescription())
+	const primaryImage = $derived(getPrimaryImage())
+	const profilePic = $derived(getProfilePic())
+	const typePills = $derived(getTypePills())
+	const authorName = $derived(
+		String(post?.author?.displayName || post?.author?.handle || "").trim(),
+	)
+	const formattedDate = $derived(formatDate(post?.createdAt || ""))
+	const comments = $derived(post?.comments || [])
+</script>
+
+<div
+	class="one-card"
+	role="button"
+	tabindex="0"
+	{onclick}
+	onkeydown={(e) => (e.key === "Enter" || e.key === " ") && onclick(e)}
+>
+	{#if primaryImage}
+		<div class="card-image">
+			<img src={primaryImage} alt={cardTitle} loading="lazy" />
+		</div>
+	{/if}
+
+	<div class="card-content">
+		{#if typePills.length > 0}
+			<div class="pills">
+				{#each typePills as pill}
+					<span
+						class="pill"
+						style="background:{pill.style.bg};color:{pill.style
+							.color}">{pill.label}</span
+					>
+				{/each}
+			</div>
+		{/if}
+
+		<h3 class="card-title">{cardTitle}</h3>
+
+		{#if cardDescription}
+			<p class="card-description">{cardDescription}</p>
+		{/if}
+
+		{#if profilePic || authorName || formattedDate}
+			<div class="card-footer">
+				{#if profilePic}
+					<img
+						src={profilePic}
+						alt={authorName}
+						class="author-avatar"
+					/>
+				{/if}
+				<div class="author-info">
+					{#if authorName}
+						<p class="author-name">{authorName}</p>
+					{/if}
+					{#if formattedDate}
+						<p class="author-date">{formattedDate}</p>
+					{/if}
+				</div>
+			</div>
+		{/if}
+	</div>
+
+	<a
+		class="post-footer"
+		href={bskyUrl(post.uri)}
+		target="_blank"
+		rel="noopener noreferrer"
+		onclick={(e) => e.stopPropagation()}
+	>
+		<div class="post-stats">
+			<span class="stat"><Heart size={13} />{post.likeCount ?? 0}</span>
+			<span class="stat"
+				><Repeat2 size={13} />{post.repostCount ?? 0}</span
+			>
+			<span class="stat"
+				><MessageCircle size={13} />{post.replyCount ?? 0}</span
+			>
+			{#if post.createdAt}<span class="stat-date">{formattedDate}</span
+				>{/if}
+		</div>
+		{#if post.replyCount > 0 && comments.length > 0}
+			<ul class="comments-list">
+				{#each comments as c}
+					<li class="comment">
+						{#if c.avatar}
+							<img
+								class="comment-avatar"
+								src={c.avatar}
+								alt={`@${c.handle}`}
+								loading="lazy"
+							/>
+						{:else}
+							<span
+								class="comment-avatar comment-avatar-fallback"
+								aria-hidden="true"
+							></span>
+						{/if}
+						<div class="comment-main">
+							<span class="comment-author">@{c.handle}</span>
+							<span class="comment-text">{c.text}</span>
+						</div>
+					</li>
+				{/each}
+			</ul>
+			<div class="comment-compose-disabled" aria-hidden="true">
+				<div class="comment-input-disabled">
+					Add your comments on BlueSky {@html siBluesky.svg}
+				</div>
+				<div class="comment-submit-disabled">Submit</div>
+			</div>
+		{:else}
+			<div class="comment-compose-disabled" aria-hidden="true">
+				<div class="comment-input-disabled">
+					Be the first to comment on BlueSky {@html siBluesky.svg}
+				</div>
+				<div class="comment-submit-disabled">Submit</div>
+			</div>
+		{/if}
+	</a>
+</div>
+
+<style>
+	.one-card {
+		display: grid;
+		grid-template-columns: 1fr;
+		background: #fff;
+		border-radius: 12px;
+		overflow: hidden;
+		box-shadow: 0 2px 8px rgba(46, 28, 12, 0.08);
+		transition:
+			transform 0.2s ease,
+			box-shadow 0.2s ease;
+		cursor: pointer;
+		margin-bottom: 1rem;
+	}
+
+	.one-card:hover {
+		transform: translateY(-2px);
+		box-shadow: 0 4px 16px rgba(46, 28, 12, 0.12);
+	}
+
+	.card-image {
+		position: relative;
+		width: 100%;
+		aspect-ratio: 16 / 9;
+		overflow: hidden;
+		background: #f0f0f0;
+	}
+
+	.card-image img {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+	}
+
+	.card-content {
+		padding: 1rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.6rem;
+	}
+
+	.pills {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.4rem;
+	}
+
+	.pill {
+		display: inline-block;
+		padding: 0.3rem 0.7rem;
+		border-radius: 20px;
+		font-size: 0.75rem;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		white-space: nowrap;
+	}
+
+	.card-title {
+		margin: 0;
+		font-size: 1.1rem;
+		font-weight: 700;
+		line-height: 1.3;
+		color: #1f1f1f;
+		word-break: break-word;
+	}
+
+	.card-description {
+		margin: 0;
+		font-size: 0.9rem;
+		line-height: 1.4;
+		color: #666;
+		word-break: break-word;
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+	}
+
+	.card-footer {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		margin-top: 0.4rem;
+	}
+
+	.author-avatar {
+		width: 3rem;
+		height: 3rem;
+		border-radius: 50%;
+		object-fit: cover;
+		border: 2px solid rgba(0, 0, 0, 0.1);
+	}
+
+	.author-info {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.author-name {
+		margin: 0;
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: #1f1f1f;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.author-date {
+		margin: 0;
+		font-size: 0.75rem;
+		color: #999;
+	}
+
+	.post-footer {
+		display: block;
+		padding: 0 0.75rem 0.25rem;
+		border-top: 1px solid #ede5d8;
+		text-decoration: none;
+		cursor: pointer;
+	}
+
+	.post-stats {
+		display: flex;
+		align-items: center;
+		gap: 0.65rem;
+		flex-wrap: wrap;
+		padding: 0.4rem 0;
+	}
+
+	.stat {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		font-size: 0.8rem;
+		color: #6b7280;
+	}
+
+	.stat-date {
+		font-size: 0.78rem;
+		color: #9ca3af;
+		margin-left: auto;
+	}
+
+	.post-footer:hover .stat {
+		color: #1a4a7a;
+	}
+
+	.comments-list {
+		list-style: none;
+		margin: 0 -0.75rem;
+		padding: 0.55rem 0.75rem 0.4rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		width: calc(100% + 1.5rem);
+		background: #faf7f3;
+		border-top: 1px solid #ede5d8;
+		box-sizing: border-box;
+	}
+
+	.comment {
+		font-size: 0.82rem;
+		line-height: 1.35;
+		display: flex;
+		align-items: flex-start;
+		gap: 0.5rem;
+	}
+
+	.comment-avatar {
+		width: 32px;
+		height: 32px;
+		border-radius: 999px;
+		object-fit: cover;
+		border: 1px solid #d9ccb9;
+		background: #fff;
+		flex: 0 0 32px;
+		margin-top: 1px;
+	}
+
+	.comment-avatar-fallback {
+		background: #e4ddd2;
+	}
+
+	.comment-main {
+		display: flex;
+		flex-direction: column;
+		gap: 0.08rem;
+		min-width: 0;
+	}
+
+	.comment-author {
+		font-weight: 600;
+		color: #3b6e4f;
+		font-size: 0.78rem;
+	}
+
+	.comment-text {
+		color: #374151;
+		word-break: break-word;
+	}
+
+	.comment-compose-disabled {
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
+		margin: 0 -0.75rem;
+		padding: 0.5rem 0.75rem 0.2rem;
+		width: calc(100% + 1.5rem);
+		box-sizing: border-box;
+	}
+
+	.comment-input-disabled {
+		flex: 1;
+		height: 34px;
+		display: flex;
+		align-items: center;
+		padding: 0 0.7rem;
+		border-radius: 999px;
+		border: 1px solid #d8d3ca;
+		background: #f5f2ed;
+		color: #9a9388;
+		font-size: 0.82rem;
+	}
+
+	.comment-input-disabled :global(svg) {
+		width: 1em;
+		height: 1em;
+		vertical-align: middle;
+		margin-left: 0.3em;
+		fill: currentColor;
+		flex-shrink: 0;
+	}
+
+	.comment-submit-disabled {
+		height: 34px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0 0.9rem;
+		border-radius: 999px;
+		border: 1px solid #cfd7cf;
+		background: #e7ece7;
+		color: #8f998f;
+		font-size: 0.78rem;
+		font-weight: 600;
+	}
+
+	@media (max-width: 640px) {
+		.card-content {
+			padding: 0.85rem;
+			gap: 0.5rem;
+		}
+
+		.card-title {
+			font-size: 1rem;
+		}
+
+		.card-description {
+			font-size: 0.85rem;
+		}
+	}
+</style>
