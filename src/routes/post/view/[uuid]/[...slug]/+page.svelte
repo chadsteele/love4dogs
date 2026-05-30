@@ -24,7 +24,55 @@
 			: Number.parseInt(raw, 36)
 		if (!Number.isFinite(stampMs) || stampMs <= 0) return raw
 		try {
-			return new Date(stampMs).toLocaleString()
+			const stampDate = new Date(stampMs)
+			const now = new Date()
+			const rtf = new Intl.RelativeTimeFormat(undefined, {
+				numeric: "auto",
+			})
+
+			const timeLabel = stampDate.toLocaleTimeString([], {
+				hour: "numeric",
+				minute: "2-digit",
+			})
+			const diffMs = now.getTime() - stampMs
+			if (diffMs >= 0 && diffMs < 45 * 1000) {
+				return "just now"
+			}
+			if (diffMs >= 0 && diffMs < 60 * 60 * 1000) {
+				const minutesAgo = Math.floor(diffMs / (60 * 1000))
+				return rtf.format(-Math.max(1, minutesAgo), "minute")
+			}
+			if (diffMs >= 0 && diffMs < 24 * 60 * 60 * 1000) {
+				const hoursAgo = Math.floor(diffMs / (60 * 60 * 1000))
+				return rtf.format(-Math.max(1, hoursAgo), "hour")
+			}
+
+			const startOfToday = new Date(
+				now.getFullYear(),
+				now.getMonth(),
+				now.getDate(),
+			)
+			const startOfStampDay = new Date(
+				stampDate.getFullYear(),
+				stampDate.getMonth(),
+				stampDate.getDate(),
+			)
+			const dayDiff = Math.round(
+				(startOfToday.getTime() - startOfStampDay.getTime()) /
+					(24 * 60 * 60 * 1000),
+			)
+
+			if (dayDiff === 0) return `today at ${timeLabel}`
+			if (dayDiff === 1) return `yesterday at ${timeLabel}`
+
+			const includeYear = stampDate.getFullYear() !== now.getFullYear()
+			const dateLabel = stampDate.toLocaleDateString(
+				[],
+				includeYear
+					? {year: "numeric", month: "short", day: "numeric"}
+					: {month: "short", day: "numeric"},
+			)
+			return `${dateLabel} at ${timeLabel}`
 		} catch {
 			return raw
 		}
@@ -486,9 +534,9 @@
 		display: inline-flex;
 		align-items: center;
 		gap: 0.45rem;
-		color: #2f6f56;
-		font-size: clamp(0.98rem, 1.8vw, 1.18rem);
-		font-weight: 700;
+		color: #6e756f;
+		font-size: clamp(0.82rem, 1.45vw, 0.96rem);
+		font-weight: 600;
 		line-height: 1.25;
 		text-decoration: none;
 	}
