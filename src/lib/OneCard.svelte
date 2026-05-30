@@ -1,10 +1,12 @@
 <script>
+	import {onMount} from "svelte"
 	import {extractPostTypeFromTags, extractHashtags} from "$lib/postTypeTags"
 	import {rewriteLove4DogsUrlForLocalhost} from "$lib/utils"
 	import {Heart, MessageCircle, Repeat2} from "lucide-svelte"
 	import {siBluesky} from "simple-icons"
 
 	let {post, onclick = () => {}} = $props()
+	let hasHydrated = $state(false)
 
 	const BSKY_HANDLE = "love4dogs.club"
 
@@ -16,18 +18,7 @@
 	function formatDate(iso = "") {
 		if (!iso) return ""
 		const d = new Date(iso)
-		const now = new Date()
-		const diff = now - d
-		const hours = Math.floor(diff / (1000 * 60 * 60))
-		const days = Math.floor(diff / (1000 * 60 * 60 * 24))
-
-		if (hours < 1) return "Now"
-		if (hours < 24) return `${hours}h ago`
-		if (days < 1) return "Today"
-		if (days === 1) return "Yesterday"
-		if (days < 7) return `${days}d ago`
-
-		return d.toLocaleDateString(undefined, {
+		return d.toLocaleDateString("en-US", {
 			month: "short",
 			day: "numeric",
 		})
@@ -118,8 +109,13 @@
 		const source = String(value || "").trim()
 		if (!source) return ""
 		if (!/^https?:\/\//i.test(source)) return ""
+		if (!hasHydrated) return source
 		return rewriteLove4DogsUrlForLocalhost(source)
 	}
+
+	onMount(() => {
+		hasHydrated = true
+	})
 
 	function getCardTitle() {
 		const titleMatch = String(post?.text || "")
@@ -194,6 +190,197 @@
 		return null
 	}
 
+	function parseLocationDetailsLine(detailsLine = "") {
+		const parts = String(detailsLine || "")
+			.split(",")
+			.map((part) => part.trim())
+			.filter(Boolean)
+
+		if (parts.length >= 4) {
+			return {
+				city: parts[0],
+				state: parts[1],
+				country: parts[2],
+				zip: parts.slice(3).join(", "),
+			}
+		}
+
+		if (parts.length === 3) {
+			return {
+				city: parts[0],
+				state: "",
+				country: parts[1],
+				zip: parts[2],
+			}
+		}
+
+		if (parts.length === 2) {
+			return {
+				city: parts[0],
+				state: "",
+				country: parts[1],
+				zip: "",
+			}
+		}
+
+		return {
+			city: parts[0] || "",
+			state: "",
+			country: "",
+			zip: "",
+		}
+	}
+
+	function extractLocationFromBundleAlt(alt = "") {
+		if (!alt) return null
+		const source = String(alt || "").trim()
+		if (!source) return null
+
+		try {
+			const parsed = JSON.parse(source)
+			const candidates = [
+				parsed,
+				parsed?.primary,
+				parsed?.combined?.primary,
+			]
+
+			if (typeof parsed?.h === "string" && parsed.h.trim()) {
+				try {
+					const inner = JSON.parse(parsed.h)
+					candidates.push(
+						inner,
+						inner?.primary,
+						inner?.combined?.primary,
+					)
+				} catch {}
+			}
+
+			const pick = (keys = []) => {
+				for (const candidate of candidates) {
+					if (!candidate || typeof candidate !== "object") continue
+					for (const key of keys) {
+						const rawValue = candidate?.[key]
+						if (typeof rawValue !== "string") continue
+						const value = rawValue.trim()
+						if (value) return value
+					}
+				}
+				return ""
+			}
+
+			const pickFromLocation = (keys = []) => {
+				for (const candidate of candidates) {
+					const location = candidate?.location
+					if (!location || typeof location !== "object") continue
+					for (const key of keys) {
+						const rawValue = location?.[key]
+						if (typeof rawValue !== "string") continue
+						const value = rawValue.trim()
+						if (value) return value
+					}
+				}
+				return ""
+			}
+
+			const address =
+				pick(["address", "formattedAddress"]) ||
+				pickFromLocation(["formattedAddress", "address"])
+			const city = pick(["city"]) || pickFromLocation(["city"])
+			const state = pick(["state"]) || pickFromLocation(["state"])
+			const zip = pick(["zip"]) || pickFromLocation(["zip", "postcode"])
+			const country =
+				pick(["country"]) ||
+				pickFromLocation(["country", "countryName"])
+
+			if (!address && !city && !state && !zip && !country) return null
+
+			return {address, city, state, zip, country}
+		} catch {
+			return null
+		}
+	}
+
+	function extractLocationFields(inputPost = {}) {
+		const sourceLocation =
+			inputPost?.location && typeof inputPost.location === "object"
+				? inputPost.location
+				: {}
+		let bundleLocation = null
+
+		for (const alt of inputPost?.imageAlts || []) {
+			bundleLocation = extractLocationFromBundleAlt(alt)
+			if (bundleLocation) break
+		}
+
+		if (!bundleLocation) {
+			bundleLocation = extractLocationFromBundleAlt(
+				inputPost?.video?.alt || "",
+			)
+		}
+
+		let address = String(
+			inputPost?.address ||
+				bundleLocation?.address ||
+				sourceLocation?.formattedAddress ||
+				sourceLocation?.address ||
+				"",
+		).trim()
+		let city = String(
+			inputPost?.city ||
+				bundleLocation?.city ||
+				sourceLocation?.city ||
+				"",
+		).trim()
+		let state = String(
+			inputPost?.state ||
+				bundleLocation?.state ||
+				sourceLocation?.state ||
+				"",
+		).trim()
+		let zip = String(
+			inputPost?.zip || bundleLocation?.zip || sourceLocation?.zip || "",
+		).trim()
+		let country = String(
+			inputPost?.country ||
+				bundleLocation?.country ||
+				sourceLocation?.country ||
+				"",
+		).trim()
+
+		const text = String(inputPost?.text || "")
+		const locationMatch = text.match(
+			/(?:^|\n)📍\s+[^\n]+\n([^\n]+)(?:\n([^\n]+))?/,
+		)
+
+		if (locationMatch) {
+			const firstLine = String(locationMatch[1] || "").trim()
+			const secondLine = String(locationMatch[2] || "").trim()
+
+			if (secondLine) {
+				if (!address) address = firstLine
+				const parsed = parseLocationDetailsLine(secondLine)
+				city = city || parsed.city
+				state = state || parsed.state
+				country = country || parsed.country
+				zip = zip || parsed.zip
+			} else {
+				const parsed = parseLocationDetailsLine(firstLine)
+				city = city || parsed.city
+				state = state || parsed.state
+				country = country || parsed.country
+				zip = zip || parsed.zip
+			}
+		}
+
+		return {
+			address,
+			city,
+			state,
+			zip,
+			country,
+		}
+	}
+
 	const PILL_COLORS = [
 		{bg: "#bae6fd", color: "#0369a1"},
 		{bg: "#e9d5ff", color: "#6b21a8"},
@@ -253,6 +440,7 @@
 	)
 	const formattedDate = $derived(formatDate(post?.createdAt || ""))
 	const comments = $derived(post?.comments || [])
+	const locationFields = $derived(extractLocationFields(post))
 </script>
 
 <div
@@ -285,6 +473,41 @@
 
 		{#if cardDescription}
 			<p class="card-description">{cardDescription}</p>
+		{/if}
+
+		{#if locationFields.address || locationFields.city || locationFields.state || locationFields.zip || locationFields.country}
+			<div class="location-fields">
+				{#if locationFields.address}
+					<p class="location-row">
+						<span class="location-label">Address:</span>
+						<span>{locationFields.address}</span>
+					</p>
+				{/if}
+				{#if locationFields.city}
+					<p class="location-row">
+						<span class="location-label">City:</span>
+						<span>{locationFields.city}</span>
+					</p>
+				{/if}
+				{#if locationFields.state}
+					<p class="location-row">
+						<span class="location-label">State:</span>
+						<span>{locationFields.state}</span>
+					</p>
+				{/if}
+				{#if locationFields.zip}
+					<p class="location-row">
+						<span class="location-label">Zip:</span>
+						<span>{locationFields.zip}</span>
+					</p>
+				{/if}
+				{#if locationFields.country}
+					<p class="location-row">
+						<span class="location-label">Country:</span>
+						<span>{locationFields.country}</span>
+					</p>
+				{/if}
+			</div>
 		{/if}
 
 		{#if profilePic || authorName || formattedDate}
@@ -445,6 +668,29 @@
 		line-clamp: 2;
 		-webkit-box-orient: vertical;
 		overflow: hidden;
+	}
+
+	.location-fields {
+		display: grid;
+		gap: 0.2rem;
+		padding: 0.5rem 0.65rem;
+		border-radius: 8px;
+		background: #faf7f3;
+		border: 1px solid #ede5d8;
+	}
+
+	.location-row {
+		margin: 0;
+		font-size: 0.8rem;
+		line-height: 1.35;
+		color: #4b5563;
+		word-break: break-word;
+	}
+
+	.location-label {
+		font-weight: 600;
+		color: #374151;
+		margin-right: 0.3rem;
 	}
 
 	.card-footer {

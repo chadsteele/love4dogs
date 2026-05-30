@@ -91,6 +91,23 @@
 		return next
 	}
 
+	function isValidCanonicalUrl(value = "") {
+		const source = String(value || "").trim()
+		if (!source) return false
+		try {
+			const parsed = new URL(source)
+			const parts = parsed.pathname.split("/").filter(Boolean)
+			const profileIdx = parts.findIndex((part) => part === "profile")
+			if (profileIdx >= 0 && parts[profileIdx + 1] === "view") {
+				const uuid = String(parts[profileIdx + 2] || "").trim()
+				return uuid.length > 0
+			}
+			return true
+		} catch {
+			return false
+		}
+	}
+
 	function updateUrlFromSearch(term = "") {
 		if (typeof window === "undefined") return
 		const normalized = normalizeSearchTerm(term)
@@ -339,8 +356,17 @@
 							onclick={() => {
 								// Route to view page based on canonical or post type
 								const canonical = post?.canonicalUrl || ""
-								if (canonical) {
+								if (isValidCanonicalUrl(canonical)) {
 									window.location.href = canonical
+								} else if (canonical) {
+									console.warn(
+										"[search] skipped invalid canonical URL",
+										{
+											canonical,
+											postUri: post?.uri || "",
+											displayKey: post?.displayKey || "",
+										},
+									)
 								}
 							}}
 						/>

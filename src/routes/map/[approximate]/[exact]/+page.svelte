@@ -50,6 +50,7 @@
 	const API_DOWN_BACKOFF_MS = 15_000
 	const VIEWPORT_REFRESH_DEBOUNCE_MS = 260
 	const MAP_IDLE_BEFORE_SPEEDUP_MS = 1_000
+	const MIN_ZOOM = 10
 	let nextApproxRequestAt = 0
 	let throttleBackoffUntil = 0
 	let lastMapActivityAt = 0
@@ -745,7 +746,7 @@
 					touchZoom: true,
 					scrollWheelZoom: true,
 					doubleClickZoom: true,
-					minZoom: 11,
+					minZoom: MIN_ZOOM,
 				})
 				.setView([data.lat, data.lon], 13)
 

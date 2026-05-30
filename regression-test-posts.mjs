@@ -31,6 +31,8 @@ import {
 	resolveTestConfig,
 	createAssertions,
 	generateUuid,
+	createRandomColoradoLocation,
+	findLocationLeakInText,
 	fetchMultipleDogImages,
 	uploadDogImageToBluesky,
 	sleep,
@@ -164,6 +166,11 @@ async function main() {
 	console.log('\nStep 2: Build and publish a large post');
 	const uuid = generateUuid();
 	const title = `Regression Test Post ${uuid}`;
+	const coloradoLocation = createRandomColoradoLocation();
+	console.log(`  Location hash path: ${coloradoLocation.hashPath}`);
+	console.log(
+		`  Map URL preview: ${BASE_URL}/map/${coloradoLocation.approximate}/${coloradoLocation.exact}`,
+	);
 	const largePostHtml = buildLargePostHtml(uuid);
 	const dogImageUrls = await fetchMultipleDogImages(4);
 	const uploadedImages = [];
@@ -188,6 +195,23 @@ async function main() {
 		title,
 		canonicalurl: `https://love4dogs.club/post/view/${uuid}`,
 		description: `Automated regression test post for chunked publishing (${uuid}).`,
+		address: coloradoLocation.address,
+		city: coloradoLocation.city,
+		state: coloradoLocation.state,
+		zip: coloradoLocation.zip,
+		country: coloradoLocation.country,
+		location: {
+			lat: coloradoLocation.lat,
+			lon: coloradoLocation.lon,
+			approximate: coloradoLocation.approximate,
+			exact: coloradoLocation.exact,
+			hashPath: coloradoLocation.hashPath,
+			formattedAddress: coloradoLocation.formattedAddress,
+			city: coloradoLocation.city,
+			state: coloradoLocation.state,
+			country: coloradoLocation.country,
+			zip: coloradoLocation.zip,
+		},
 		html: largePostHtml,
 		tags: ['regression', 'chunking', 'test'],
 	};
@@ -216,6 +240,20 @@ async function main() {
 	assertEqual(primaryPayload.uuid, uuid, 'Primary payload UUID matches');
 	assert(!primaryPayload.tags.includes('profile'), 'Primary payload does not include profile tag');
 	assertEqual(uploadedImages.length, dogImageUrls.length, 'Uploaded image count matches source count');
+	assertEqual(primaryPayload.state, 'CO', 'Primary payload state is Colorado');
+	assertEqual(primaryPayload.country, 'USA', 'Primary payload country is USA');
+	assert(/^[0-9]{5}$/.test(String(primaryPayload.zip || '')), 'Primary payload zip is 5 digits');
+	assert(typeof primaryPayload.address === 'string' && primaryPayload.address.length > 0, 'Primary payload includes address');
+	assert(typeof primaryPayload.city === 'string' && primaryPayload.city.length > 0, 'Primary payload includes city');
+	assert(/^[0-9bcdefghjkmnpqrstuvwxyz]{5}$/i.test(String(primaryPayload.location?.approximate || '')), 'Primary payload includes /map approximate hash');
+	assert(/^[0-9bcdefghjkmnpqrstuvwxyz]{9}$/i.test(String(primaryPayload.location?.exact || '')), 'Primary payload includes /map exact hash');
+	assert(
+		String(primaryPayload.location?.hashPath || '') ===
+			`${primaryPayload.location?.approximate}/${primaryPayload.location?.exact}`,
+		'Primary payload includes /map hash path',
+	);
+	const locationLeakInPublishText = findLocationLeakInText(title, coloradoLocation);
+	assert(!locationLeakInPublishText, 'Publish text excludes location data', locationLeakInPublishText);
 
 	let publishResult;
 	try {
@@ -290,6 +328,14 @@ async function main() {
 	console.log('\nStep 5: Verify chunk count and reconstructed payload');
 	assertEqual(loaded.payloads.length, chunkEntries.length, `Recovered ${loaded.payloads.length} chunk payloads (expected ${chunkEntries.length})`);
 	assertEqual(loaded.combinedJson, bundle.combinedJson, 'Reconstructed JSON matches original exactly');
+
+	const recoveredTexts = (Array.isArray(loaded.posts) ? loaded.posts : [])
+		.map((post) => String(post?.record?.text || ''))
+		.filter(Boolean);
+	const leakedRecoveredText = recoveredTexts.find((text) =>
+		Boolean(findLocationLeakInText(text, coloradoLocation))
+	);
+	assert(!leakedRecoveredText, 'Recovered post texts exclude location data', leakedRecoveredText || '');
 
 	console.log('');
 	console.log('============================================================');

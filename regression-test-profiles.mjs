@@ -30,6 +30,8 @@ import {
 	resolveTestConfig,
 	createAssertions,
 	generateUuid,
+	createRandomColoradoLocation,
+	findLocationLeakInText,
 	fetchMultipleDogImages,
 	uploadDogImageToBluesky,
 	sleep,
@@ -215,7 +217,12 @@ async function main() {
 	// ─── Step 4: Build large profile payload ─────────────────────────────────
 	console.log('\nStep 4: Build large profile payload');
 	const uuid = generateUuid();
+	const coloradoLocation = createRandomColoradoLocation();
 	console.log(`  UUID: ${uuid}`);
+	console.log(`  Location hash path: ${coloradoLocation.hashPath}`);
+	console.log(
+		`  Map URL preview: ${BASE_URL}/map/${coloradoLocation.approximate}/${coloradoLocation.exact}`,
+	);
 
 	const profileName = `Regression Test ${uuid}`;
 	const profileDescription =
@@ -231,6 +238,23 @@ async function main() {
 		canonicalurl: `https://love4dogs.club/profile/view/${uuid}`,
 		title: profileName,
 		description: profileDescription,
+		address: coloradoLocation.address,
+		city: coloradoLocation.city,
+		state: coloradoLocation.state,
+		zip: coloradoLocation.zip,
+		country: coloradoLocation.country,
+		location: {
+			lat: coloradoLocation.lat,
+			lon: coloradoLocation.lon,
+			approximate: coloradoLocation.approximate,
+			exact: coloradoLocation.exact,
+			hashPath: coloradoLocation.hashPath,
+			formattedAddress: coloradoLocation.formattedAddress,
+			city: coloradoLocation.city,
+			state: coloradoLocation.state,
+			country: coloradoLocation.country,
+			zip: coloradoLocation.zip,
+		},
 		profilePic: uploadedImages[0]?.url || null,
 		backgroundPic: uploadedImages[1]?.url || null,
 		html: contentHtml,
@@ -245,6 +269,18 @@ async function main() {
 	assert(typeof primaryPayload.uuid === 'string', 'Primary payload has uuid');
 	assert(primaryPayload.tags.includes('profile'), 'Primary payload includes profile tag');
 	assert(typeof primaryPayload.title === 'string', 'Primary payload has title');
+	assertEqual(primaryPayload.state, 'CO', 'Primary payload state is Colorado');
+	assertEqual(primaryPayload.country, 'USA', 'Primary payload country is USA');
+	assert(/^[0-9]{5}$/.test(String(primaryPayload.zip || '')), 'Primary payload zip is 5 digits');
+	assert(typeof primaryPayload.address === 'string' && primaryPayload.address.length > 0, 'Primary payload includes address');
+	assert(typeof primaryPayload.city === 'string' && primaryPayload.city.length > 0, 'Primary payload includes city');
+	assert(/^[0-9bcdefghjkmnpqrstuvwxyz]{5}$/i.test(String(primaryPayload.location?.approximate || '')), 'Primary payload includes /map approximate hash');
+	assert(/^[0-9bcdefghjkmnpqrstuvwxyz]{9}$/i.test(String(primaryPayload.location?.exact || '')), 'Primary payload includes /map exact hash');
+	assert(
+		String(primaryPayload.location?.hashPath || '') ===
+			`${primaryPayload.location?.approximate}/${primaryPayload.location?.exact}`,
+		'Primary payload includes /map hash path',
+	);
 	assert(subsequentPayload.length > 0, 'Subsequent payload is non-empty');
 
 	// ─── Step 5: Build combined bundle and verify 4+ chunk entries ───────────
@@ -295,6 +331,8 @@ async function main() {
 		.filter(Boolean)
 		.join('\n')
 		.slice(0, 295);
+	const locationLeakInPublishText = findLocationLeakInText(postText, coloradoLocation);
+	assert(!locationLeakInPublishText, 'Publish text excludes location data', locationLeakInPublishText);
 
 	let publishResult;
 	try {
@@ -377,6 +415,14 @@ async function main() {
 	console.log(`  Fragments recovered  : ${loaded.fragments.length}`);
 	console.log(`  combinedJson length  : ${loaded.combinedJson.length} chars`);
 
+	const recoveredTexts = (Array.isArray(loaded.posts) ? loaded.posts : [])
+		.map((post) => String(post?.record?.text || ''))
+		.filter(Boolean);
+	const leakedRecoveredText = recoveredTexts.find((text) =>
+		Boolean(findLocationLeakInText(text, coloradoLocation))
+	);
+	assert(!leakedRecoveredText, 'Recovered post texts exclude location data', leakedRecoveredText || '');
+
 	// ─── Step 9: Verify chunk count matches ──────────────────────────────────
 	console.log('\nStep 9: Verify chunk count');
 	assert(
@@ -416,6 +462,18 @@ async function main() {
 	assert(recoPrimary?.description?.includes(uuid), 'primary.description contains UUID');
 	assert(recoPrimary?.canonicalurl?.includes(uuid), 'primary.canonicalurl contains UUID');
 	assert(Array.isArray(recoPrimary?.tags) && recoPrimary.tags.includes('profile'), 'primary.tags includes profile');
+	assertEqual(recoPrimary?.state, 'CO', 'primary.state is Colorado');
+	assertEqual(recoPrimary?.country, 'USA', 'primary.country is USA');
+	assert(/^[0-9]{5}$/.test(String(recoPrimary?.zip || '')), 'primary.zip is 5 digits');
+	assert(typeof recoPrimary?.address === 'string' && recoPrimary.address.length > 0, 'primary.address present');
+	assert(typeof recoPrimary?.city === 'string' && recoPrimary.city.length > 0, 'primary.city present');
+	assert(/^[0-9bcdefghjkmnpqrstuvwxyz]{5}$/i.test(String(recoPrimary?.location?.approximate || '')), 'primary.location.approximate present');
+	assert(/^[0-9bcdefghjkmnpqrstuvwxyz]{9}$/i.test(String(recoPrimary?.location?.exact || '')), 'primary.location.exact present');
+	assert(
+		String(recoPrimary?.location?.hashPath || '') ===
+			`${recoPrimary?.location?.approximate}/${recoPrimary?.location?.exact}`,
+		'primary.location.hashPath matches approximate/exact',
+	);
 
 	// Verify all subsequent fragments are present and join correctly
 	const recoSubsequent = reconstructedParsed?.subsequent;

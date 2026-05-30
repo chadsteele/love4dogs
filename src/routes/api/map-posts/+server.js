@@ -123,6 +123,7 @@ function isReplyPost(item) {
 function mapPost(post) {
 	const record = post?.record || {};
 	const images = [];
+	const imageAlts = [];
 	let video = null;
 
 	const embedView = post?.embed;
@@ -132,6 +133,7 @@ function mapPost(post) {
 	if (mediaView?.$type === 'app.bsky.embed.images#view') {
 		for (const image of mediaView.images || []) {
 			if (image.fullsize) images.push(image.fullsize);
+			imageAlts.push(String(image?.alt || ''));
 		}
 	}
 
@@ -150,12 +152,109 @@ function mapPost(post) {
 		facets: Array.isArray(record.facets) ? record.facets : [],
 		createdAt: record.createdAt || null,
 		images,
+		imageAlts,
 		video,
 		replyCount: post?.replyCount || 0,
 		repostCount: post?.repostCount || 0,
 		likeCount: post?.likeCount || 0,
 		comments: []
 	};
+}
+
+function isValidHashPart(value = '', expectedLength = 0) {
+	const source = String(value || '').trim().toLowerCase();
+	if (!source) return false;
+	if (expectedLength > 0 && source.length !== expectedLength) return false;
+	return /^[0-9bcdefghjkmnpqrstuvwxyz]+$/i.test(source);
+}
+
+function normalizeApproximate(value = '') {
+	const source = String(value || '').trim().toLowerCase();
+	if (!isValidHashPart(source, 5)) return '';
+	return source;
+}
+
+function normalizeExact(value = '') {
+	const source = String(value || '').trim().toLowerCase();
+	if (!isValidHashPart(source, 9)) return '';
+	return source;
+}
+
+function extractHashesFromBundleAlt(alt = '') {
+	const source = String(alt || '').trim();
+	if (!source) return null;
+
+	try {
+		const parsed = JSON.parse(source);
+		const candidates = [
+			parsed,
+			parsed?.primary,
+			parsed?.combined?.primary,
+		];
+
+		if (typeof parsed?.h === 'string' && parsed.h.trim()) {
+			try {
+				const inner = JSON.parse(parsed.h);
+				candidates.push(inner, inner?.primary, inner?.combined?.primary);
+			} catch {
+				// Ignore malformed nested payloads and keep best-effort parsing.
+			}
+		}
+
+		for (const candidate of candidates) {
+			if (!candidate || typeof candidate !== 'object') continue;
+
+			const location =
+				candidate?.location && typeof candidate.location === 'object'
+					? candidate.location
+					: null;
+
+			const hashPath =
+				String(candidate?.hashPath || location?.hashPath || '').trim();
+			let approximate = normalizeApproximate(
+				candidate?.approximate || candidate?.approx || location?.approximate || location?.approx,
+			);
+			let exact = normalizeExact(
+				candidate?.exact || location?.exact,
+			);
+
+			if (hashPath) {
+				const parts = hashPath
+					.split('/')
+					.map((part) => String(part || '').trim().toLowerCase())
+					.filter(Boolean);
+				if (parts.length >= 2) {
+					if (!approximate) approximate = normalizeApproximate(parts[0]);
+					if (!exact) exact = normalizeExact(parts[1]);
+				}
+			}
+
+			if (exact && !approximate) {
+				approximate = exact.slice(0, 5);
+			}
+
+			if (!approximate || !exact) continue;
+			return { approximate, exact };
+		}
+	} catch {
+		return null;
+	}
+
+	return null;
+}
+
+function extractHashesFromMappedPost(mapped = {}) {
+	const alts = [
+		...(Array.isArray(mapped?.imageAlts) ? mapped.imageAlts : []),
+		String(mapped?.video?.alt || ''),
+	].filter(Boolean);
+
+	for (const alt of alts) {
+		const extracted = extractHashesFromBundleAlt(alt);
+		if (extracted) return extracted;
+	}
+
+	return null;
 }
 
 function extractExactHash(text = '', approximate = '') {
@@ -193,8 +292,15 @@ function tryAddMappedPost({ postLike, approximate, posts, seen, pageStats, autho
 	const mapped = mapPost(postLike.post ? postLike.post : postLike);
 	const exactFromText = extractExactHash(mapped.text, approximate);
 	const exactFromFacets = extractExactHashFromFacetUris(mapped.facets, approximate);
-	const exact = exactFromText || exactFromFacets;
+	const hashesFromAlt = extractHashesFromMappedPost(mapped);
+	const exact = exactFromText || exactFromFacets || hashesFromAlt?.exact || '';
+	const approxFromAlt = hashesFromAlt?.approximate || '';
+	const resolvedApproximate = approximate || approxFromAlt || exact.slice(0, 5);
 	if (!exact) {
+		pageStats.skippedNoExact += 1;
+		return;
+	}
+	if (resolvedApproximate !== approximate) {
 		pageStats.skippedNoExact += 1;
 		return;
 	}
@@ -211,7 +317,7 @@ function tryAddMappedPost({ postLike, approximate, posts, seen, pageStats, autho
 
 	posts.push({
 		...mapped,
-		approximate,
+		approximate: resolvedApproximate,
 		exact,
 		lat: Number(gps.lat),
 		lon: Number(gps.lon)
@@ -399,19 +505,32 @@ async function collectFromAuthorFeed({ author, approximate, posts, seen, allFail
 						.map((ft) => ft.uri || '')
 				)
 			].join(' ');
-			let match;
-			while ((match = approxPattern.exec(textToSearch)) !== null) {
-				const approx = match[1].toLowerCase();
-				const exact = match[2].toLowerCase();
-				const gps = hashToGps(exact);
-				if (!gps) continue;
+			const addedKeys = new Set();
+			const addMapped = (approx = '', exact = '') => {
+				const normalizedApprox = normalizeApproximate(approx);
+				const normalizedExact = normalizeExact(exact);
+				if (!normalizedApprox || !normalizedExact) return;
+				const key = `${post.uri}|${normalizedApprox}|${normalizedExact}`;
+				if (addedKeys.has(key)) return;
+				const gps = hashToGps(normalizedExact);
+				if (!gps) return;
 				allMappedPosts.push({
 					...mapped,
-					approximate: approx,
-					exact,
+					approximate: normalizedApprox,
+					exact: normalizedExact,
 					lat: Number(gps.lat),
 					lon: Number(gps.lon)
 				});
+				addedKeys.add(key);
+			};
+			let match;
+			while ((match = approxPattern.exec(textToSearch)) !== null) {
+				addMapped(match[1], match[2]);
+			}
+
+			const altHashes = extractHashesFromMappedPost(mapped);
+			if (altHashes?.exact) {
+				addMapped(altHashes.approximate, altHashes.exact);
 			}
 		}
 
