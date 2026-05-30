@@ -47,7 +47,7 @@
 			return
 		}
 
-		await goto("/")
+		await goto("/search")
 	}
 
 	function escapeHtml(value) {

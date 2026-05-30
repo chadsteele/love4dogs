@@ -488,6 +488,14 @@ async function main() {
 		const reconstructedHtml = recoSubsequent.join('');
 		const originalHtml = subsequentPayload.join('');
 		assert(reconstructedHtml === originalHtml, 'Reconstructed HTML content matches original');
+		assert(
+			!String(reconstructedHtml).includes(String(recoPrimary?.profilePic || '')),
+			'Reconstructed HTML excludes profilePic URL',
+		);
+		assert(
+			!String(reconstructedHtml).includes(String(recoPrimary?.backgroundPic || '')),
+			'Reconstructed HTML excludes backgroundPic URL',
+		);
 		// Spot-check: all dog image URLs present in reconstructed HTML
 		let allUrlsPresent = true;
 		for (const url of dogImageUrls) {

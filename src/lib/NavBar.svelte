@@ -10,14 +10,10 @@
 	} from "$lib/profileRegistry"
 	import {
 		Menu,
-		History,
 		PawPrint,
 		Search,
-		Trash2,
 		Settings,
 		Users,
-		AlertOctagon,
-		Shield,
 		Pencil,
 		Plus,
 		User,
@@ -25,15 +21,7 @@
 
 	let {
 		searchTerm = $bindable(""),
-		selectedCount = 0,
 		selectionMenuOpen = $bindable(false),
-		currentView = "feed",
-		historyCount = 0,
-		bookmarkedCount = 0,
-		trashedCount = 0,
-		onSetView = () => {},
-		onSelectionAction = () => {},
-		onOpenAbout = () => {},
 		showSearch = true,
 		onSearchSubmit = () => {},
 		onSearchInput = () => {},
@@ -88,129 +76,32 @@
 		goto("/profile/select")
 	}
 
-	function routeToHomeWithParams(entries = []) {
-		const params = new URLSearchParams()
-		for (const [key, value] of entries) {
-			const next = String(value || "").trim()
-			if (next) params.set(key, next)
-		}
-		const query = params.toString()
-		goto(query ? `/?${query}` : "/")
-	}
-
-	function handleSetView(view = "feed") {
-		const next = String(view || "feed").trim() || "feed"
-		if (typeof window !== "undefined" && window.location.pathname !== "/") {
-			routeToHomeWithParams([
-				["view", next],
-				["q", searchTerm],
-			])
-			return
-		}
-		onSetView(next)
+	function buildSearchPath(term = "") {
+		const normalized = String(searchTerm || term || "")
+			.trim()
+			.replace(/\s+/g, " ")
+		const segments = normalized
+			? normalized
+					.split(" ")
+					.map((segment) => encodeURIComponent(segment))
+					.join("/")
+			: ""
+		return segments ? `/search/${segments}` : "/search"
 	}
 
 	function handleSearchSubmit() {
-		if (typeof window !== "undefined" && window.location.pathname !== "/") {
-			routeToHomeWithParams([
-				["view", "feed"],
-				["q", searchTerm],
-			])
+		if (
+			typeof window !== "undefined" &&
+			!window.location.pathname.startsWith("/search")
+		) {
+			goto(buildSearchPath(searchTerm))
 			return
 		}
 		onSearchSubmit()
 	}
 
 	function handleOpenAbout() {
-		if (typeof window !== "undefined" && window.location.pathname !== "/") {
-			goto("/about")
-			return
-		}
-		onOpenAbout()
-	}
-
-	async function handleDeleteAllPosts() {
-		if (
-			!confirm(
-				"This will permanently delete ALL posts in your account. This cannot be undone. Continue?",
-			)
-		) {
-			deleteAllConfirming = false
-			return
-		}
-
-		try {
-			deleteAllInProgress = true
-			selectionMenuOpen = false
-
-			const allUris = []
-			const seenUris = new Set()
-			let cursor = ""
-
-			while (true) {
-				const params = new URLSearchParams({limit: "100"})
-				if (cursor) params.set("cursor", cursor)
-				const feedResponse = await fetch(
-					`/api/feed?${params.toString()}`,
-				)
-				if (!feedResponse.ok) {
-					throw new Error("Failed to fetch feed")
-				}
-
-				const feedData = await feedResponse.json()
-				const pageUris = Array.isArray(feedData.posts)
-					? feedData.posts.map((post) => post?.uri).filter(Boolean)
-					: []
-
-				for (const uri of pageUris) {
-					if (seenUris.has(uri)) continue
-					seenUris.add(uri)
-					allUris.push(uri)
-				}
-
-				const nextCursor = String(feedData.cursor || "").trim()
-				if (!nextCursor || pageUris.length === 0) break
-				cursor = nextCursor
-			}
-
-			if (!allUris || allUris.length === 0) {
-				alert("No posts found to delete")
-				deleteAllConfirming = false
-				deleteAllInProgress = false
-				return
-			}
-
-			// Call the bulk delete API
-			const deleteResponse = await fetch("/api/post", {
-				method: "DELETE",
-				headers: {"content-type": "application/json"},
-				body: JSON.stringify({uris: allUris}),
-			})
-
-			if (!deleteResponse.ok) {
-				throw new Error("Delete request failed")
-			}
-
-			const deleteResult = await deleteResponse.json()
-			const deletedCount = deleteResult.deleted?.length || 0
-			const failedCount = deleteResult.failed?.length || 0
-
-			if (deletedCount > 0) {
-				alert(
-					`Successfully deleted ${deletedCount} posts${failedCount > 0 ? `. Failed: ${failedCount}` : "."}`,
-				)
-			} else {
-				alert("No posts were deleted")
-			}
-
-			deleteAllConfirming = false
-			deleteAllInProgress = false
-		} catch (error) {
-			console.error("Error deleting all posts:", error)
-			alert("Error deleting posts: " + (error.message || "Unknown error"))
-			deleteAllConfirming = false
-			deleteAllInProgress = false
-		}
+		goto("/about")
 	}
 
 	$effect(() => {
@@ -265,135 +156,21 @@
 				onclick={() => (selectionMenuOpen = !selectionMenuOpen)}
 			>
 				<Menu size={18} />
-				{#if selectedCount > 0}
-					<span class="selected-count">{selectedCount}</span>
-				{/if}
 			</button>
 			{#if selectionMenuOpen}
 				<div class="selection-menu">
 					{#if menu}
 						{@render menu()}
 					{:else}
-						{#if isLocalHost() && currentView !== "admin"}
-							<button
-								type="button"
-								class:is-active={currentView === "admin"}
-								onclick={() => {
-									handleSetView("admin")
-									selectionMenuOpen = false
-								}}
-							>
-								<Shield size={16} /> Admin
-							</button>
-						{/if}
 						<button
 							type="button"
-							class:is-active={currentView === "feed"}
 							onclick={() => {
-								handleSetView("feed")
+								goto(buildSearchPath(searchTerm))
 								selectionMenuOpen = false
 							}}
 						>
 							<Search size={16} /> Show feed
 						</button>
-						{#if historyCount > 0}
-							<button
-								type="button"
-								class:is-active={currentView === "history"}
-								onclick={() => {
-									handleSetView("history")
-									selectionMenuOpen = false
-								}}
-							>
-								<History size={16} /> Show history
-							</button>
-						{/if}
-						{#if bookmarkedCount > 0}
-							<button
-								type="button"
-								class:is-active={currentView === "bookmarks"}
-								onclick={() => {
-									handleSetView("bookmarks")
-									selectionMenuOpen = false
-								}}
-							>
-								<PawPrint size={16} /> Show favorites
-							</button>
-						{/if}
-						{#if trashedCount > 0}
-							<button
-								type="button"
-								class:is-active={currentView === "trash"}
-								onclick={() => {
-									handleSetView("trash")
-									selectionMenuOpen = false
-								}}
-							>
-								<Trash2 size={16} /> Show trash
-							</button>
-						{/if}
-
-						{#if selectedCount > 0}
-							<div class="menu-sep"></div>
-						{/if}
-
-						{#if selectedCount > 0 && currentView === "feed"}
-							<button
-								type="button"
-								onclick={() => onSelectionAction("bookmark")}
-							>
-								<PawPrint size={16} /> Favorite selected
-							</button>
-							<button
-								type="button"
-								onclick={() => onSelectionAction("trash")}
-							>
-								<Trash2 size={16} /> Delete selected
-							</button>
-						{/if}
-
-						{#if selectedCount > 0 && currentView === "trash"}
-							<button
-								type="button"
-								onclick={() => onSelectionAction("restore")}
-							>
-								<Trash2 size={16} /> Restore selected
-							</button>
-						{/if}
-
-						{#if selectedCount > 0 && currentView === "bookmarks"}
-							<button
-								type="button"
-								onclick={() => onSelectionAction("unbookmark")}
-							>
-								<PawPrint size={16} /> Remove favorite
-							</button>
-						{/if}
-
-						{#if isLocalHost() && selectedCount > 0}
-							<button
-								type="button"
-								onclick={() =>
-									onSelectionAction("deleteRemote")}
-							>
-								<AlertOctagon size={16} /> Remove permanently
-							</button>
-						{/if}
-						{#if isLocalHost()}
-							<button
-								type="button"
-								disabled={deleteAllInProgress}
-								onclick={() => {
-									deleteAllConfirming = true
-									handleDeleteAllPosts()
-								}}
-							>
-								<AlertOctagon size={16} />
-								{deleteAllInProgress
-									? "Deleting..."
-									: "Delete all posts"}
-							</button>
-						{/if}
 						<div class="menu-sep"></div>
 						<button
 							type="button"
@@ -649,11 +426,6 @@
 		font: inherit;
 	}
 
-	.selection-menu button.is-active {
-		background: #e9f0ea;
-		font-weight: 600;
-	}
-
 	.selection-menu button:hover {
 		background: #f3ece1;
 	}
@@ -662,21 +434,6 @@
 		height: 1px;
 		background: #e6ddcf;
 		margin: 0.35rem 0;
-	}
-
-	.selected-count {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		min-width: 20px;
-		height: 20px;
-		padding: 0 0.3rem;
-		border-radius: 999px;
-		background: rgba(255, 255, 255, 0.24);
-		font-size: 0.8rem;
-		position: absolute;
-		top: -5px;
-		right: -6px;
 	}
 
 	.logo-wrap {

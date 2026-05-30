@@ -27,6 +27,7 @@
 		Trash2,
 	} from "lucide-svelte"
 	import {goto} from "$app/navigation"
+	import {page} from "$app/state"
 	import HashTagCloud from "$lib/HashTagCloud.svelte"
 	import MediaUploadManager from "$lib/MediaUploadManager.svelte"
 	import LocationPicker from "$lib/LocationPicker.svelte"
@@ -184,7 +185,7 @@
 			addToTrash(editingPostUri)
 			removeApproxPostFromCache(editingPostUri)
 			removeOldPostUri(editingPostUri)
-			goto("/")
+			goto("/search")
 		} catch (error) {
 			postError = error.message || "Unable to delete post."
 		} finally {
@@ -198,7 +199,7 @@
 			window.history.back()
 			return
 		}
-		await goto("/")
+		await goto("/search")
 	}
 
 	function oldPostPreviewTitle(uri = "") {
@@ -600,7 +601,7 @@
 				window.history.replaceState({}, "", "/post")
 			}
 			postSuccess = "Post published successfully."
-			goto("/")
+			goto("/search")
 		} catch (error) {
 			postError = error.message || "Unable to post right now."
 		} finally {
@@ -618,11 +619,26 @@
 		return MAX_CHARS - [...composeFinalText()].length
 	}
 
-	function currentEditUriFromQuery() {
+	function currentEditUuidFromRoute() {
 		if (typeof window === "undefined") return ""
-		const params = new URLSearchParams(window.location.search)
-		const uri = String(params.get("id") || params.get("uri") || "").trim()
-		return isValidAtUri(uri) ? uri : ""
+		const routeUuid = String(page.params?.uuid || "").trim()
+		return routeUuid || ""
+	}
+
+	async function resolveEditUriFromUuid(uuid = "") {
+		const targetUuid = String(uuid || "").trim()
+		if (!targetUuid) return ""
+
+		try {
+			const response = await fetch(
+				`/api/post-by-canonical-url?uuid=${encodeURIComponent(targetUuid)}`,
+			)
+			const json = await response.json().catch(() => ({}))
+			if (!response.ok) return ""
+			return String(json?.uri || "").trim()
+		} catch {
+			return ""
+		}
 	}
 
 	async function beginEditFromUri(uri = "") {
@@ -675,9 +691,16 @@
 
 		oldPostUris = loadOldPostUris()
 		hydrateOldPostDetails(oldPostUris)
-		const editUri = currentEditUriFromQuery()
-		if (editUri && (isLocalHost() || oldPostUris.includes(editUri))) {
-			beginEditFromUri(editUri)
+		const editUuid = currentEditUuidFromRoute()
+		if (editUuid) {
+			resolveEditUriFromUuid(editUuid).then((editUri) => {
+				if (
+					editUri &&
+					(isLocalHost() || oldPostUris.includes(editUri))
+				) {
+					beginEditFromUri(editUri)
+				}
+			})
 		}
 
 		fetch("/api/feed")

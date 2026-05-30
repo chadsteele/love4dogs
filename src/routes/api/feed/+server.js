@@ -245,6 +245,31 @@ async function xrpcGet(pathAndQuery, options) {
 	return { response: null, host: null, failures };
 }
 
+async function xrpcGetSingleHost(pathAndQuery, options, host) {
+	const requestUrl = `${host}/${pathAndQuery}`;
+	try {
+		const response = await fetch(requestUrl, options);
+		if (response.ok) {
+			return { response, host, failures: [] };
+		}
+		return {
+			response: null,
+			host: null,
+			failures: [
+				{ host, status: response.status, details: await response.text() }
+			]
+		};
+	} catch (error) {
+		return {
+			response: null,
+			host: null,
+			failures: [
+				{ host, status: 0, details: error.message || 'Network error' }
+			]
+		};
+	}
+}
+
 async function fetchComments(uri) {
 	try {
 		const session = await getSession();
@@ -318,12 +343,28 @@ export async function GET({ url }) {
 		if (cacheBuster) {
 			searchPath += `&_=${cacheBuster}`;
 		}
-		const { response: searchRes, failures: searchFailures } = await xrpcGet(
-			searchPath,
-			publicFetchOptions
-		);
+		const searchFetch = cursor
+			? xrpcGetSingleHost(searchPath, publicFetchOptions, BSKY_PUBLIC_XRPC_HOSTS[0])
+			: xrpcGet(searchPath, publicFetchOptions);
+		const { response: searchRes, failures: searchFailures } = await searchFetch;
 
 		if (!searchRes) {
+			if (cursor) {
+				console.warn('[feed] cursor pagination failed; ending search pagination', {
+					query,
+					cursor,
+					upstreamFailures: searchFailures,
+				});
+				return new Response(
+					JSON.stringify({
+						account: ACCOUNT_HANDLE,
+						posts: [],
+						cursor: null,
+						commonRecentTags: []
+					}),
+					{ headers: { 'content-type': 'application/json' } }
+				);
+			}
 			return new Response(
 				JSON.stringify({
 					error: 'Search failed using public API.',

@@ -5,9 +5,9 @@
 	import {
 		getApproxPostsFromCache,
 		gpsToHash,
+		rewriteLove4DogsUrlForLocalhost,
 		setApproxPostsInCache,
 	} from "$lib/utils"
-	import PostCard from "$lib/PostCard.svelte"
 
 	const LOCAL_MY_POSTS_KEY = "love4dogs.my-post-uris"
 
@@ -16,7 +16,6 @@
 	let mapPosts = $state([])
 	let loadingPins = $state(false)
 	let mapError = $state("")
-	let selectedPost = $state(null)
 	let viewportApproximates = $state([])
 	let locationQuery = $state("")
 	let searchingLocation = $state(false)
@@ -196,6 +195,273 @@
 		)
 	}
 
+	function slugify(value = "") {
+		return String(value || "")
+			.trim()
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, "-")
+			.replace(/^-+|-+$/g, "")
+	}
+
+	function extractCanonicalUrlFromAltPayload(alt = "") {
+		const source = String(alt || "").trim()
+		if (!source) return ""
+
+		try {
+			const parsed = JSON.parse(source)
+			const candidates = [
+				parsed,
+				parsed?.primary,
+				parsed?.combined?.primary,
+			]
+
+			if (typeof parsed?.h === "string" && parsed.h.trim()) {
+				try {
+					const inner = JSON.parse(parsed.h)
+					candidates.push(
+						inner,
+						inner?.primary,
+						inner?.combined?.primary,
+					)
+				} catch {
+					// Ignore malformed nested payloads and keep best-effort parsing.
+				}
+			}
+
+			for (const candidate of candidates) {
+				if (!candidate || typeof candidate !== "object") continue
+				for (const key of ["canonicalurl", "canonicalUrl"]) {
+					const value = String(candidate?.[key] || "").trim()
+					if (value) return rewriteLove4DogsUrlForLocalhost(value)
+				}
+			}
+		} catch {
+			return ""
+		}
+
+		return ""
+	}
+
+	function extractUuidFromCanonical(rawCanonical = "") {
+		const canonical = String(rawCanonical || "").trim()
+		if (!canonical) return ""
+
+		try {
+			const parsed = new URL(
+				canonical,
+				typeof window !== "undefined"
+					? window.location.origin
+					: "http://localhost",
+			)
+			const host = String(parsed.hostname || "").toLowerCase()
+			const isLocalHost =
+				host === "localhost" || host === "127.0.0.1" || host === "::1"
+			const isLove4DogsHost =
+				host === "love4dogs.club" || host === "www.love4dogs.club"
+			if (!isLocalHost && !isLove4DogsHost) {
+				return ""
+			}
+		} catch {
+			return ""
+		}
+
+		const viewMatch = canonical.match(
+			/(?:profile|post)\/(?:view|edit)\/([^/]+)/i,
+		)
+		if (viewMatch?.[1]) {
+			return String(viewMatch[1]).trim()
+		}
+
+		const pathMatch = canonical.match(
+			/https?:\/\/[^/]+\/([^/?#]+)(?:\/|\?|#|$)/i,
+		)
+		if (pathMatch?.[1]) {
+			return String(pathMatch[1]).trim()
+		}
+
+		return ""
+	}
+
+	function extractAtUriRkey(uri = "") {
+		const source = String(uri || "").trim()
+		if (!source) return ""
+		const match = source.match(
+			/^at:\/\/[^/]+\/app\.bsky\.feed\.post\/([^/?#]+)$/i,
+		)
+		return String(match?.[1] || "").trim()
+	}
+
+	function extractUuidFromAltPayload(alt = "") {
+		const source = String(alt || "").trim()
+		if (!source) return ""
+
+		try {
+			const parsed = JSON.parse(source)
+			const candidates = [
+				parsed,
+				parsed?.primary,
+				parsed?.combined?.primary,
+			]
+
+			if (typeof parsed?.h === "string" && parsed.h.trim()) {
+				try {
+					const inner = JSON.parse(parsed.h)
+					candidates.push(
+						inner,
+						inner?.primary,
+						inner?.combined?.primary,
+					)
+				} catch {
+					// Ignore malformed nested payloads and keep best-effort parsing.
+				}
+			}
+
+			for (const candidate of candidates) {
+				if (!candidate || typeof candidate !== "object") continue
+				const directUuid = String(
+					candidate?.u || candidate?.uuid || candidate?.id || "",
+				).trim()
+				if (directUuid) return directUuid
+
+				for (const key of ["canonicalurl", "canonicalUrl"]) {
+					const canonical = String(candidate?.[key] || "").trim()
+					const uuidFromCanonical =
+						extractUuidFromCanonical(canonical)
+					if (uuidFromCanonical) return uuidFromCanonical
+				}
+			}
+		} catch {
+			return ""
+		}
+
+		return ""
+	}
+
+	function extractPostViewHref(post = {}) {
+		for (const facet of post?.facets || []) {
+			for (const feature of facet?.features || []) {
+				if (feature?.$type !== "app.bsky.richtext.facet#link") continue
+				const uri = rewriteLove4DogsUrlForLocalhost(
+					String(feature?.uri || "").trim(),
+				)
+				if (/\/post\/(?:view|edit)\//i.test(uri)) {
+					return uri
+				}
+				if (
+					/^https?:\/\/(?:www\.)?(?:love4dogs\.club|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)(?:\/|$)/i.test(
+						uri,
+					)
+				) {
+					return uri
+				}
+			}
+		}
+
+		for (const alt of post?.imageAlts || []) {
+			const fromAlt = extractCanonicalUrlFromAltPayload(alt)
+			if (/\/post\/view\//i.test(fromAlt)) return fromAlt
+		}
+
+		const fromVideoAlt = extractCanonicalUrlFromAltPayload(
+			post?.video?.alt || "",
+		)
+		if (/\/post\/view\//i.test(fromVideoAlt)) return fromVideoAlt
+
+		return ""
+	}
+
+	function buildPostViewPath(post = {}) {
+		const canonical = extractPostViewHref(post)
+		let uuid = ""
+		const bskyPostRkey = extractAtUriRkey(post?.uri || "")
+		const directUuid = String(post?.uuid || "").trim()
+		if (directUuid && (!bskyPostRkey || directUuid !== bskyPostRkey)) {
+			const directSlug =
+				slugify(String(post?.text || "").split("\n")[0]) || directUuid
+			return `/post/view/${encodeURIComponent(directUuid)}/${encodeURIComponent(directSlug)}`
+		}
+
+		if (canonical) {
+			try {
+				const parsed = new URL(canonical, window.location.origin)
+				const segments = (parsed.pathname || "")
+					.split("/")
+					.map((segment) => segment.trim())
+					.filter(Boolean)
+				const idx = segments.findIndex((segment) => segment === "view")
+				uuid = String(segments[idx + 1] || "").trim()
+				if (!uuid) {
+					uuid = extractUuidFromCanonical(parsed.href)
+				}
+				const slug =
+					String(segments[idx + 2] || "").trim() ||
+					slugify(String(post?.text || "").split("\n")[0]) ||
+					uuid
+				if (uuid && (!bskyPostRkey || uuid !== bskyPostRkey)) {
+					return `/post/view/${encodeURIComponent(uuid)}/${encodeURIComponent(slug)}`
+				}
+				uuid = ""
+			} catch {
+				uuid = extractUuidFromCanonical(canonical)
+				if (uuid && (!bskyPostRkey || uuid !== bskyPostRkey)) {
+					const slug =
+						slugify(String(post?.text || "").split("\n")[0]) || uuid
+					return `/post/view/${encodeURIComponent(uuid)}/${encodeURIComponent(slug)}`
+				}
+				uuid = ""
+			}
+		}
+
+		for (const alt of post?.imageAlts || []) {
+			uuid = extractUuidFromAltPayload(alt)
+			if (uuid) break
+		}
+
+		if (!uuid) {
+			uuid = extractUuidFromAltPayload(post?.video?.alt || "")
+		}
+
+		if (!uuid || (bskyPostRkey && uuid === bskyPostRkey)) return ""
+		const slug = slugify(String(post?.text || "").split("\n")[0]) || uuid
+		return `/post/view/${encodeURIComponent(uuid)}/${encodeURIComponent(slug)}`
+	}
+
+	async function resolvePostViewHrefFromApi(post = {}) {
+		const uri = String(post?.uri || "").trim()
+		if (!uri) return ""
+
+		try {
+			const response = await fetch(
+				`/api/post?uri=${encodeURIComponent(uri)}`,
+			)
+			const json = await response.json().catch(() => ({}))
+			if (!response.ok) return ""
+			const hydratedPost = json?.post
+			if (!hydratedPost) return ""
+			return buildPostViewPath({
+				...post,
+				...hydratedPost,
+			})
+		} catch {
+			return ""
+		}
+	}
+
+	async function openPostInNewTab(post = {}) {
+		let href = buildPostViewPath(post)
+		if (!href) {
+			href = await resolvePostViewHrefFromApi(post)
+		}
+		if (!href) {
+			console.warn("[map] unable to build post view url", {
+				uri: String(post?.uri || ""),
+				uuid: String(post?.uuid || ""),
+			})
+			return
+		}
+		window.open(href, "_blank", "noopener,noreferrer")
+	}
+
 	function escapeHtml(text = "") {
 		return String(text)
 			.replace(/&/g, "&amp;")
@@ -226,7 +492,7 @@
 			<div class="pin-preview">
 				${thumb}
 				<div class="pin-preview-text">${formatted || "No text"}</div>
-				<button type="button" class="pin-preview-open" data-open-post="${escapeAttr(post?.uri || "")}">Open post</button>
+				<button type="button" class="pin-preview-open" data-open-post="${escapeAttr(post?.uri || "")}">Open</button>
 			</div>
 		`
 	}
@@ -490,12 +756,12 @@
 			})
 
 			// Seed the map immediately with anything already cached
-			const seenUris = new Set()
-			const merged = [...cachedPosts]
-			for (const post of merged) {
-				if (post?.uri) seenUris.add(post.uri)
+			const postsByUri = new Map()
+			for (const post of cachedPosts) {
+				if (!post?.uri) continue
+				postsByUri.set(post.uri, post)
 			}
-			if (merged.length > 0) mapPosts = [...merged]
+			if (postsByUri.size > 0) mapPosts = [...postsByUri.values()]
 
 			const responses = await fetchApproximatesBatched(
 				fetchApproximates,
@@ -508,14 +774,18 @@
 					// Drop pins immediately as each hash cell resolves
 					if (requestId !== mapLoadRequestId) return
 					setApproxPostsInCache(approximate, posts)
-					const incoming = posts.filter((post) => {
-						if (!post?.uri || seenUris.has(post.uri)) return false
-						seenUris.add(post.uri)
-						return true
-					})
-					if (incoming.length > 0) {
-						merged.push(...incoming)
-						mapPosts = [...merged]
+					let changed = false
+					for (const post of posts) {
+						if (!post?.uri) continue
+						const existing = postsByUri.get(post.uri)
+						const nextPost = existing
+							? {...existing, ...post}
+							: post
+						if (existing !== nextPost) changed = true
+						postsByUri.set(post.uri, nextPost)
+					}
+					if (changed) {
+						mapPosts = [...postsByUri.values()]
 					}
 				},
 			)
@@ -546,12 +816,12 @@
 			}
 			// Final assignment ensures any posts from fulfilled results that
 			// arrived while the request was still in flight are included
-			mapPosts = [...merged]
+			mapPosts = [...postsByUri.values()]
 
 			const rejected = responses.find(
 				(result) => result.status === "rejected",
 			)
-			if (rejected && merged.length === 0) {
+			if (rejected && postsByUri.size === 0) {
 				throw rejected.reason
 			}
 		} catch (error) {
@@ -683,7 +953,7 @@
 					openBtn.addEventListener(
 						"click",
 						() => {
-							selectedPost = post
+							openPostInNewTab(post)
 						},
 						{once: true},
 					)
@@ -795,7 +1065,7 @@
 
 <main class="map-page">
 	<nav class="topline">
-		<a class="nav-btn" href="/">＜ Go Back</a>
+		<a class="nav-btn" href="/search">＜ Go Back</a>
 		<h1 class="map-title">Love4Dogs</h1>
 		{#if data.valid}
 			<button
@@ -868,41 +1138,6 @@
 		<p class="muted">Try: /map/mkw9x/mkw9x3zzk</p>
 	{/if}
 </main>
-
-{#if selectedPost}
-	<div
-		class="modal-overlay"
-		role="dialog"
-		aria-modal="true"
-		aria-label="Post details"
-		tabindex="-1"
-	>
-		<button
-			type="button"
-			class="modal-backdrop"
-			aria-label="Close post details"
-			onclick={() => (selectedPost = null)}
-		></button>
-		<div class="modal-panel">
-			<div class="modal-head">
-				<h2>Post</h2>
-				<button
-					type="button"
-					class="close-btn"
-					aria-label="Close post details"
-					onclick={() => (selectedPost = null)}
-				>
-					&times;
-				</button>
-			</div>
-			<PostCard
-				post={selectedPost}
-				selectable={myPostUris.includes(selectedPost.uri)}
-				selectionEnabled={false}
-			/>
-		</div>
-	</div>
-{/if}
 
 <style>
 	.map-page {
@@ -1112,72 +1347,6 @@
 		font-size: 0.78rem;
 		font-weight: 600;
 		cursor: pointer;
-	}
-
-	.modal-overlay {
-		position: fixed;
-		inset: 0;
-		z-index: 1000;
-		display: flex;
-		justify-content: center;
-		align-items: flex-start;
-		padding: 1rem;
-		overflow-y: auto;
-	}
-
-	.modal-backdrop {
-		position: fixed;
-		inset: 0;
-		border: none;
-		background: rgba(0, 0, 0, 0.55);
-		padding: 0;
-		margin: 0;
-		cursor: pointer;
-	}
-
-	.modal-panel {
-		position: relative;
-		z-index: 1;
-		width: min(760px, 100%);
-		margin-top: 1rem;
-		background: rgba(255, 250, 241, 0.98);
-		border: 1px solid rgba(58, 91, 65, 0.18);
-		border-radius: 16px;
-		padding: 0.85rem;
-		box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
-	}
-
-	.modal-head {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0.75rem;
-		margin-bottom: 0.55rem;
-	}
-
-	.modal-head h2 {
-		margin: 0;
-		font-size: 1rem;
-	}
-
-	.close-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 2rem;
-		height: 2rem;
-		padding: 0;
-		background: #fff;
-		border: 1px solid #bdad9e;
-		border-radius: 999px;
-		font: inherit;
-		font-size: 1.1rem;
-		line-height: 1;
-		cursor: pointer;
-	}
-
-	.close-btn:hover {
-		background: #f4ece1;
 	}
 
 	@media (max-width: 640px) {

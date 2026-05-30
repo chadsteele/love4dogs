@@ -243,6 +243,39 @@ function extractHashesFromBundleAlt(alt = '') {
 	return null;
 }
 
+function extractUuidFromBundleAlt(alt = '') {
+	const source = String(alt || '').trim();
+	if (!source) return '';
+
+	try {
+		const parsed = JSON.parse(source);
+		const candidates = [
+			parsed,
+			parsed?.primary,
+			parsed?.combined?.primary,
+		];
+
+		if (typeof parsed?.h === 'string' && parsed.h.trim()) {
+			try {
+				const inner = JSON.parse(parsed.h);
+				candidates.push(inner, inner?.primary, inner?.combined?.primary);
+			} catch {
+				// Ignore malformed nested payloads and keep best-effort parsing.
+			}
+		}
+
+		for (const candidate of candidates) {
+			if (!candidate || typeof candidate !== 'object') continue;
+			const uuid = String(candidate?.u || candidate?.uuid || candidate?.id || '').trim();
+			if (uuid) return uuid;
+		}
+	} catch {
+		return '';
+	}
+
+	return '';
+}
+
 function extractHashesFromMappedPost(mapped = {}) {
 	const alts = [
 		...(Array.isArray(mapped?.imageAlts) ? mapped.imageAlts : []),
@@ -255,6 +288,20 @@ function extractHashesFromMappedPost(mapped = {}) {
 	}
 
 	return null;
+}
+
+function extractUuidFromMappedPost(mapped = {}) {
+	const alts = [
+		...(Array.isArray(mapped?.imageAlts) ? mapped.imageAlts : []),
+		String(mapped?.video?.alt || ''),
+	].filter(Boolean);
+
+	for (const alt of alts) {
+		const extracted = extractUuidFromBundleAlt(alt);
+		if (extracted) return extracted;
+	}
+
+	return '';
 }
 
 function extractExactHash(text = '', approximate = '') {
@@ -317,6 +364,7 @@ function tryAddMappedPost({ postLike, approximate, posts, seen, pageStats, autho
 
 	posts.push({
 		...mapped,
+		uuid: extractUuidFromMappedPost(mapped),
 		approximate: resolvedApproximate,
 		exact,
 		lat: Number(gps.lat),
@@ -506,6 +554,7 @@ async function collectFromAuthorFeed({ author, approximate, posts, seen, allFail
 				)
 			].join(' ');
 			const addedKeys = new Set();
+			const mappedUuid = extractUuidFromMappedPost(mapped);
 			const addMapped = (approx = '', exact = '') => {
 				const normalizedApprox = normalizeApproximate(approx);
 				const normalizedExact = normalizeExact(exact);
@@ -516,6 +565,7 @@ async function collectFromAuthorFeed({ author, approximate, posts, seen, allFail
 				if (!gps) return;
 				allMappedPosts.push({
 					...mapped,
+					uuid: mappedUuid,
 					approximate: normalizedApprox,
 					exact: normalizedExact,
 					lat: Number(gps.lat),

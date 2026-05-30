@@ -67,7 +67,7 @@ const DEFAULT_LOCATION_CACHE_KEY = 'love4dogs.location-cache';
 const DEFAULT_LOCATION_CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_REVERSE_GEO_CACHE_KEY = 'love4dogs.reverse-geo-cache';
 const DEFAULT_REVERSE_GEO_MAX_ENTRIES = 100;
-const DEFAULT_MAP_APPROX_POSTS_CACHE_KEY = 'love4dogs.map-approx-posts-cache';
+const DEFAULT_MAP_APPROX_POSTS_CACHE_KEY = 'love4dogs.map-approx-posts-cache.v2';
 const DEFAULT_MAP_APPROX_POSTS_CACHE_TTL_MS = 60 * 60 * 1000;
 const DEFAULT_MAP_APPROX_POSTS_CACHE_MAX_ENTRIES = 400;
 export const CONTACT_LOCK_PREFIX = '🔒';
@@ -445,11 +445,15 @@ function sanitizeApproxPost(post = {}) {
 
 	return {
 		uri,
+		uuid: String(post.uuid || '').trim(),
 		cid: String(post.cid || ''),
 		text: String(post.text || ''),
 		facets: Array.isArray(post.facets) ? post.facets : [],
 		createdAt: String(post.createdAt || ''),
 		images: Array.isArray(post.images) ? post.images.filter(Boolean) : [],
+		imageAlts: Array.isArray(post.imageAlts)
+			? post.imageAlts.map((alt) => String(alt || '')).filter(Boolean)
+			: [],
 		video: post.video || null,
 		replyCount: Number(post.replyCount || 0),
 		repostCount: Number(post.repostCount || 0),

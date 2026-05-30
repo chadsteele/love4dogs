@@ -3,7 +3,7 @@
 	import {page} from "$app/state"
 	import NavBar from "$lib/NavBar.svelte"
 	import Linkify from "$lib/Linkify.svelte"
-	import {User} from "lucide-svelte"
+	import {MapPin, User} from "lucide-svelte"
 
 	let currentView = $state("feed")
 	let loading = $state(true)
@@ -55,12 +55,110 @@
 		return earliest
 	}
 
+	function cleanMediaAlt(value = "") {
+		const raw = String(value || "").trim()
+		if (!raw) return ""
+		if (raw.startsWith("{") || raw.startsWith("[")) return ""
+		return raw
+	}
+
+	function collectBundleMedia(bundle = {}) {
+		const posts = Array.isArray(bundle?.posts) ? bundle.posts : []
+		const images = []
+		const videos = []
+		const seenImages = new Set()
+		const seenVideos = new Set()
+
+		for (const entry of posts) {
+			const post = entry?.post || entry || {}
+			const embedView = post?.embed
+			const mediaView =
+				embedView?.$type === "app.bsky.embed.recordWithMedia#view"
+					? embedView.media
+					: embedView
+
+			if (mediaView?.$type === "app.bsky.embed.images#view") {
+				for (const image of mediaView.images || []) {
+					const src = String(
+						image?.fullsize || image?.thumb || "",
+					).trim()
+					if (!src || seenImages.has(src)) continue
+					seenImages.add(src)
+					images.push({
+						src,
+						alt: cleanMediaAlt(image?.alt || ""),
+					})
+				}
+			}
+
+			if (mediaView?.$type === "app.bsky.embed.video#view") {
+				const playlist = String(mediaView?.playlist || "").trim()
+				if (!playlist || seenVideos.has(playlist)) continue
+				seenVideos.add(playlist)
+				videos.push({
+					src: playlist,
+					poster: String(mediaView?.thumbnail || "").trim(),
+					alt: cleanMediaAlt(mediaView?.alt || ""),
+				})
+			}
+		}
+
+		return {images, videos}
+	}
+
+	function bodyHtmlContainsMedia(html = "") {
+		return /<(img|video|iframe)\b/i.test(String(html || ""))
+	}
+
+	function buildLocationLines(data = {}) {
+		const address = String(data?.address || "").trim()
+		const city = String(data?.city || data?.location?.city || "").trim()
+		const state = String(data?.state || data?.location?.state || "").trim()
+		const zip = String(data?.zip || data?.location?.zip || "").trim()
+		const country = String(
+			data?.country || data?.location?.country || "",
+		).trim()
+
+		const locality = [city, state, zip].filter(Boolean).join(", ")
+		return [address, locality, country].filter(Boolean)
+	}
+
+	function buildDirectionsHref(data = {}) {
+		const lat = Number(data?.location?.lat)
+		const lon = Number(data?.location?.lon)
+		if (Number.isFinite(lat) && Number.isFinite(lon)) {
+			return `https://maps.google.com/?daddr=${encodeURIComponent(`${lat},${lon}`)}`
+		}
+
+		const lines = buildLocationLines(data)
+		if (lines.length === 0) return ""
+		return `https://maps.google.com/?daddr=${encodeURIComponent(lines.join(", "))}`
+	}
+
+	function buildMapPreviewHref(data = {}) {
+		const lat = Number(data?.location?.lat)
+		const lon = Number(data?.location?.lon)
+		if (Number.isFinite(lat) && Number.isFinite(lon)) {
+			return `https://maps.google.com/maps?q=${encodeURIComponent(`${lat},${lon}`)}&z=15&output=embed`
+		}
+
+		const lines = buildLocationLines(data)
+		if (lines.length === 0) return ""
+		return `https://maps.google.com/maps?q=${encodeURIComponent(lines.join(", "))}&z=15&output=embed`
+	}
+
+	function isSyntheticAuthorId(value = "") {
+		return /^author-[a-z0-9]+$/i.test(String(value || "").trim())
+	}
+
 	const uuid = $derived(String(page.params?.uuid || "").trim())
 	const authorId = $derived(
 		String(jsonData?.authorid || jsonData?.authorId || "").trim(),
 	)
 	const authorSearchHref = $derived(
-		authorId ? `/?q=${encodeURIComponent("uuid " + authorId)}` : "",
+		authorId
+			? `/search/${encodeURIComponent("uuid")}/${encodeURIComponent(authorId)}`
+			: "",
 	)
 	const formattedStamp = $derived(
 		formatCompressedStamp(
@@ -68,6 +166,9 @@
 				(derivedCreatedAtMs > 0 ? String(derivedCreatedAtMs) : ""),
 		),
 	)
+	const locationLines = $derived(buildLocationLines(jsonData))
+	const directionsHref = $derived(buildDirectionsHref(jsonData))
+	const mapPreviewHref = $derived(buildMapPreviewHref(jsonData))
 
 	onMount(async () => {
 		try {
@@ -84,10 +185,13 @@
 			}
 
 			const {primary, subsequent} = bundle?.combined || {}
+			const media = collectBundleMedia(bundle)
 			derivedCreatedAtMs = deriveCreatedAtMsFromBundle(bundle)
 			jsonData = {
 				...(primary || {}),
 				html: Array.isArray(subsequent) ? subsequent.join("") : "",
+				images: media.images,
+				videos: media.videos,
 			}
 		} catch (e) {
 			error = e?.message || "Failed to load post data"
@@ -97,7 +201,7 @@
 		}
 
 		const authorid = jsonData?.authorid || jsonData?.authorId
-		if (authorid) {
+		if (authorid && !isSyntheticAuthorId(authorid)) {
 			try {
 				const profileRes = await fetch(
 					`/api/profile-bundle?uuid=${encodeURIComponent(authorid)}`,
@@ -118,6 +222,13 @@
 					error: e,
 				})
 			}
+		} else if (authorid) {
+			console.debug(
+				"[post/view] skipping synthetic author profile lookup",
+				{
+					authorid,
+				},
+			)
 		}
 	})
 </script>
@@ -136,21 +247,7 @@
 	{:else if jsonData}
 		<section class="panel hero">
 			<div class="hero-body">
-				{#if formattedStamp}
-					<p class="date-time">{formattedStamp}</p>
-				{/if}
-				{#if jsonData?.name}
-					<h2 class="hero-name">{jsonData.name}</h2>
-				{/if}
-				{#if jsonData?.description}
-					<p class="hero-description">
-						<Linkify>{jsonData.description}</Linkify>
-					</p>
-				{/if}
-				<div class="content-html">{@html jsonData?.html || ""}</div>
-
 				<a class="author-info" href={authorSearchHref || undefined}>
-					<p class="author-cta">Click for more ❤️ by</p>
 					<div class="author-row">
 						{#if jsonData?.authorAvatar}
 							<img
@@ -164,12 +261,71 @@
 							>
 						{/if}
 						<div class="author-meta">
-							<p class="author-name">
+							<div class="author-name">
 								{jsonData?.authorName || "Anonymous"}
-							</p>
+								{#if formattedStamp}
+									<div class="date-time">
+										{formattedStamp}
+									</div>
+								{/if}
+							</div>
 						</div>
 					</div>
 				</a>
+				{#if directionsHref && locationLines.length > 0}
+					<div class="location-actions">
+						<a
+							class="directions-link"
+							href={directionsHref}
+							target="_blank"
+							rel="noreferrer"
+						>
+							<MapPin size={16} aria-hidden="true" />
+							{locationLines.join(", ")}
+						</a>
+					</div>
+				{/if}
+
+				{#if jsonData?.name}
+					<h2 class="hero-name">{jsonData.name}</h2>
+				{/if}
+				{#if jsonData?.description}
+					<p class="hero-description">
+						<Linkify>{jsonData.description}</Linkify>
+					</p>
+				{/if}
+				{#if !bodyHtmlContainsMedia(jsonData?.html) && (jsonData?.images?.length || jsonData?.videos?.length)}
+					<section class="media-gallery" aria-label="Post media">
+						{#each jsonData?.images || [] as image}
+							<figure class="media-card">
+								<img
+									src={image.src}
+									alt={image.alt || "Post image"}
+									loading="lazy"
+								/>
+								{#if image.alt}
+									<figcaption>{image.alt}</figcaption>
+								{/if}
+							</figure>
+						{/each}
+						{#each jsonData?.videos || [] as video}
+							<figure class="media-card">
+								<video
+									controls
+									playsinline
+									preload="metadata"
+									poster={video.poster || undefined}
+								>
+									<source src={video.src} />
+								</video>
+								{#if video.alt}
+									<figcaption>{video.alt}</figcaption>
+								{/if}
+							</figure>
+						{/each}
+					</section>
+				{/if}
+				<div class="content-html">{@html jsonData?.html || ""}</div>
 			</div>
 		</section>
 	{/if}
@@ -211,14 +367,10 @@
 		color: inherit;
 	}
 
-	.author-cta {
-		margin: 0 0 0.25rem;
-	}
-
 	.author-row {
 		display: flex;
 		align-items: center;
-		gap: 0.7rem;
+		gap: 0.9rem;
 	}
 
 	.author-info:hover .author-name,
@@ -227,41 +379,50 @@
 	}
 
 	.author-avatar {
-		width: 34px;
-		height: 34px;
+		width: 44px;
+		height: 44px;
 		border-radius: 50%;
 		object-fit: cover;
-		border: 1px solid rgba(58, 91, 65, 0.28);
+		border: 1px solid rgba(58, 91, 65, 0.24);
+		box-shadow: 0 6px 18px rgba(65, 42, 20, 0.08);
 	}
 
 	.author-icon {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		width: 34px;
-		height: 34px;
+		width: 44px;
+		height: 44px;
 		padding: 0;
 		box-sizing: border-box;
 		border-radius: 50%;
-		border: 1px solid rgba(58, 91, 65, 0.28);
+		border: 1px solid rgba(58, 91, 65, 0.24);
+		background: rgba(255, 255, 255, 0.72);
+		box-shadow: 0 6px 18px rgba(65, 42, 20, 0.08);
 		color: #5f665f;
 	}
 
 	.author-meta {
 		display: grid;
-		gap: 0.1rem;
+		gap: 0.2rem;
+		min-width: 0;
 	}
 
 	.author-name {
 		margin: 0;
-		font-size: 0.95rem;
-		font-weight: 600;
+		font-size: clamp(1.05rem, 2vw, 1.3rem);
+		font-weight: 700;
+		line-height: 1.1;
+		letter-spacing: -0.01em;
 		color: #2f4336;
 	}
 
 	.date-time {
 		margin: 0;
-		font-size: 0.8rem;
+		padding-top: 0.12rem;
+		font-size: clamp(0.82rem, 1.45vw, 0.96rem);
+		font-weight: 600;
+		line-height: 1.25;
 		color: #6e756f;
 	}
 
@@ -282,6 +443,64 @@
 		line-height: 1.45;
 		white-space: pre-wrap;
 		word-break: break-word;
+	}
+
+	.media-gallery {
+		display: grid;
+		gap: 1rem;
+		padding: 0.25rem 0 1rem;
+	}
+
+	.media-card {
+		margin: 0;
+	}
+
+	.media-card img,
+	.media-card video {
+		display: block;
+		width: 100%;
+		max-width: 720px;
+		height: auto;
+		margin: 0 auto;
+		border-radius: 14px;
+		box-shadow: 0 12px 28px rgba(65, 42, 20, 0.18);
+		background: #fff;
+	}
+
+	.media-card figcaption {
+		margin-top: 0.4rem;
+		text-align: center;
+		font-size: 0.85rem;
+		color: #5f665f;
+	}
+
+	.location-actions {
+		margin: 0;
+	}
+
+	.location-actions {
+		margin-top: 0.45rem;
+	}
+
+	.directions-link {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		color: #2f6f56;
+		font-size: clamp(0.98rem, 1.8vw, 1.18rem);
+		font-weight: 700;
+		line-height: 1.25;
+		text-decoration: none;
+	}
+
+	.directions-link :global(svg) {
+		flex: none;
+		stroke-width: 2.15;
+	}
+
+	.directions-link:hover,
+	.directions-link:focus-visible {
+		text-decoration: underline;
 	}
 
 	.loading,

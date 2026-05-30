@@ -46,13 +46,20 @@ const {
 } = resolveTestConfig(args);
 const { pass, fail, assert, assertEqual, counts } = createAssertions();
 
-function buildLargePostHtml(uuid) {
+function buildLargePostHtml(uuid, imageUrls = []) {
 	const loremBase =
 		'This is a test post created to verify that chunked Bluesky publishing works correctly end-to-end for posts ' +
 		'that exceed the single-post payload limit. UUID: ' + uuid + '. ';
 
 	const sections = [];
 	sections.push(`<h2>Regression Post ${uuid}</h2>`);
+	for (let i = 0; i < imageUrls.length; i += 1) {
+		const url = String(imageUrls[i] || '').trim();
+		if (!url) continue;
+		sections.push(
+			`<figure><img src="${url}" alt="Regression test image ${i + 1} for post ${uuid}" loading="lazy" decoding="async"><figcaption>Regression image ${i + 1} for post ${uuid}</figcaption></figure>`
+		);
+	}
 	for (let i = 0; i < 10; i += 1) {
 		sections.push(`<p>${loremBase.repeat(8)}</p>`);
 	}
@@ -171,7 +178,6 @@ async function main() {
 	console.log(
 		`  Map URL preview: ${BASE_URL}/map/${coloradoLocation.approximate}/${coloradoLocation.exact}`,
 	);
-	const largePostHtml = buildLargePostHtml(uuid);
 	const dogImageUrls = await fetchMultipleDogImages(4);
 	const uploadedImages = [];
 	for (let i = 0; i < dogImageUrls.length; i += 1) {
@@ -189,6 +195,10 @@ async function main() {
 			process.exit(1);
 		}
 	}
+	const uploadedImageUrls = uploadedImages
+		.map((entry) => String(entry?.url || '').trim())
+		.filter(Boolean);
+	const largePostHtml = buildLargePostHtml(uuid, uploadedImageUrls);
 	const primaryPayload = {
 		uuid,
 		authorid: `author-${uuid}`,
@@ -237,6 +247,11 @@ async function main() {
 
 	assert(chunkEntries.length >= 4, `At least 4 chunks required (got ${chunkEntries.length})`);
 	assert(subsequentPayload.length > 0, 'Post subsequent payload is non-empty');
+	assert(/<img\b/i.test(largePostHtml), 'Post HTML includes inline image tags');
+	assert(
+		uploadedImageUrls.every((url) => largePostHtml.includes(url)),
+		'Post HTML includes uploaded image URLs',
+	);
 	assertEqual(primaryPayload.uuid, uuid, 'Primary payload UUID matches');
 	assert(!primaryPayload.tags.includes('profile'), 'Primary payload does not include profile tag');
 	assertEqual(uploadedImages.length, dogImageUrls.length, 'Uploaded image count matches source count');
@@ -328,6 +343,19 @@ async function main() {
 	console.log('\nStep 5: Verify chunk count and reconstructed payload');
 	assertEqual(loaded.payloads.length, chunkEntries.length, `Recovered ${loaded.payloads.length} chunk payloads (expected ${chunkEntries.length})`);
 	assertEqual(loaded.combinedJson, bundle.combinedJson, 'Reconstructed JSON matches original exactly');
+	const reconstructedParsed = JSON.parse(loaded.combinedJson);
+	const reconstructedPrimary = reconstructedParsed?.primary || {};
+	assert(/<img\b/i.test(String(reconstructedPrimary?.html || '')), 'Reconstructed primary.html includes inline image tags');
+	let allUploadedUrlsPresentInPrimaryHtml = true;
+	for (const url of uploadedImageUrls) {
+		if (!String(reconstructedPrimary?.html || '').includes(url)) {
+			allUploadedUrlsPresentInPrimaryHtml = false;
+			fail(`Uploaded image URL present in reconstructed primary.html: ${url.slice(0, 60)}...`);
+		}
+	}
+	if (allUploadedUrlsPresentInPrimaryHtml) {
+		pass('All uploaded image URLs present in reconstructed primary.html');
+	}
 
 	const recoveredTexts = (Array.isArray(loaded.posts) ? loaded.posts : [])
 		.map((post) => String(post?.record?.text || ''))

@@ -469,6 +469,23 @@
 		const canonical = String(url || "").trim()
 		if (!canonical) return null
 
+		let parsed = null
+		try {
+			const base =
+				typeof window !== "undefined"
+					? window.location.origin
+					: "http://localhost"
+			parsed = new URL(canonical, base)
+			const host = String(parsed.hostname || "").toLowerCase()
+			const isLocalHost =
+				host === "localhost" || host === "127.0.0.1" || host === "::1"
+			const isLove4DogsHost =
+				host === "love4dogs.club" || host === "www.love4dogs.club"
+			if (!isLocalHost && !isLove4DogsHost) return null
+		} catch {
+			return null
+		}
+
 		const viewMatch = canonical.match(
 			/(?:profile|post)\/(?:view|edit)\/([^/]+)/i,
 		)
@@ -888,7 +905,7 @@
 			{/if}
 			{#if selectable}
 				<a
-					href={`/post?uri=${encodeURIComponent(post.uri)}`}
+					href={postEditHref}
 					class="edit-badge"
 					title="Edit this post"
 					aria-label="Edit this post"
