@@ -520,20 +520,19 @@
 							</div>
 						</div>
 					</a>
-
-					{#if mapHref && locationLines.length > 0}
-						<div class="location-actions">
-							<a
-								class="map-link"
-								href={mapHref}
-								target="_blank"
-								rel="noreferrer"
-							>
-								<MapPin size={16} aria-hidden="true" />
-								{locationLines.join(", ")}
-							</a>
-						</div>
-					{/if}
+				{/if}
+				{#if mapHref && locationLines.length > 0}
+					<div class="location-actions">
+						<a
+							class="map-link"
+							href={mapHref}
+							target="_blank"
+							rel="noreferrer"
+						>
+							<MapPin size={16} aria-hidden="true" />
+							{locationLines.join(", ")}
+						</a>
+					</div>
 				{/if}
 
 				{#if jsonData?.name}
@@ -579,35 +578,6 @@
 				{/if}
 
 				<div class="content-html">{@html jsonData?.html || ""}</div>
-
-				{#if isProfile && chunkUris.length}
-					<section class="chunk-manifest">
-						<div class="chunk-manifest-header">
-							<div>
-								<p class="chunk-manifest-label">Chunks</p>
-								<h3>Standalone chunk posts</h3>
-							</div>
-							<button
-								type="button"
-								class="chunk-download"
-								onclick={downloadChunkUris}
-							>
-								Download list
-							</button>
-						</div>
-						<ul class="chunk-list">
-							{#each chunkUris as uri}
-								<li>
-									<a
-										href={atUriToBskyUrl(uri)}
-										target="_blank"
-										rel="noreferrer">{uri}</a
-									>
-								</li>
-							{/each}
-						</ul>
-					</section>
-				{/if}
 			</div>
 		</section>
 	{/if}

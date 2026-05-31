@@ -916,7 +916,7 @@
 	}
 
 	.author-date {
-		margin: 0;
+		margin: 0 0 0 1rem;
 		font-size: 0.75rem;
 		color: #999;
 	}

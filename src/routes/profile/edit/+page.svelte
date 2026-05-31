@@ -1473,6 +1473,11 @@
 			isPostEditRoute || hasProfileImage
 				? ""
 				: "Profile picture is required."
+		let locationValidationError = ""
+		if (!locationConfirmed) {
+			locationValidationError =
+				"Location is required. Please confirm your location before publishing."
+		}
 		debugProfile("[profile] validateRequiredFields", {
 			hasName: Boolean(profileName.trim()),
 			hasEmail: Boolean(email.trim()),
@@ -1483,8 +1488,15 @@
 			emailError,
 			profileImageError,
 			submitProfileImageError,
+			locationValidationError,
 		})
-		return nameError || emailError || submitProfileImageError || null
+		return (
+			nameError ||
+			emailError ||
+			submitProfileImageError ||
+			locationValidationError ||
+			null
+		)
 	}
 
 	function activateValidation() {
