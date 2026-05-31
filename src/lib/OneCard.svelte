@@ -31,6 +31,15 @@
 			inputPost?.embed?.external?.uri,
 		]
 
+		const bundleAlts = [
+			...(Array.isArray(inputPost?.imageAlts) ? inputPost.imageAlts : []),
+			inputPost?.video?.alt || "",
+		]
+		for (const alt of bundleAlts) {
+			const fromAlt = extractCanonicalUrlFromBundleAlt(alt)
+			if (fromAlt) return fromAlt
+		}
+
 		for (const candidate of candidates) {
 			if (Array.isArray(candidate)) {
 				for (const facet of candidate) {
@@ -47,6 +56,141 @@
 		}
 
 		return ""
+	}
+
+	function extractCanonicalUrlFromBundleAlt(alt = "") {
+		if (!alt) return ""
+		const source = String(alt || "").trim()
+		if (!source) return ""
+
+		try {
+			const parsed = JSON.parse(source)
+			const candidates = [
+				parsed,
+				parsed?.primary,
+				parsed?.combined?.primary,
+			]
+
+			if (typeof parsed?.h === "string" && parsed.h.trim()) {
+				try {
+					const inner = JSON.parse(parsed.h)
+					candidates.push(
+						inner,
+						inner?.primary,
+						inner?.combined?.primary,
+					)
+				} catch {}
+			}
+
+			for (const candidate of candidates) {
+				if (!candidate || typeof candidate !== "object") continue
+				const canonicalUrl = String(
+					candidate?.canonicalurl || candidate?.canonicalUrl || "",
+				).trim()
+				if (canonicalUrl) return canonicalUrl
+			}
+		} catch {
+			return ""
+		}
+
+		return ""
+	}
+
+	function extractUuidFromCanonical(url = "") {
+		const canonical = String(url || "").trim()
+		if (!canonical) return ""
+
+		try {
+			const base =
+				typeof window !== "undefined"
+					? window.location.origin
+					: "http://localhost"
+			const parsed = new URL(canonical, base)
+			const host = String(parsed.hostname || "").toLowerCase()
+			const isLocalHost =
+				host === "localhost" || host === "127.0.0.1" || host === "::1"
+			const isLove4DogsHost =
+				host === "love4dogs.club" || host === "www.love4dogs.club"
+			if (!isLocalHost && !isLove4DogsHost) return ""
+
+			const segments = (parsed.pathname || "")
+				.split("/")
+				.map((segment) => segment.trim())
+				.filter(Boolean)
+
+			const viewIndex = segments.findIndex((segment) =>
+				/^(view|edit)$/i.test(segment),
+			)
+			if (viewIndex >= 0 && segments[viewIndex + 1]) {
+				return segments[viewIndex + 1]
+			}
+
+			return ""
+		} catch {
+			return ""
+		}
+	}
+
+	function extractSlugFromCanonical(rawCanonical = "", uuid = "") {
+		const source = String(rawCanonical || "").trim()
+		if (!source) return ""
+
+		try {
+			const base =
+				typeof window !== "undefined"
+					? window.location.origin
+					: "http://localhost"
+			const normalized = new URL(source, base)
+			const segments = (normalized.pathname || "")
+				.split("/")
+				.map((segment) => segment.trim())
+				.filter(Boolean)
+
+			const viewIndex = segments.findIndex((segment) =>
+				/^(view|edit)$/i.test(segment),
+			)
+			if (viewIndex >= 0 && segments[viewIndex + 2]) {
+				return segments[viewIndex + 2]
+			}
+
+			if (uuid && segments[0] === uuid && segments[1]) {
+				return segments[1]
+			}
+		} catch {
+			// Fall back to title-derived slug.
+		}
+
+		return ""
+	}
+
+	function slugifyValue(value = "") {
+		return String(value || "")
+			.trim()
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, "-")
+			.replace(/^-+|-+$/g, "")
+	}
+
+	function buildCardViewPath(
+		rawCanonical = "",
+		fallbackTitle = "",
+		cardType = "post",
+	) {
+		const source = String(rawCanonical || "").trim()
+		const uuid = extractUuidFromCanonical(source)
+		if (!uuid) return ""
+
+		const pathType =
+			String(cardType || "post")
+				.trim()
+				.toLowerCase() === "profile"
+				? "profile"
+				: "post"
+		const slugFromCanonical = extractSlugFromCanonical(source, uuid)
+		const fallbackSlug = slugifyValue(fallbackTitle) || uuid
+		const slug = slugFromCanonical || fallbackSlug
+
+		return `/${pathType}/view/${encodeURIComponent(uuid)}/${encodeURIComponent(slug)}`
 	}
 
 	function extractProfileData(alt = "") {
@@ -150,6 +294,21 @@
 		if (videoAlt?.description) return videoAlt.description
 
 		return ""
+	}
+
+	function openCardViewInNewTab(event) {
+		if (event?.defaultPrevented) return
+		const href = cardViewHref
+		if (!href) {
+			console.warn("[OneCard] missing view href", {
+				canonicalUrl,
+				postType,
+				postUri: post?.uri || "",
+			})
+			return
+		}
+		event?.preventDefault?.()
+		window.open(href, "_blank", "noopener,noreferrer")
 	}
 
 	function getPrimaryImage() {
@@ -435,20 +594,58 @@
 	const primaryImage = $derived(getPrimaryImage())
 	const profilePic = $derived(getProfilePic())
 	const typePills = $derived(getTypePills())
+	const postType = $derived(
+		String(
+			post?.type ||
+				post?.postType ||
+				extractPostTypeFromTags(post?.tags || []) ||
+				"",
+		)
+			.trim()
+			.toLowerCase(),
+	)
+	const canonicalUrl = $derived(
+		String(
+			post?.canonicalUrl ||
+				post?.canonicalurl ||
+				extractCanonicalUrl(post) ||
+				"",
+		).trim(),
+	)
+	const cardViewHref = $derived(
+		buildCardViewPath(canonicalUrl, cardTitle, postType),
+	)
 	const authorName = $derived(
 		String(post?.author?.displayName || post?.author?.handle || "").trim(),
 	)
 	const formattedDate = $derived(formatDate(post?.createdAt || ""))
 	const comments = $derived(post?.comments || [])
 	const locationFields = $derived(extractLocationFields(post))
+	const locationLine = $derived(
+		[
+			locationFields.address,
+			locationFields.city,
+			locationFields.state,
+			locationFields.zip,
+			locationFields.country,
+		]
+			.filter(Boolean)
+			.join(", "),
+	)
+	const locationMapsHref = $derived(
+		locationLine
+			? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(locationLine)}`
+			: "",
+	)
 </script>
 
 <div
 	class="one-card"
-	role="button"
+	role="link"
 	tabindex="0"
-	{onclick}
-	onkeydown={(e) => (e.key === "Enter" || e.key === " ") && onclick(e)}
+	onclick={openCardViewInNewTab}
+	onkeydown={(e) =>
+		(e.key === "Enter" || e.key === " ") && openCardViewInNewTab(e)}
 >
 	{#if primaryImage}
 		<div class="card-image">
@@ -456,8 +653,8 @@
 		</div>
 	{/if}
 
-	<div class="card-content">
-		{#if typePills.length > 0}
+	{#if typePills.length > 0}
+		<div class="pills-strip">
 			<div class="pills">
 				{#each typePills as pill}
 					<span
@@ -467,47 +664,26 @@
 					>
 				{/each}
 			</div>
-		{/if}
+		</div>
+	{/if}
 
+	<div class="card-content">
 		<h3 class="card-title">{cardTitle}</h3>
 
 		{#if cardDescription}
 			<p class="card-description">{cardDescription}</p>
 		{/if}
 
-		{#if locationFields.address || locationFields.city || locationFields.state || locationFields.zip || locationFields.country}
-			<div class="location-fields">
-				{#if locationFields.address}
-					<p class="location-row">
-						<span class="location-label">Address:</span>
-						<span>{locationFields.address}</span>
-					</p>
-				{/if}
-				{#if locationFields.city}
-					<p class="location-row">
-						<span class="location-label">City:</span>
-						<span>{locationFields.city}</span>
-					</p>
-				{/if}
-				{#if locationFields.state}
-					<p class="location-row">
-						<span class="location-label">State:</span>
-						<span>{locationFields.state}</span>
-					</p>
-				{/if}
-				{#if locationFields.zip}
-					<p class="location-row">
-						<span class="location-label">Zip:</span>
-						<span>{locationFields.zip}</span>
-					</p>
-				{/if}
-				{#if locationFields.country}
-					<p class="location-row">
-						<span class="location-label">Country:</span>
-						<span>{locationFields.country}</span>
-					</p>
-				{/if}
-			</div>
+		{#if locationMapsHref}
+			<a
+				class="location-fields location-link"
+				href={locationMapsHref}
+				target="_blank"
+				rel="noopener noreferrer"
+				onclick={(e) => e.stopPropagation()}
+			>
+				<p class="location-row">📍 {locationLine}</p>
+			</a>
 		{/if}
 
 		{#if profilePic || authorName || formattedDate}
@@ -631,6 +807,10 @@
 		gap: 0.6rem;
 	}
 
+	.pills-strip {
+		padding: 0.75rem 1rem 0;
+	}
+
 	.pills {
 		display: flex;
 		flex-wrap: wrap;
@@ -671,12 +851,22 @@
 	}
 
 	.location-fields {
-		display: grid;
-		gap: 0.2rem;
+		display: block;
 		padding: 0.5rem 0.65rem;
 		border-radius: 8px;
 		background: #faf7f3;
 		border: 1px solid #ede5d8;
+	}
+
+	.location-link {
+		color: inherit;
+		text-decoration: none;
+		cursor: pointer;
+	}
+
+	.location-link:hover,
+	.location-link:focus-visible {
+		text-decoration: none;
 	}
 
 	.location-row {
@@ -685,12 +875,6 @@
 		line-height: 1.35;
 		color: #4b5563;
 		word-break: break-word;
-	}
-
-	.location-label {
-		font-weight: 600;
-		color: #374151;
-		margin-right: 0.3rem;
 	}
 
 	.card-footer {

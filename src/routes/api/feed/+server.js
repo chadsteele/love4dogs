@@ -226,9 +226,16 @@ function isReplyPost(item) {
 }
 
 async function xrpcGet(pathAndQuery, options) {
+	const preferredHost = String(options?.preferredHost || '').trim();
+	const hostOrder = preferredHost
+		? [
+			preferredHost,
+			...BSKY_PUBLIC_XRPC_HOSTS.filter((host) => host !== preferredHost)
+		]
+		: BSKY_PUBLIC_XRPC_HOSTS;
 	const failures = [];
 
-	for (const host of BSKY_PUBLIC_XRPC_HOSTS) {
+	for (const host of hostOrder) {
 		const requestUrl = `${host}/${pathAndQuery}`;
 		try {
 			const response = await fetch(requestUrl, options);
@@ -245,18 +252,45 @@ async function xrpcGet(pathAndQuery, options) {
 	return { response: null, host: null, failures };
 }
 
-async function xrpcGetSingleHost(pathAndQuery, options, host) {
-	const requestUrl = `${host}/${pathAndQuery}`;
-	try {
-		const response = await fetch(requestUrl, options);
-		if (response.ok) {
-			return { response, host, failures: [] };
-		}
+async function xrpcGetAuthorized(pathAndQuery, options = {}) {
+	const session = await getSession();
+	if (!session?.accessJwt) {
 		return {
 			response: null,
 			host: null,
 			failures: [
-				{ host, status: response.status, details: await response.text() }
+				{
+					host: BSKY_AUTH_XRPC,
+					status: 0,
+					details: 'No authenticated session available for fallback.'
+				}
+			]
+		};
+	}
+
+	const requestUrl = `${BSKY_AUTH_XRPC}/${pathAndQuery}`;
+	try {
+		const response = await fetch(requestUrl, {
+			...options,
+			headers: {
+				...(options?.headers || {}),
+				Accept: 'application/json',
+				Authorization: `Bearer ${session.accessJwt}`
+			}
+		});
+		if (response.ok) {
+			return { response, host: BSKY_AUTH_XRPC, failures: [] };
+		}
+
+		return {
+			response: null,
+			host: null,
+			failures: [
+				{
+					host: BSKY_AUTH_XRPC,
+					status: response.status,
+					details: await response.text()
+				}
 			]
 		};
 	} catch (error) {
@@ -264,7 +298,11 @@ async function xrpcGetSingleHost(pathAndQuery, options, host) {
 			response: null,
 			host: null,
 			failures: [
-				{ host, status: 0, details: error.message || 'Network error' }
+				{
+					host: BSKY_AUTH_XRPC,
+					status: 0,
+					details: error.message || 'Network error'
+				}
 			]
 		};
 	}
@@ -315,6 +353,7 @@ export async function GET({ url }) {
 	const sort = url.searchParams.get('sort') === 'top' ? 'top' : 'latest';
 	const limit = Math.min(Math.max(1, Number(url.searchParams.get('limit')) || 20), 100);
 	const cursor = url.searchParams.get('cursor')?.trim() || '';
+	const cursorHost = url.searchParams.get('cursorHost')?.trim() || '';
 	const forceRefresh = url.searchParams.get('refresh') === '1';
 	const cacheBuster = forceRefresh ? Date.now() : null;
 	const publicFetchOptions = {
@@ -343,10 +382,21 @@ export async function GET({ url }) {
 		if (cacheBuster) {
 			searchPath += `&_=${cacheBuster}`;
 		}
-		const searchFetch = cursor
-			? xrpcGetSingleHost(searchPath, publicFetchOptions, BSKY_PUBLIC_XRPC_HOSTS[0])
-			: xrpcGet(searchPath, publicFetchOptions);
-		const { response: searchRes, failures: searchFailures } = await searchFetch;
+		let { response: searchRes, host: searchHost, failures: searchFailures } = await xrpcGet(
+			searchPath,
+			{
+				...publicFetchOptions,
+				preferredHost: cursor ? cursorHost : ''
+			}
+		);
+		if (!searchRes) {
+			const authFallback = await xrpcGetAuthorized(searchPath, publicFetchOptions);
+			searchFailures = [...(searchFailures || []), ...(authFallback.failures || [])];
+			if (authFallback.response) {
+				searchRes = authFallback.response;
+				searchHost = authFallback.host;
+			}
+		}
 
 		if (!searchRes) {
 			if (cursor) {
@@ -387,6 +437,7 @@ export async function GET({ url }) {
 				account: ACCOUNT_HANDLE,
 				posts,
 				cursor: nextCursor,
+				cursorHost: searchHost || cursorHost || null,
 				commonRecentTags: []
 			}),
 			{ headers: { 'content-type': 'application/json' } }
@@ -400,10 +451,21 @@ export async function GET({ url }) {
 	if (cacheBuster) {
 		authorFeedPath += `&_=${cacheBuster}`;
 	}
-	const { response: authorFeedRes, failures: authorFeedFailures } = await xrpcGet(
+	let { response: authorFeedRes, host: authorFeedHost, failures: authorFeedFailures } = await xrpcGet(
 		authorFeedPath,
-		publicFetchOptions
+		{
+			...publicFetchOptions,
+			preferredHost: cursor ? cursorHost : ''
+		}
 	);
+	if (!authorFeedRes) {
+		const authFallback = await xrpcGetAuthorized(authorFeedPath, publicFetchOptions);
+		authorFeedFailures = [...(authorFeedFailures || []), ...(authFallback.failures || [])];
+		if (authFallback.response) {
+			authorFeedRes = authFallback.response;
+			authorFeedHost = authFallback.host;
+		}
+	}
 
 	if (!authorFeedRes) {
 		return new Response(
@@ -431,6 +493,7 @@ export async function GET({ url }) {
 			account: ACCOUNT_HANDLE,
 			posts,
 			cursor: nextCursor,
+			cursorHost: authorFeedHost || cursorHost || null,
 			commonRecentTags
 		}),
 		{ headers: { 'content-type': 'application/json' } }

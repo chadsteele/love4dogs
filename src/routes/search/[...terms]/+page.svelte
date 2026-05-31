@@ -18,13 +18,13 @@
 	let searchSort = $state("latest")
 	let loadingMore = $state(false)
 	let feedCursor = null
+	let feedCursorHost = null
 	let hasMorePosts = $state(true)
 	let favoriteSearchTerms = $state([])
 	let currentView = $state("feed")
 
 	let searchDebounceTimer = null
 	let lastFeedRequestId = 0
-	let observer = null
 
 	// Derive initial search term from URL path segments
 	const urlTerms = $derived(
@@ -129,6 +129,7 @@
 		loadingPosts = true
 		feedError = ""
 		feedCursor = null
+		feedCursorHost = null
 		hasMorePosts = true
 
 		try {
@@ -155,6 +156,7 @@
 
 			posts = json.posts || []
 			feedCursor = json.cursor || null
+			feedCursorHost = json.cursorHost || null
 			hasMorePosts = !!json.cursor
 		} catch (error) {
 			if (requestId !== lastFeedRequestId) return
@@ -178,6 +180,9 @@
 				limit: 20,
 				cursor: feedCursor,
 			})
+			if (feedCursorHost) {
+				params.set("cursorHost", String(feedCursorHost))
+			}
 			const res = await fetch(`/api/feed?${params.toString()}`)
 			const json = await res.json()
 
@@ -186,6 +191,7 @@
 
 			posts = [...posts, ...(json.posts || [])]
 			feedCursor = json.cursor || null
+			feedCursorHost = json.cursorHost || feedCursorHost || null
 			hasMorePosts = !!json.cursor
 		} catch {
 			// Silently fail on load more
@@ -219,24 +225,7 @@
 
 		return () => {
 			if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
-			if (observer) observer.disconnect()
 		}
-	})
-
-	$effect(() => {
-		if (posts.length === 0) return
-		const postList = document.querySelector(".post-list")
-		if (!postList) return
-		if (observer) observer.disconnect()
-		observer = new IntersectionObserver(
-			(entries) => {
-				if (entries[0].isIntersecting && !loadingMore && hasMorePosts) {
-					loadMorePosts()
-				}
-			},
-			{threshold: 0.1},
-		)
-		observer.observe(postList)
 	})
 </script>
 
@@ -351,31 +340,23 @@
 			{:else}
 				<div class="post-list">
 					{#each visiblePosts() as post (post.displayKey || post.uri)}
-						<OneCard
-							{post}
-							onclick={() => {
-								// Route to view page based on canonical or post type
-								const canonical = post?.canonicalUrl || ""
-								if (isValidCanonicalUrl(canonical)) {
-									window.location.href = canonical
-								} else if (canonical) {
-									console.warn(
-										"[search] skipped invalid canonical URL",
-										{
-											canonical,
-											postUri: post?.uri || "",
-											displayKey: post?.displayKey || "",
-										},
-									)
-								}
-							}}
-						/>
+						<OneCard {post} />
 					{/each}
 				</div>
 			{/if}
 
 			{#if loadingMore}
 				<p class="muted load-more-indicator">Loading more...</p>
+			{:else if hasMorePosts && !loadingPosts && visiblePosts().length > 0}
+				<div class="load-more-actions">
+					<button
+						type="button"
+						class="load-more-btn"
+						onclick={loadMorePosts}
+					>
+						More
+					</button>
+				</div>
 			{/if}
 		</article>
 	</section>
@@ -575,6 +556,31 @@
 	.load-more-indicator {
 		text-align: center;
 		padding: 0.5rem 0;
+	}
+
+	.load-more-actions {
+		display: flex;
+		justify-content: center;
+		padding: 0.45rem 0 0.3rem;
+	}
+
+	.load-more-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.45rem 0.95rem;
+		border-radius: 999px;
+		border: 1px solid rgba(59, 110, 79, 0.34);
+		background: #3b6e4f;
+		color: #fff;
+		font-size: 0.88rem;
+		font-weight: 700;
+		cursor: pointer;
+		box-shadow: 0 4px 12px rgba(59, 110, 79, 0.18);
+	}
+
+	.load-more-btn:hover {
+		background: #305741;
 	}
 
 	.empty-search-state {
