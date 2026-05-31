@@ -171,28 +171,20 @@
 		return [address, locality, country].filter(Boolean)
 	}
 
-	function buildDirectionsHref(data = {}) {
+	function buildMapHref(data = {}, {embed = false} = {}) {
 		const lat = Number(data?.location?.lat)
 		const lon = Number(data?.location?.lon)
 		if (Number.isFinite(lat) && Number.isFinite(lon)) {
-			return `https://maps.google.com/?daddr=${encodeURIComponent(`${lat},${lon}`)}`
+			return `https://maps.google.com/maps?q=${encodeURIComponent(`${lat},${lon}`)}&z=15${embed ? "&output=embed" : ""}`
 		}
 
 		const lines = buildLocationLines(data)
 		if (lines.length === 0) return ""
-		return `https://maps.google.com/?daddr=${encodeURIComponent(lines.join(", "))}`
+		return `https://maps.google.com/maps?q=${encodeURIComponent(lines.join(", "))}&z=15${embed ? "&output=embed" : ""}`
 	}
 
 	function buildMapPreviewHref(data = {}) {
-		const lat = Number(data?.location?.lat)
-		const lon = Number(data?.location?.lon)
-		if (Number.isFinite(lat) && Number.isFinite(lon)) {
-			return `https://maps.google.com/maps?q=${encodeURIComponent(`${lat},${lon}`)}&z=15&output=embed`
-		}
-
-		const lines = buildLocationLines(data)
-		if (lines.length === 0) return ""
-		return `https://maps.google.com/maps?q=${encodeURIComponent(lines.join(", "))}&z=15&output=embed`
+		return buildMapHref(data, {embed: true})
 	}
 
 	function isSyntheticAuthorId(value = "") {
@@ -215,7 +207,7 @@
 		),
 	)
 	const locationLines = $derived(buildLocationLines(jsonData))
-	const directionsHref = $derived(buildDirectionsHref(jsonData))
+	const mapHref = $derived(buildMapHref(jsonData))
 	const mapPreviewHref = $derived(buildMapPreviewHref(jsonData))
 
 	onMount(async () => {
@@ -320,11 +312,11 @@
 						</div>
 					</div>
 				</a>
-				{#if directionsHref && locationLines.length > 0}
+				{#if mapHref && locationLines.length > 0}
 					<div class="location-actions">
 						<a
-							class="directions-link"
-							href={directionsHref}
+							class="map-link"
+							href={mapHref}
 							target="_blank"
 							rel="noreferrer"
 						>
@@ -530,7 +522,7 @@
 		margin-top: 0.45rem;
 	}
 
-	.directions-link {
+	.map-link {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.45rem;
@@ -541,13 +533,13 @@
 		text-decoration: none;
 	}
 
-	.directions-link :global(svg) {
+	.map-link :global(svg) {
 		flex: none;
 		stroke-width: 2.15;
 	}
 
-	.directions-link:hover,
-	.directions-link:focus-visible {
+	.map-link:hover,
+	.map-link:focus-visible {
 		text-decoration: underline;
 	}
 

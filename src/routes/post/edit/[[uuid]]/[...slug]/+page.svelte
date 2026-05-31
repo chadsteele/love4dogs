@@ -1,5 +1,5 @@
 <script>
-	import PostComposerPage from "../../+page.svelte"
+	import PostComposerPage from "../../../+page.svelte"
 </script>
 
 <PostComposerPage />
