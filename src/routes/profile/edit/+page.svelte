@@ -5,7 +5,8 @@
 	import Editor from "$lib/Editor.svelte"
 	import NavBar from "$lib/NavBar.svelte"
 	import ProfileImages from "$lib/ProfileImages.svelte"
-	import LocationPicker from "$lib/LocationPicker.svelte"
+	import LocationModal from "$lib/LocationModal.svelte"
+	import ContactInput from "$lib/ContactInput.svelte"
 	import {
 		buildCanonicalUrl,
 		buildLocationBlock,
@@ -21,6 +22,11 @@
 		expandMinifiedHtmlTags,
 		minifyHtml,
 	} from "$lib/utils"
+	import {
+		hasRequiredLocationParts,
+		buildCompleteAddress,
+		addressOkay,
+	} from "$lib/locationUtils"
 	import {
 		getCurrentProfileUuid,
 		readStoredProfileByUuid,
@@ -71,6 +77,7 @@
 	// Set to false only when debugging paste rendering without Bluesky uploads.
 	const ENABLE_EDITOR_MEDIA_UPLOADS = true
 	const DEBUG_PROFILE = false
+	const POST_EDIT_PATH_PREFIX = "/post/edit/"
 
 	let uuid = $state("")
 
@@ -129,6 +136,10 @@
 	const cdnPromotionMeta = new Map()
 	const editorUploadCache = new Map()
 	let failedCdnUrls = $state(new Set())
+
+	const isPostEditRoute = $derived.by(() =>
+		String(page.url?.pathname || "").startsWith(POST_EDIT_PATH_PREFIX),
+	)
 
 	function debugProfile(...args) {
 		if (DEBUG_PROFILE) console.log(...args)
@@ -1015,22 +1026,34 @@
 		),
 	)
 
-	const nameError = $derived(!profileName.trim() ? "Name is required." : "")
+	const nameError = $derived(
+		!profileName.trim()
+			? isPostEditRoute
+				? "Title is required."
+				: "Name is required."
+			: "",
+	)
 
 	const canonicalurl = $derived.by(() => {
 		return buildCanonicalUrl(uuid, profileName)
 	})
 
 	const emailError = $derived(
-		!email.trim()
-			? "Email is required."
-			: !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
-				? "Enter a valid email address."
-				: "",
+		isPostEditRoute
+			? ""
+			: !email.trim()
+				? "Email is required."
+				: !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
+					? "Enter a valid email address."
+					: "",
 	)
 
 	const profileImageError = $derived(
-		!selectedProfileImage ? "Profile picture is required." : "",
+		isPostEditRoute
+			? ""
+			: !selectedProfileImage
+				? "Profile picture is required."
+				: "",
 	)
 
 	const unresolvedEditorMediaCount = $derived(
@@ -1080,7 +1103,9 @@
 	)
 
 	const imageUploadActive = $derived(
-		uploadingProfileImage || uploadingBackgroundImage,
+		isPostEditRoute
+			? false
+			: uploadingProfileImage || uploadingBackgroundImage,
 	)
 
 	const imageUploadLabel = $derived(
@@ -1260,10 +1285,15 @@
 		uuid =
 			String(primary?.uuid || fallbackUuid || "") || generateShortUuid()
 		email = decodePayloadEmail(primary?.email)
-		profileName = String(primary?.name || "")
-		profileDescription = String(primary?.description || "")
+		profileName = String(primary?.name || primary?.title || "")
+		profileDescription = String(
+			primary?.description || primary?.summary || "",
+		)
+		const combinedSubsequentHtml = subsequent
+			.map((entry) => String(entry || ""))
+			.join("")
 		contentHtml = expandMinifiedHtmlTags(
-			subsequent.map((entry) => String(entry || "")).join(""),
+			combinedSubsequentHtml || String(primary?.html || ""),
 		)
 		profileUploadedMedia = normalizeStoredMedia([
 			buildMediaFromUrl(primary?.profilePic, "Profile image"),
@@ -1278,8 +1308,8 @@
 	function applyViewCacheToEditor(data = {}, fallbackUuid = "") {
 		uuid = String(data?.uuid || fallbackUuid || "") || generateShortUuid()
 		email = decodePayloadEmail(data?.email)
-		profileName = String(data?.name || "")
-		profileDescription = String(data?.description || "")
+		profileName = String(data?.name || data?.title || "")
+		profileDescription = String(data?.description || data?.summary || "")
 		contentHtml = expandMinifiedHtmlTags(String(data?.html || ""))
 		profileUploadedMedia = normalizeStoredMedia([
 			buildMediaFromUrl(data?.profilePic, "Profile image"),
@@ -1439,9 +1469,10 @@
 				selectedProfileImage?.bskyUrl ||
 				selectedProfileImage?.url,
 		)
-		const submitProfileImageError = !hasProfileImage
-			? "Profile picture is required."
-			: ""
+		const submitProfileImageError =
+			isPostEditRoute || hasProfileImage
+				? ""
+				: "Profile picture is required."
 		debugProfile("[profile] validateRequiredFields", {
 			hasName: Boolean(profileName.trim()),
 			hasEmail: Boolean(email.trim()),
@@ -1474,7 +1505,7 @@
 			nameError,
 			emailError,
 		})
-		if (profileImageError) {
+		if (!isPostEditRoute && profileImageError) {
 			debugProfile("[profile] focusing profile image section")
 			profileImageWrapEl?.focus()
 			profileImageWrapEl?.scrollIntoView({
@@ -1508,66 +1539,6 @@
 			count = nextCount
 		}
 		return result
-	}
-
-	function normalizeAddressPart(value = "") {
-		return String(value || "")
-			.toLowerCase()
-			.replace(/\s+/g, " ")
-			.trim()
-	}
-
-	function buildCompleteAddress(location = {}) {
-		const line1 = [location.houseNumber, location.road]
-			.map((value) => String(value || "").trim())
-			.filter(Boolean)
-			.join(" ")
-		const line2 = [location.neighbourhood, location.suburb]
-			.map((value) => String(value || "").trim())
-			.filter(Boolean)
-			.join(", ")
-		const structured = [
-			line1,
-			line2,
-			location.city,
-			location.state,
-			location.country,
-			location.zip,
-		]
-			.map((value) => String(value || "").trim())
-			.filter(Boolean)
-			.join(", ")
-
-		return String(location.formattedAddress || structured).trim()
-	}
-
-	/**
-	 * Keep confirmation valid while the user edits free-form address text,
-	 * as long as state/country/zip from the pinned location still match.
-	 */
-	function hasRequiredLocationParts(location) {
-		if (!location || typeof location !== "object") return false
-		return [location.state, location.country, location.zip].every(
-			(value) => String(value || "").trim().length > 0,
-		)
-	}
-
-	function addressOkay(newAddress) {
-		if (!hasRequiredLocationParts(confirmedLocation)) return false
-		const neu = normalizeAddressPart(newAddress)
-		const required = [
-			confirmedLocation?.state,
-			confirmedLocation?.country,
-			confirmedLocation?.zip,
-		]
-			.map((value) => normalizeAddressPart(value))
-			.filter(Boolean)
-
-		if (!neu) return false
-
-		if (required.some((part) => !neu.includes(part))) return false
-
-		return true
 	}
 
 	$effect(() => {
@@ -2082,8 +2053,79 @@
 					})
 				}, CDN_PROMOTION_TICK_MS)
 			: null
+		let disposed = false
 
 		if (routeUuid && typeof localStorage !== "undefined") {
+			if (isPostEditRoute) {
+				fetch(
+					`/api/profile-bundle?uuid=${encodeURIComponent(routeUuid)}`,
+				)
+					.then(async (response) => {
+						if (!response.ok) return null
+						return await response.json().catch(() => null)
+					})
+					.then((bundle) => {
+						if (disposed) return
+						if (bundle && typeof bundle === "object") {
+							debugProfile(
+								"[profile] onMount:loaded post-edit bundle from api",
+								{routeUuid},
+							)
+							applyBundleToEditor(bundle, routeUuid)
+							initialProfileSnapshot =
+								cloneStoredProfile(buildStoredProfile())
+							setStoredSnapshotBaseline(
+								buildStoredProfileForStorage(),
+							)
+							storageReady = true
+							saveProfile(false)
+							return
+						}
+
+						debugProfile(
+							"[profile] onMount:post-edit uuid not found; starting empty",
+							{routeUuid},
+						)
+						uuid = routeUuid
+						existingProfileAtUri = ""
+						email = ""
+						profileName = ""
+						profileDescription = ""
+						contentHtml = ""
+						profileUploadedMedia = []
+						backgroundUploadedMedia = []
+						editorMediaList = []
+						initialProfileSnapshot =
+							cloneStoredProfile(buildStoredProfile())
+						setStoredSnapshotBaseline(
+							buildStoredProfileForStorage(),
+						)
+						storageReady = true
+					})
+					.catch(() => {
+						if (disposed) return
+						uuid = routeUuid
+						existingProfileAtUri = ""
+						email = ""
+						profileName = ""
+						profileDescription = ""
+						contentHtml = ""
+						profileUploadedMedia = []
+						backgroundUploadedMedia = []
+						editorMediaList = []
+						initialProfileSnapshot =
+							cloneStoredProfile(buildStoredProfile())
+						setStoredSnapshotBaseline(
+							buildStoredProfileForStorage(),
+						)
+						storageReady = true
+					})
+				return () => {
+					disposed = true
+					if (intervalId) clearInterval(intervalId)
+				}
+			}
+
 			const sessionBundle = readBundleSessionCache(routeUuid)
 			if (sessionBundle) {
 				debugProfile("[profile] onMount:loaded session bundle", {
@@ -2135,23 +2177,71 @@
 				}
 			}
 
-			debugProfile(
-				"[profile] onMount:route uuid not found; starting new profile",
-				{routeUuid},
-			)
-			uuid = routeUuid
-			existingProfileAtUri = ""
-			email = ""
-			profileName = ""
-			profileDescription = ""
-			contentHtml = ""
-			profileUploadedMedia = []
-			backgroundUploadedMedia = []
-			editorMediaList = []
-			initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
-			setStoredSnapshotBaseline(buildStoredProfileForStorage())
-			storageReady = true
+			fetch(`/api/profile-bundle?uuid=${encodeURIComponent(routeUuid)}`)
+				.then(async (response) => {
+					if (!response.ok) return null
+					return await response.json().catch(() => null)
+				})
+				.then((bundle) => {
+					if (disposed) return
+					if (bundle && typeof bundle === "object") {
+						debugProfile(
+							"[profile] onMount:loaded bundle from api",
+							{
+								routeUuid,
+							},
+						)
+						applyBundleToEditor(bundle, routeUuid)
+						initialProfileSnapshot =
+							cloneStoredProfile(buildStoredProfile())
+						setStoredSnapshotBaseline(
+							buildStoredProfileForStorage(),
+						)
+						storageReady = true
+						saveProfile(false)
+						return
+					}
+
+					debugProfile(
+						"[profile] onMount:route uuid not found; starting new profile",
+						{routeUuid},
+					)
+					uuid = routeUuid
+					existingProfileAtUri = ""
+					email = ""
+					profileName = ""
+					profileDescription = ""
+					contentHtml = ""
+					profileUploadedMedia = []
+					backgroundUploadedMedia = []
+					editorMediaList = []
+					initialProfileSnapshot =
+						cloneStoredProfile(buildStoredProfile())
+					setStoredSnapshotBaseline(buildStoredProfileForStorage())
+					storageReady = true
+				})
+				.catch(() => {
+					if (disposed) return
+					debugProfile(
+						"[profile] onMount:route uuid not found; starting new profile",
+						{routeUuid},
+					)
+					uuid = routeUuid
+					existingProfileAtUri = ""
+					email = ""
+					profileName = ""
+					profileDescription = ""
+					contentHtml = ""
+					profileUploadedMedia = []
+					backgroundUploadedMedia = []
+					editorMediaList = []
+					initialProfileSnapshot =
+						cloneStoredProfile(buildStoredProfile())
+					setStoredSnapshotBaseline(buildStoredProfileForStorage())
+					storageReady = true
+				})
 			return () => {
+				disposed = true
 				if (intervalId) clearInterval(intervalId)
 			}
 		}
@@ -2396,7 +2486,7 @@
 </script>
 
 <svelte:head>
-	<title>Profile | Love4Dogs</title>
+	<title>{isPostEditRoute ? "Post" : "Profile"} | Love4Dogs</title>
 </svelte:head>
 
 <main class="page">
@@ -2412,27 +2502,31 @@
 	</ShowAdmin>
 
 	<section class="panel">
-		<div
-			bind:this={profileImageWrapEl}
-			class="profile-image-wrap"
-			class:invalid-profile-image={validationActive &&
-				!!profileImageError}
-			tabindex="-1"
-		>
-			<ProfileImages
-				bind:profileUploadedMedia
-				bind:backgroundUploadedMedia
-				bind:errorMessage={uploadError}
-				bind:uploadingProfile={uploadingProfileImage}
-				bind:uploadingBackground={uploadingBackgroundImage}
-				currentProfileSrc={storedProfileImageSrc}
-				currentBackgroundSrc={storedBackgroundImageSrc}
-				onchange={activateValidation}
-				disabled={false}
-			/>
-		</div>
-		{#if validationActive && profileImageError}
-			<p class="field-error profile-image-error">{profileImageError}</p>
+		{#if !isPostEditRoute}
+			<div
+				bind:this={profileImageWrapEl}
+				class="profile-image-wrap"
+				class:invalid-profile-image={validationActive &&
+					!!profileImageError}
+				tabindex="-1"
+			>
+				<ProfileImages
+					bind:profileUploadedMedia
+					bind:backgroundUploadedMedia
+					bind:errorMessage={uploadError}
+					bind:uploadingProfile={uploadingProfileImage}
+					bind:uploadingBackground={uploadingBackgroundImage}
+					currentProfileSrc={storedProfileImageSrc}
+					currentBackgroundSrc={storedBackgroundImageSrc}
+					onchange={activateValidation}
+					disabled={false}
+				/>
+			</div>
+			{#if validationActive && profileImageError}
+				<p class="field-error profile-image-error">
+					{profileImageError}
+				</p>
+			{/if}
 		{/if}
 
 		<label>
@@ -2443,7 +2537,7 @@
 				onfocus={activateValidation}
 				onblur={() => handleFieldBlur("name")}
 				class:invalid-field={touchedName && !!nameError}
-				placeholder="Name"
+				placeholder={isPostEditRoute ? "Title" : "Name"}
 				maxlength={100}
 				style="font-size: 1.25rem; font-weight: 600;"
 			/>
@@ -2459,7 +2553,9 @@
 				rows="4"
 				bind:value={profileDescription}
 				onfocus={activateValidation}
-				placeholder="Short profile description"
+				placeholder={isPostEditRoute
+					? "Short post description"
+					: "Short profile description"}
 				maxlength={descMaxLength}
 				style="min-height: 100px; resize: vertical;"
 			></textarea>
@@ -2469,7 +2565,9 @@
 			<Editor
 				bind:value={contentHtml}
 				bind:uploadedMedia={editorMediaList}
-				placeholder="Write formatted profile content..."
+				placeholder={isPostEditRoute
+					? "Write formatted post content..."
+					: "Write formatted profile content..."}
 				uploadProgressActive={mediaUploadActive}
 				uploadProgressPercent={mediaUploadPercent}
 				uploadProgressLabel={mediaUploadLabel}
@@ -2480,22 +2578,13 @@
 				}}
 			/>
 		</div>
-		<label>
-			<span>Private</span>
-			<input
-				bind:this={emailInputEl}
-				type="email"
-				bind:value={email}
-				onfocus={activateValidation}
-				onblur={() => handleFieldBlur("email")}
-				class:invalid-field={touchedEmail && !!emailError}
-				placeholder="you@email.com"
-				required
-			/>
-		</label>
-		{#if touchedEmail && emailError}
-			<p class="field-error">{emailError}</p>
-		{/if}
+		<ContactInput
+			bind:value={email}
+			error={emailError}
+			disabled={publishing}
+			placeholder="you@email.com"
+			showNotice={false}
+		/>
 		<div class="address-row">
 			<input
 				class="address-input"
@@ -2565,47 +2654,30 @@
 		{/if}
 	</section>
 
-	{#if showLocationModal}
-		<div
-			class="modal-overlay"
-			role="dialog"
-			aria-modal="true"
-			aria-label="Confirm location"
-		>
-			<div class="modal-panel">
-				<h2 class="modal-title">Confirm Location</h2>
-				<p class="modal-hint">
-					Search for your address or move the pin to the exact spot,
-					then confirm.
-				</p>
-				<LocationPicker
-					location={modalLocation}
-					height={300}
-					searchTerms={addressText}
-					showConfirmToggle={false}
-					autoSearch={true}
-					onChange={(loc) => {
-						modalLocation = loc
-					}}
-					onPinMoved={() => {
-						pinMovedInModal = true
-					}}
-				/>
-				<div class="modal-actions">
-					<button
-						class="modal-cancel-btn"
-						type="button"
-						onclick={handleModalCancel}>Cancel</button
-					>
-					<button
-						class="modal-confirm-btn"
-						type="button"
-						onclick={handleModalConfirm}>Confirm Location</button
-					>
-				</div>
-			</div>
-		</div>
-	{/if}
+	<LocationModal
+		showModal={showLocationModal}
+		{modalLocation}
+		{addressText}
+		{pinMovedInModal}
+		onConfirm={(result) => {
+			if (result.error) {
+				locationError = result.error
+				locationConfirmed = result.locationConfirmed
+				return
+			}
+			addressText = result.addressText
+			confirmedAddress = result.confirmedAddress
+			locationConfirmed = result.locationConfirmed
+			locationError = ""
+			showLocationModal = false
+		}}
+		onCancel={() => {
+			showLocationModal = false
+			pinMovedInModal = false
+			locationError = ""
+		}}
+		disabled={publishing}
+	/>
 
 	<ShowAdmin {currentView}>
 		<section class="panel payloads">
@@ -2861,61 +2933,6 @@
 		margin: 0.3rem 0 0;
 		font-size: 0.82rem;
 		color: #3b6e4f;
-	}
-
-	.modal-overlay {
-		position: fixed;
-		inset: 0;
-		background: rgba(0, 0, 0, 0.55);
-		z-index: 1000;
-		display: flex;
-		align-items: flex-start;
-		justify-content: center;
-		padding: 1rem;
-		overflow-y: auto;
-	}
-	.modal-panel {
-		background: rgba(255, 250, 241, 0.98);
-		border: 1px solid rgba(58, 91, 65, 0.18);
-		border-radius: 16px;
-		padding: 1.25rem;
-		box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
-		width: 100%;
-		max-width: 640px;
-		margin-top: 2rem;
-	}
-	.modal-title {
-		margin: 0 0 0.4rem;
-		font-size: 1.1rem;
-	}
-	.modal-hint {
-		margin: 0 0 0.85rem;
-		font-size: 0.9rem;
-		color: #5f665f;
-	}
-	.modal-actions {
-		display: flex;
-		justify-content: flex-end;
-		gap: 0.55rem;
-		margin-top: 0.85rem;
-	}
-	.modal-cancel-btn {
-		border: 1px solid #bdad9e;
-		background: #fff;
-		border-radius: 999px;
-		padding: 0.5rem 1rem;
-		font: inherit;
-		cursor: pointer;
-	}
-	.modal-confirm-btn {
-		border: 1px solid #305741;
-		background: #3b6e4f;
-		color: #fff;
-		border-radius: 999px;
-		padding: 0.5rem 1rem;
-		font: inherit;
-		font-weight: 600;
-		cursor: pointer;
 	}
 
 	/*

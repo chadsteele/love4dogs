@@ -1053,7 +1053,7 @@
 		{:else}
 			<div class="comment-compose-disabled" aria-hidden="true">
 				<div class="comment-input-disabled">
-					Be the first to comment on BlueSky {@html siBluesky.svg}
+					Be the first to comment {@html siBluesky.svg}
 				</div>
 				<div class="comment-submit-disabled">Submit</div>
 			</div>

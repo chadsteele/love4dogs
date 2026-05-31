@@ -1,5 +1,5 @@
 <script>
-	import PostComposerPage from "../../../+page.svelte"
+import SharedEditPage from "../../../../profile/edit/[[uuid]]/[...slug]/+page.svelte"
 </script>
 
-<PostComposerPage />
+<SharedEditPage />

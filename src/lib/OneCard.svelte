@@ -308,7 +308,16 @@
 			return
 		}
 		event?.preventDefault?.()
-		window.open(href, "_blank", "noopener,noreferrer")
+		const openInNewTab = Boolean(
+			event?.metaKey || event?.ctrlKey || event?.button === 1,
+		)
+		if (openInNewTab) {
+			const nextTab = window.open(href, "_blank")
+			nextTab?.focus?.()
+			if (!nextTab) window.location.href = href
+			return
+		}
+		window.location.href = href
 	}
 
 	function getPrimaryImage() {
@@ -639,19 +648,20 @@
 	)
 </script>
 
-<div
-	class="one-card"
-	role="link"
-	tabindex="0"
-	onclick={openCardViewInNewTab}
-	onkeydown={(e) =>
-		(e.key === "Enter" || e.key === " ") && openCardViewInNewTab(e)}
->
-	{#if primaryImage}
-		<div class="card-image">
-			<img src={primaryImage} alt={cardTitle} loading="lazy" />
+<div class="one-card">
+	<a class="card-link" href={cardViewHref} tabindex="0">
+		{#if primaryImage}
+			<div class="card-image">
+				<img src={primaryImage} alt={cardTitle} loading="lazy" />
+			</div>
+		{/if}
+		<div class="card-content">
+			<h3 class="card-title">{cardTitle}</h3>
+			{#if cardDescription}
+				<p class="card-description">{cardDescription}</p>
+			{/if}
 		</div>
-	{/if}
+	</a>
 
 	{#if typePills.length > 0}
 		<div class="pills-strip">
@@ -667,45 +677,33 @@
 		</div>
 	{/if}
 
-	<div class="card-content">
-		<h3 class="card-title">{cardTitle}</h3>
+	{#if locationMapsHref}
+		<a
+			class="location-fields location-link"
+			href={locationMapsHref}
+			target="_blank"
+			rel="noopener noreferrer"
+			onclick={(e) => e.stopPropagation()}
+		>
+			<p class="location-row">📍 {locationLine}</p>
+		</a>
+	{/if}
 
-		{#if cardDescription}
-			<p class="card-description">{cardDescription}</p>
-		{/if}
-
-		{#if locationMapsHref}
-			<a
-				class="location-fields location-link"
-				href={locationMapsHref}
-				target="_blank"
-				rel="noopener noreferrer"
-				onclick={(e) => e.stopPropagation()}
-			>
-				<p class="location-row">📍 {locationLine}</p>
-			</a>
-		{/if}
-
-		{#if profilePic || authorName || formattedDate}
-			<div class="card-footer">
-				{#if profilePic}
-					<img
-						src={profilePic}
-						alt={authorName}
-						class="author-avatar"
-					/>
+	{#if profilePic || authorName || formattedDate}
+		<div class="card-footer">
+			{#if profilePic}
+				<img src={profilePic} alt={authorName} class="author-avatar" />
+			{/if}
+			<div class="author-info">
+				{#if authorName}
+					<p class="author-name">{authorName}</p>
 				{/if}
-				<div class="author-info">
-					{#if authorName}
-						<p class="author-name">{authorName}</p>
-					{/if}
-					{#if formattedDate}
-						<p class="author-date">{formattedDate}</p>
-					{/if}
-				</div>
+				{#if formattedDate}
+					<p class="author-date">{formattedDate}</p>
+				{/if}
 			</div>
-		{/if}
-	</div>
+		</div>
+	{/if}
 
 	<a
 		class="post-footer"
@@ -758,7 +756,7 @@
 		{:else}
 			<div class="comment-compose-disabled" aria-hidden="true">
 				<div class="comment-input-disabled">
-					Be the first to comment on BlueSky {@html siBluesky.svg}
+					Be the first to comment {@html siBluesky.svg}
 				</div>
 				<div class="comment-submit-disabled">Submit</div>
 			</div>
@@ -856,17 +854,27 @@
 		border-radius: 8px;
 		background: #faf7f3;
 		border: 1px solid #ede5d8;
+		margin: 0 1rem;
 	}
 
-	.location-link {
+	.location-link,
+	.card-link,
+	.post-footer,
+	.one-card a {
 		color: inherit;
-		text-decoration: none;
+		text-decoration: none !important;
 		cursor: pointer;
 	}
 
 	.location-link:hover,
-	.location-link:focus-visible {
-		text-decoration: none;
+	.location-link:focus-visible,
+	.card-link:hover,
+	.card-link:focus-visible,
+	.post-footer:hover,
+	.post-footer:focus-visible,
+	.one-card a:hover,
+	.one-card a:focus-visible {
+		text-decoration: none !important;
 	}
 
 	.location-row {
