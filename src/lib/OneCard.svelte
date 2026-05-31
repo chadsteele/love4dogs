@@ -663,6 +663,18 @@
 		</div>
 	</a>
 
+	{#if locationMapsHref}
+		<a
+			class="location-fields location-link"
+			href={locationMapsHref}
+			target="_blank"
+			rel="noopener noreferrer"
+			onclick={(e) => e.stopPropagation()}
+		>
+			<p class="location-row">📍 {locationLine}</p>
+		</a>
+	{/if}
+
 	{#if typePills.length > 0}
 		<div class="pills-strip">
 			<div class="pills">
@@ -675,18 +687,6 @@
 				{/each}
 			</div>
 		</div>
-	{/if}
-
-	{#if locationMapsHref}
-		<a
-			class="location-fields location-link"
-			href={locationMapsHref}
-			target="_blank"
-			rel="noopener noreferrer"
-			onclick={(e) => e.stopPropagation()}
-		>
-			<p class="location-row">📍 {locationLine}</p>
-		</a>
 	{/if}
 
 	{#if profilePic || authorName || formattedDate}

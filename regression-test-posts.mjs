@@ -36,6 +36,8 @@ import {
 	fetchMultipleDogImages,
 	uploadDogImageToBluesky,
 	sleep,
+	REGRESSION_TAG_POOL,
+	pickNUniqueRandom,
 } from './regression-test-common.mjs';
 
 const args = parseArgs();
@@ -199,6 +201,8 @@ async function main() {
 		.map((entry) => String(entry?.url || '').trim())
 		.filter(Boolean);
 	const largePostHtml = buildLargePostHtml(uuid, uploadedImageUrls);
+	// Pick 2 random tags from the pool for this test run
+	const randomTags = pickNUniqueRandom(REGRESSION_TAG_POOL, 2);
 	const primaryPayload = {
 		uuid,
 		authorid: `author-${uuid}`,
@@ -223,7 +227,7 @@ async function main() {
 			zip: coloradoLocation.zip,
 		},
 		html: largePostHtml,
-		tags: ['regression', 'chunking', 'test'],
+		tags: ['regression', 'chunking', 'test', ...randomTags],
 	};
 	const subsequentPayload = chunkHtmlByAltPayload(largePostHtml, 2000, { uuid });
 	const bundle = buildCombinedPayloadBundle(primaryPayload, subsequentPayload, {

@@ -1,3 +1,18 @@
+// Tag pool for regression tests
+export const REGRESSION_TAG_POOL = [
+	'wanted', 'offered', 'volunteer', 'event', 'lost', 'found', 'urgent', 'help', 'meetup',  'rescue', 'supplies', 'transportation', 'medical', 'training',
+];
+
+// Returns a new array with n unique random elements from arr
+export function pickNUniqueRandom(arr, n) {
+	const copy = arr.slice();
+	const result = [];
+	for (let i = 0; i < n && copy.length > 0; i++) {
+		const idx = Math.floor(Math.random() * copy.length);
+		result.push(copy.splice(idx, 1)[0]);
+	}
+	return result;
+}
 export function parseArgs(argv = process.argv.slice(2)) {
 	const args = {};
 	for (const arg of argv) {

@@ -648,11 +648,20 @@ export async function publishChunkBundleToBsky({
 	const normalizedPrimaryMedia = Array.isArray(primaryMedia)
 		? primaryMedia.map((entry) => ({...entry}))
 		: []
-	const normalizedTags = [...new Set(
-		(Array.isArray(tags) ? tags : [])
-			.map((entry) => String(entry || "").trim().toLowerCase())
-			.filter(Boolean),
-	)]
+	       // Always include 'profile' tag for profile posts (if not present)
+	       let normalizedTags = Array.isArray(tags) ? tags : [];
+	       normalizedTags = normalizedTags.map((entry) => String(entry || "").trim().toLowerCase()).filter(Boolean);
+		       // Heuristic: if this is a profile post, always inject 'profile' tag
+		       let isProfile = false;
+		       const canonicalUrl = String(primaryPayload?.canonicalurl || primaryPayload?.canonicalUrl || "").toLowerCase();
+		       const title = String(primaryPayload?.title || "").toLowerCase();
+		       if (canonicalUrl.includes('/profile/') || title.includes('profile')) {
+			       isProfile = true;
+		       }
+		       if (isProfile && !normalizedTags.includes('profile')) {
+			       normalizedTags.unshift('profile');
+		       }
+	       normalizedTags = [...new Set(normalizedTags)];
 	const chunkCarrierPool = [
 		...normalizedPrimaryMedia,
 		...(Array.isArray(replyAttachmentPool) ? replyAttachmentPool : []),
@@ -672,67 +681,71 @@ export async function publishChunkBundleToBsky({
 		chunkGroups.push(normalizedChunks.slice(i, i + 4))
 	}
 
-	const chunkResults = []
-	for (let i = 0; i < chunkGroups.length; i += 1) {
-		const chunkGroup = chunkGroups[i] || []
-		const mediaForPost = []
+	       // Ensure tags are present in the manifest primary payload
+		       // Force tags into manifest and outgoing post record
+		       let manifestPrimaryPayload = { ...primaryPayload, tags: normalizedTags }
 
-		for (const chunkEntry of chunkGroup) {
-			const carrier =
-				chunkCarrierPool[(chunkEntry.index - 1) % chunkCarrierPool.length]
-			const chunkAltPayload = buildChunkAltPayload(
-				{
-					uuid,
-					index: chunkEntry.index,
-					total: normalizedChunks.length,
-				},
-				chunkEntry?.bundleFragment || "",
-			)
-			mediaForPost.push({
-				...carrier,
-				alt: JSON.stringify(chunkAltPayload),
-			})
-		}
+	       const chunkResults = []
+	       for (let i = 0; i < chunkGroups.length; i += 1) {
+		       const chunkGroup = chunkGroups[i] || []
+		       const mediaForPost = []
 
-		if (mediaForPost.length === 0) {
-			continue
-		}
+		       for (const chunkEntry of chunkGroup) {
+			       const carrier =
+				       chunkCarrierPool[(chunkEntry.index - 1) % chunkCarrierPool.length]
+			       const chunkAltPayload = buildChunkAltPayload(
+				       {
+					       uuid,
+					       index: chunkEntry.index,
+					       total: normalizedChunks.length,
+				       },
+				       chunkEntry?.bundleFragment || "",
+			       )
+			       mediaForPost.push({
+				       ...carrier,
+				       alt: JSON.stringify(chunkAltPayload),
+			       })
+		       }
 
-		const chunkFd = new FormData()
-		chunkFd.append("text", postText || "❤️")
-		if (postType) chunkFd.append("postType", postType)
-		if (normalizedTags.length > 0) {
-			chunkFd.append("tags", JSON.stringify(normalizedTags))
-		}
-		chunkFd.append("uploadedMedia", JSON.stringify(mediaForPost))
-		const result = await postToBskyApi(fetchImpl, endpoint, chunkFd)
-		chunkResults.push(result?.result || null)
-	}
+		       if (mediaForPost.length === 0) {
+			       continue
+		       }
 
-	const chunkUris = chunkResults
-		.map((entry) => String(entry?.uri || "").trim())
-		.filter(Boolean)
-	const chunkManifest = buildChunkUriManifest(chunkUris)
-	const originPayload = {
-		u: uuid,
-		primary: primaryPayload,
-		chunks: chunkManifest,
-	}
-	const originMedia = normalizedPrimaryMedia.map((entry) => ({...entry}))
-	if (originMedia.length > 0) {
-		originMedia[0] = {
-			...originMedia[0],
-			alt: JSON.stringify(originPayload),
-		}
-	}
+		       const chunkFd = new FormData()
+		       chunkFd.append("text", postText || "❤️")
+		       if (postType) chunkFd.append("postType", postType)
+		       if (normalizedTags.length > 0) {
+			       chunkFd.append("tags", JSON.stringify(normalizedTags))
+		       }
+		       chunkFd.append("uploadedMedia", JSON.stringify(mediaForPost))
+		       const result = await postToBskyApi(fetchImpl, endpoint, chunkFd)
+		       chunkResults.push(result?.result || null)
+	       }
 
-	let originText = String(postText || "")
-	if (!originMedia.length && chunkUris.length > 0) {
-		const manifestText = buildOriginManifestText(chunkManifest)
-		originText = originText
-			? `${originText}\n\n${manifestText}`
-			: manifestText
-	}
+	       const chunkUris = chunkResults
+		       .map((entry) => String(entry?.uri || "").trim())
+		       .filter(Boolean)
+	       const chunkManifest = buildChunkUriManifest(chunkUris)
+	       const originPayload = {
+		       u: uuid,
+		       primary: manifestPrimaryPayload,
+		       chunks: chunkManifest,
+	       }
+	       const originMedia = normalizedPrimaryMedia.map((entry) => ({...entry}))
+	       if (originMedia.length > 0) {
+		       originMedia[0] = {
+			       ...originMedia[0],
+			       alt: JSON.stringify(originPayload),
+		       }
+	       }
+
+	       let originText = String(postText || "")
+	       if (!originMedia.length && chunkUris.length > 0) {
+		       const manifestText = buildOriginManifestText(chunkManifest)
+		       originText = originText
+			       ? `${originText}\n\n${manifestText}`
+			       : manifestText
+	       }
 
 	       const originFd = new FormData()
 	       // Defensive: ensure text is always present and non-empty
@@ -743,8 +756,7 @@ export async function publishChunkBundleToBsky({
 	       originFd.append("text", originText)
 	       if (postType) originFd.append("postType", postType)
 	       if (normalizedTags.length > 0) {
-		       originFd.append("tags", JSON.stringify(normalizedTags)
-		       )
+		       originFd.append("tags", JSON.stringify(normalizedTags))
 	       }
 	       if (originMedia.length > 0) {
 		       originFd.append("uploadedMedia", JSON.stringify(originMedia))
@@ -757,14 +769,14 @@ export async function publishChunkBundleToBsky({
 	       const originJson = await postToBskyApi(fetchImpl, endpoint, originFd)
 
 	       return {
-		originResult: originJson?.result || null,
-		primaryResult: originJson?.result || null,
-		chunkResults,
-		totalChunkPosts: chunkResults.length,
-		chunkCount: normalizedChunks.length,
-		primaryChunkCount: 0,
-		replyChunkCount: 0,
-	}
+		       originResult: originJson?.result || null,
+		       primaryResult: originJson?.result || null,
+		       chunkResults,
+		       totalChunkPosts: chunkResults.length,
+		       chunkCount: normalizedChunks.length,
+		       primaryChunkCount: 0,
+		       replyChunkCount: 0,
+	       }
 }
 
 function parseChunkPayloadFromAlt(alt = "") {

@@ -394,7 +394,22 @@
 				: ""
 
 			if (isProfile) {
-				jsonData = {...(primary || {}), html: htmlChunks}
+				derivedCreatedAtMs = deriveCreatedAtMsFromBundle(bundle)
+				let stampValue = ""
+				if (
+					typeof primary?.stamp === "string" &&
+					primary.stamp.trim()
+				) {
+					stampValue = primary.stamp.trim()
+				} else if (derivedCreatedAtMs > 0) {
+					stampValue = String(derivedCreatedAtMs)
+				}
+				// Preserve all original fields from Bluesky API (primary), then add/override html and stamp
+				jsonData = {
+					...(primary || {}),
+					html: htmlChunks,
+					stamp: stampValue,
+				}
 				writeLocalProfile(uuid, jsonData)
 				writeSessionBundle(uuid, bundle)
 				chunkUris = collectChunkUrisFromPosts(
@@ -463,14 +478,14 @@
 					<div class="skeleton skeleton-pill"></div>
 				{/if}
 				<div class="skeleton skeleton-line skeleton-line-xl"></div>
-				<div class="skeleton skeleton-line"></div>
+				<div class="skeleton skeleton-line skeleton-line-wide"></div>
 				<div class="skeleton skeleton-line skeleton-line-wide"></div>
 				{#if !isProfile}
 					<div class="skeleton skeleton-media"></div>
 				{/if}
 				<div class="skeleton skeleton-line skeleton-line-wide"></div>
-				<div class="skeleton skeleton-line"></div>
-				<div class="skeleton skeleton-line skeleton-line-half"></div>
+				<div class="skeleton skeleton-line skeleton-line-wide"></div>
+				<div class="skeleton skeleton-line skeleton-line-wide"></div>
 				{#if isProfile}
 					<div class="skeleton skeleton-chunk-header"></div>
 					<div
@@ -484,16 +499,23 @@
 	{:else if jsonData}
 		<section class="panel hero">
 			{#if isProfile}
+				{console.log("PROFILE jsonData", jsonData)}
 				<ProfilePostHeader
 					profilePic={asUrl(jsonData?.profilePic)}
 					backgroundPic={asUrl(jsonData?.backgroundPic)}
 					title={jsonData?.name || ""}
 					name={jsonData?.name || ""}
 					url={asUrl(jsonData?.canonicalurl)}
+					stamp={formattedStamp}
 				/>
 			{/if}
 
 			<div class="hero-body">
+				{#if formattedStamp}
+					<div class="date-time">
+						{formattedStamp}
+					</div>
+				{/if}
 				{#if !isProfile}
 					<a class="author-info" href={authorSearchHref || undefined}>
 						<div class="author-row">
@@ -511,16 +533,12 @@
 							<div class="author-meta">
 								<div class="author-name">
 									{jsonData?.authorName || "Anonymous"}
-									{#if formattedStamp}
-										<div class="date-time">
-											{formattedStamp}
-										</div>
-									{/if}
 								</div>
 							</div>
 						</div>
 					</a>
 				{/if}
+
 				{#if mapHref && locationLines.length > 0}
 					<div class="location-actions">
 						<a
@@ -577,7 +595,9 @@
 					</section>
 				{/if}
 
-				<div class="content-html">{@html jsonData?.html || ""}</div>
+				<div class="content-html{isProfile ? ' profile-content' : ''}">
+					{@html jsonData?.html || ""}
+				</div>
 			</div>
 		</section>
 	{/if}
@@ -762,6 +782,15 @@
 		margin-top: 0;
 		line-height: 1.55;
 		word-break: break-word;
+	}
+
+	/* Profile view: add left margin to offset avatar overlay */
+	.location-actions,
+	.hero-description {
+		margin-left: calc(
+			clamp(0.65rem, 1.8vw, 0.9rem) + clamp(76px, 12vw, 128px) +
+				clamp(0.55rem, 1.4vw, 0.9rem)
+		);
 	}
 
 	.content-html :global(img) {

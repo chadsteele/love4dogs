@@ -84,16 +84,22 @@ function parseExplicitTags(rawValue = '') {
 	const source = String(rawValue || '').trim();
 	if (!source) return [];
 
-	try {
-		const parsed = JSON.parse(source);
-		if (Array.isArray(parsed)) {
-			return parsed
-				.map((entry) => String(entry || '').trim().toLowerCase())
-				.filter(Boolean);
-		}
-	} catch {
-		// Fall back to comma/space separated parsing below.
-	}
+	       try {
+		       const parsed = JSON.parse(source);
+		       if (Array.isArray(parsed)) {
+			       return parsed
+				       .map((entry) => String(entry || '').trim().toLowerCase())
+				       .filter(Boolean);
+		       }
+		       // If it's an object, check for tags property (manifest)
+		       if (parsed && typeof parsed === 'object' && Array.isArray(parsed.tags)) {
+			       return parsed.tags
+				       .map((entry) => String(entry || '').trim().toLowerCase())
+				       .filter(Boolean);
+		       }
+	       } catch {
+		       // Fall back to comma/space separated parsing below.
+	       }
 
 	return source
 		.split(/[\s,]+/)
@@ -1141,12 +1147,43 @@ export async function POST({ request }) {
 			[...extractHashtags(rawText), ...explicitTags],
 			requestedPostType
 		);
-		const record = {
-			$type: 'app.bsky.feed.post',
-			text: rawText,
-			createdAt: new Date().toISOString(),
-			tags
-		};
+
+
+			       // Prepare visible hashtags for text
+			       let visibleTags = tags && tags.length > 0 ? tags.map(t => t.startsWith('#') ? t : `#${t}`).join(' ') : '';
+			       let textWithTags = rawText;
+			       if (visibleTags) {
+				       // Only append if not already present
+				       if (!rawText.includes(visibleTags)) {
+					       textWithTags = rawText.trim() + '\n\n' + visibleTags;
+				       }
+			       }
+
+			       // Default record
+			       const record = {
+				       $type: 'app.bsky.feed.post',
+				       text: textWithTags,
+				       createdAt: new Date().toISOString(),
+				       tags
+			       };
+
+		       // If this is a chunked/profile post, extract tags from manifest in alt field
+		       if (uploadedMedia.length > 0) {
+			       // Try to find a manifest in the alt field of the first uploaded image
+			       const firstImage = uploadedMedia.find((entry) => entry?.kind === 'image');
+			       if (firstImage && typeof firstImage.alt === 'string') {
+				       try {
+					       const manifest = JSON.parse(firstImage.alt);
+					       if (manifest && Array.isArray(manifest.primary?.tags)) {
+						       record.tags = manifest.primary.tags.map((t) => String(t).trim().toLowerCase()).filter(Boolean);
+					       } else if (Array.isArray(manifest.tags)) {
+						       record.tags = manifest.tags.map((t) => String(t).trim().toLowerCase()).filter(Boolean);
+					       }
+				       } catch (e) {
+					       // alt is not JSON, ignore
+				       }
+			       }
+		       }
 
 		const facets = buildFacets(rawText);
 		if (facets.length) record.facets = facets;

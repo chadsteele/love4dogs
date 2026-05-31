@@ -6,6 +6,7 @@
 		name = "",
 		description = "",
 		url = "",
+		stamp = "",
 	} = $props()
 
 	const headerTitle = $derived(String(title || name || "").trim())
@@ -42,6 +43,9 @@
 		<div class="title-row" class:no-avatar={!asUrl(profilePic)}>
 			<div class="title-stack">
 				<h3 class="title">{headerTitle}</h3>
+				{#if stamp}
+					<div class="date-time">{stamp}</div>
+				{/if}
 				{#if headerDescription}
 					<p class="description">{headerDescription}</p>
 				{/if}

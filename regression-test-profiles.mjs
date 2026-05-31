@@ -35,6 +35,8 @@ import {
 	fetchMultipleDogImages,
 	uploadDogImageToBluesky,
 	sleep,
+	REGRESSION_TAG_POOL,
+	pickNUniqueRandom,
 } from './regression-test-common.mjs';
 
 const args = parseArgs();
@@ -231,35 +233,42 @@ async function main() {
 		'It should be safe to delete after the test completes.';
 	const contentHtml = buildLargeProfileHtml(dogImageUrls, uuid);
 
-	const primaryPayload = {
-		uuid,
-		authorid: `author-${uuid}`,
-		stamp: Date.now().toString(36),
-		canonicalurl: `https://love4dogs.club/profile/view/${uuid}`,
-		title: profileName,
-		description: profileDescription,
-		address: coloradoLocation.address,
-		city: coloradoLocation.city,
-		state: coloradoLocation.state,
-		zip: coloradoLocation.zip,
-		country: coloradoLocation.country,
-		location: {
-			lat: coloradoLocation.lat,
-			lon: coloradoLocation.lon,
-			approximate: coloradoLocation.approximate,
-			exact: coloradoLocation.exact,
-			hashPath: coloradoLocation.hashPath,
-			formattedAddress: coloradoLocation.formattedAddress,
-			city: coloradoLocation.city,
-			state: coloradoLocation.state,
-			country: coloradoLocation.country,
-			zip: coloradoLocation.zip,
-		},
-		profilePic: uploadedImages[0]?.url || null,
-		backgroundPic: uploadedImages[1]?.url || null,
-		html: contentHtml,
-		tags: ['profile', 'regression', 'chunking'],
-	};
+	       // Pick 2 random tags from the pool for this test run
+	       const randomTags = pickNUniqueRandom(REGRESSION_TAG_POOL, 2);
+	       // Always include 'profile', lowercase, unique
+	       const tags = ['profile', 'regression', 'chunking', ...randomTags]
+		       .map((t) => String(t).toLowerCase().trim())
+		       .filter(Boolean);
+	       const uniqueTags = Array.from(new Set(tags));
+	       const primaryPayload = {
+		       uuid,
+		       authorid: `author-${uuid}`,
+		       stamp: Date.now().toString(36),
+		       canonicalurl: `https://love4dogs.club/profile/view/${uuid}`,
+		       title: profileName,
+		       description: profileDescription,
+		       address: coloradoLocation.address,
+		       city: coloradoLocation.city,
+		       state: coloradoLocation.state,
+		       zip: coloradoLocation.zip,
+		       country: coloradoLocation.country,
+		       location: {
+			       lat: coloradoLocation.lat,
+			       lon: coloradoLocation.lon,
+			       approximate: coloradoLocation.approximate,
+			       exact: coloradoLocation.exact,
+			       hashPath: coloradoLocation.hashPath,
+			       formattedAddress: coloradoLocation.formattedAddress,
+			       city: coloradoLocation.city,
+			       state: coloradoLocation.state,
+			       country: coloradoLocation.country,
+			       zip: coloradoLocation.zip,
+		       },
+		       profilePic: uploadedImages[0]?.url || null,
+		       backgroundPic: uploadedImages[1]?.url || null,
+		       html: contentHtml,
+		       tags: uniqueTags,
+	       };
 	console.log(`  Raw HTML content size: ${contentHtml.length} chars`);
 
 	// Split HTML content into subsequent payload chunks the same way the UI does
@@ -268,6 +277,7 @@ async function main() {
 
 	assert(typeof primaryPayload.uuid === 'string', 'Primary payload has uuid');
 	assert(primaryPayload.tags.includes('profile'), 'Primary payload includes profile tag');
+	assert(primaryPayload.tags.every((t) => typeof t === 'string' && t === t.toLowerCase()), 'All tags are lowercase');
 	assert(typeof primaryPayload.title === 'string', 'Primary payload has title');
 	assertEqual(primaryPayload.state, 'CO', 'Primary payload state is Colorado');
 	assertEqual(primaryPayload.country, 'USA', 'Primary payload country is USA');
@@ -335,24 +345,24 @@ async function main() {
 	assert(!locationLeakInPublishText, 'Publish text excludes location data', locationLeakInPublishText);
 
 	let publishResult;
-	try {
-		publishResult = await publishChunkBundleToBsky({
-			fetchImpl: fetch,
-			endpoint: `${BASE_URL}/api/post`,
-			uuid,
-			tags: primaryPayload.tags,
-			postText,
-			primaryPayload,
-			chunks: chunkEntries,
-			primaryMedia: uploadedImages.map((img) => ({
-				kind: 'image',
-				alt: img.alt,
-				blob: img.blob,
-			})),
-			replyAttachmentPool: [],
-			videoAttachments: [],
-		});
-	} catch (err) {
+	       try {
+		       publishResult = await publishChunkBundleToBsky({
+			       fetchImpl: fetch,
+			       endpoint: `${BASE_URL}/api/post`,
+			       uuid,
+			       tags: uniqueTags,
+			       postText,
+			       primaryPayload: { ...primaryPayload, tags: uniqueTags },
+			       chunks: chunkEntries,
+			       primaryMedia: uploadedImages.map((img) => ({
+				       kind: 'image',
+				       alt: img.alt,
+				       blob: img.blob,
+			       })),
+			       replyAttachmentPool: [],
+			       videoAttachments: [],
+		       });
+	       } catch (err) {
 		fail('publishChunkBundleToBsky', err.message);
 		console.error('\n  Publish error:', err);
 		process.exit(1);
