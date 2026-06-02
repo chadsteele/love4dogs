@@ -70,7 +70,6 @@
 		for (const entry of raw) {
 			const token = normalizeTagToken(entry)
 			if (!token || seen.has(token)) continue
-			if (token.startsWith("l4d-type:")) continue
 			seen.add(token)
 			tags.push(token)
 			if (tags.length >= 20) break
@@ -489,10 +488,17 @@
 					stampValue = String(derivedCreatedAtMs)
 				}
 				// Preserve all original fields from Bluesky API (primary), then add/override html and stamp
+				const tags = Array.isArray(primary?.tags)
+					? [...primary.tags]
+					: []
+				if (!tags.includes("profile")) {
+					tags.push("profile")
+				}
 				jsonData = {
 					...(primary || {}),
 					html: htmlChunks,
 					stamp: stampValue,
+					tags,
 				}
 				writeLocalProfile(uuid, jsonData)
 				writeSessionBundle(uuid, bundle)

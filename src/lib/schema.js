@@ -10,11 +10,6 @@ function normalizeTags(tags = []) {
 	for (const raw of Array.isArray(tags) ? tags : []) {
 		const value = normalizeString(raw).toLowerCase()
 		if (!value) continue
-		if (value === "l4d-type:profile") {
-			if (!out.includes(PROFILE_TAG)) out.push(PROFILE_TAG)
-			continue
-		}
-		if (value === "l4d-type:post") continue
 		if (!out.includes(value)) out.push(value)
 	}
 	return out.slice(0, 50)

@@ -1,5 +1,4 @@
 import { env } from '$env/dynamic/private';
-import { extractPostTypeFromTags } from '$lib/postTypeTags.js';
 
 const BSKY_PUBLIC_XRPC_HOSTS = [
 	'https://public.api.bsky.app/xrpc',
@@ -146,16 +145,20 @@ function dedupePosts(posts = []) {
 		}
 
 		const existing = byIdentity.get(identity);
-		const existingType = String(existing?.postType || '').trim().toLowerCase();
-		const candidateType = String(post?.postType || '').trim().toLowerCase();
 
-		if (existingType !== 'profile' && candidateType === 'profile') {
+		// Check if existing or candidate post has the "profile" tag
+		const existingTags = (existing?.record?.tags || []).map(t => String(t || '').trim().toLowerCase());
+		const candidateTags = (post?.record?.tags || []).map(t => String(t || '').trim().toLowerCase());
+		const existingIsProfile = existingTags.includes('profile');
+		const candidateIsProfile = candidateTags.includes('profile');
+
+		if (!existingIsProfile && candidateIsProfile) {
 			console.log('[feed] collapsed duplicate identity', {
 				identity,
 				keptUri: post.uri,
 				droppedUri: existing?.uri || '',
-				keptType: candidateType,
-				droppedType: existingType,
+				keptType: candidateIsProfile ? 'profile' : 'post',
+				droppedType: existingIsProfile ? 'profile' : 'post',
 			});
 			byIdentity.set(identity, post);
 		} else {
@@ -163,13 +166,56 @@ function dedupePosts(posts = []) {
 				identity,
 				keptUri: existing?.uri || '',
 				droppedUri: post.uri,
-				keptType: existingType,
-				droppedType: candidateType,
+				keptType: existingIsProfile ? 'profile' : 'post',
+				droppedType: candidateIsProfile ? 'profile' : 'post',
 			});
 		}
 	}
 
 	return order.map((identity) => byIdentity.get(identity)).filter(Boolean);
+}
+
+function hasProfileData(imageAlts = [], videoAlt = '') {
+	const checkAlt = (alt = '') => {
+		if (!alt) return false;
+		const source = String(alt || '').trim();
+		if (!source) return false;
+		try {
+			const parsed = JSON.parse(source);
+			const candidates = [
+				parsed,
+				parsed?.primary,
+				parsed?.combined?.primary,
+			];
+			if (typeof parsed?.h === 'string' && parsed.h.trim()) {
+				try {
+					const inner = JSON.parse(parsed.h);
+					candidates.push(
+						inner,
+						inner?.primary,
+						inner?.combined?.primary,
+					);
+				} catch {}
+			}
+			for (const candidate of candidates) {
+				if (!candidate || typeof candidate !== 'object') continue;
+				const profilePic = String(candidate?.profilePic || candidate?.profilepic || '').trim();
+				const backgroundPic = String(candidate?.backgroundPic || candidate?.backgroundpic || '').trim();
+				const name = String(candidate?.name || candidate?.title || candidate?.n || '').trim();
+				const description = String(candidate?.description || candidate?.desc || '').trim();
+				if (profilePic || backgroundPic || name || description) {
+					return true;
+				}
+			}
+		} catch {}
+		return false;
+	};
+
+	for (const alt of imageAlts || []) {
+		if (checkAlt(alt)) return true;
+	}
+	if (checkAlt(videoAlt)) return true;
+	return false;
 }
 
 function mapPost(postWrapper) {
@@ -201,6 +247,16 @@ function mapPost(postWrapper) {
 
 	const identityKey = extractPostIdentity(postWrapper) || post.uri || '';
 
+	// Check if this is a profile post based on image/video metadata
+	const isProfile = hasProfileData(imageAlts, video?.alt || '');
+	const tags = record?.tags || [];
+	const tagsArray = Array.isArray(tags) ? [...tags] : [];
+
+	// Add "profile" tag if this post contains profile data
+	if (isProfile && !tagsArray.some(t => String(t || '').toLowerCase() === 'profile')) {
+		tagsArray.push('profile');
+	}
+
 	return {
 		uri: post.uri,
 		displayKey: identityKey,
@@ -211,7 +267,10 @@ function mapPost(postWrapper) {
 		images,
 		imageAlts,
 		video,
-		postType: extractPostTypeFromTags(record?.tags),
+		record: {
+			tags: tagsArray,
+			createdAt: record.createdAt || null,
+		},
 		replyCount: post.replyCount || 0,
 		repostCount: post.repostCount || 0,
 		likeCount: post.likeCount || 0,

@@ -1,4 +1,6 @@
 <script>
+	import {User} from "lucide-svelte"
+
 	let {profilePic = "", backgroundPic = "", url = ""} = $props()
 
 	function asUrl(value) {
@@ -26,6 +28,10 @@
 
 	{#if asUrl(profilePic)}
 		<img class="avatar" src={asUrl(profilePic)} alt="Profile" />
+	{:else}
+		<div class="avatar avatar-fallback">
+			<User size={48} />
+		</div>
 	{/if}
 </button>
 
@@ -74,6 +80,19 @@
 		border-radius: 50%;
 		border: 3px solid rgba(255, 255, 255, 0.85);
 		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+	}
+
+	.avatar-fallback {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: linear-gradient(135deg, #e8dccf 0%, #d4c4b8 100%);
+		color: #5d4e42;
+	}
+
+	.avatar-fallback :global(svg) {
+		width: 50%;
+		height: 50%;
 	}
 
 	@media (max-width: 600px) {

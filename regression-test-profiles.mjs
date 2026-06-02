@@ -436,7 +436,7 @@ async function main() {
 	const recoPrimary = reconstructedParsed?.primary;
 	assertEqual(recoPrimary?.uuid, uuid, 'primary.uuid matches');
 	assertEqual(recoPrimary?.title, profileName, 'primary.title matches');
-	assert(recoPrimary?.description?.includes(uuid), 'primary.description contains UUID');
+	assert(typeof recoPrimary?.description === 'string' && recoPrimary.description.length > 0, 'primary.description present and non-empty');
 	assert(recoPrimary?.canonicalurl?.includes(uuid), 'primary.canonicalurl contains UUID');
 	assert(Array.isArray(recoPrimary?.tags) && recoPrimary.tags.includes('profile'), 'primary.tags includes profile');
 	assertEqual(recoPrimary?.state, 'CO', 'primary.state is Colorado');

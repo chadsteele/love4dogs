@@ -1,9 +1,9 @@
 <script>
 	import {onMount} from "svelte"
-	import {extractPostTypeFromTags, extractHashtags} from "$lib/postTypeTags"
 	import {rewriteLove4DogsUrlForLocalhost} from "$lib/utils"
-	import {Heart, MessageCircle, Repeat2} from "lucide-svelte"
+	import {Heart, MessageCircle, Repeat2, User} from "lucide-svelte"
 	import {siBluesky} from "simple-icons"
+	import TagPills from "$lib/TagPills.svelte"
 
 	let {post, onclick = () => {}} = $props()
 	let hasHydrated = $state(false)
@@ -549,69 +549,29 @@
 		}
 	}
 
-	const PILL_COLORS = [
-		{bg: "#bae6fd", color: "#0369a1"},
-		{bg: "#e9d5ff", color: "#6b21a8"},
-		{bg: "#fce7f3", color: "#9d174d"},
-		{bg: "#fed7aa", color: "#c2410c"},
-		{bg: "#99f6e4", color: "#0f766e"},
-		{bg: "#c7d2fe", color: "#3730a3"},
-		{bg: "#ffe4e6", color: "#be123c"},
-		{bg: "#fef08a", color: "#92400e"},
-	]
-
-	function getTypePills() {
-		const pills = []
-		let colorIndex = 0
-
-		// Type pill first (from post.type, post.postType, or l4d-type: tag)
-		const postType =
-			String(post?.type || post?.postType || "")
-				.trim()
-				.toLowerCase() || extractPostTypeFromTags(post?.tags || [])
-
-		if (postType && postType !== "post") {
-			pills.push({
-				label: postType.toUpperCase(),
-				style: PILL_COLORS[colorIndex % PILL_COLORS.length],
-			})
-			colorIndex++
+	function handleTagClick(tag) {
+		// Navigate to search page with the clicked tag
+		const searchTerm = String(tag || "")
+			.trim()
+			.toLowerCase()
+			.replace(/^#/, "")
+		if (searchTerm) {
+			window.location.href = `/search/${encodeURIComponent(searchTerm)}`
 		}
-
-		// All remaining tags (strip l4d-type: and l4d- prefixes)
-		const tags = post?.tags || []
-		for (const tag of tags) {
-			const raw = String(tag || "")
-				.trim()
-				.toLowerCase()
-			if (!raw) continue
-			if (raw.startsWith("l4d-type:")) continue
-			const label = raw.replace(/^l4d-/, "").toUpperCase()
-			if (!label) continue
-			pills.push({
-				label,
-				style: PILL_COLORS[colorIndex % PILL_COLORS.length],
-			})
-			colorIndex++
-		}
-
-		return pills
 	}
 
 	const cardTitle = $derived(getCardTitle())
 	const cardDescription = $derived(getCardDescription())
 	const primaryImage = $derived(getPrimaryImage())
 	const profilePic = $derived(getProfilePic())
-	const typePills = $derived(getTypePills())
 	const postType = $derived(
-		String(
-			post?.type ||
-				post?.postType ||
-				extractPostTypeFromTags(post?.tags || []) ||
-				"",
-		)
-			.trim()
-			.toLowerCase(),
+		// Use "profile" tag to identify profiles; otherwise default to "post"
+		Array.isArray(post?.record?.tags) &&
+			post.record.tags.some(
+				(tag) => String(tag || "").toLowerCase() === "profile",
+			)
+			? "profile"
+			: "post",
 	)
 	const canonicalUrl = $derived(
 		String(
@@ -655,6 +615,14 @@
 				<img src={primaryImage} alt={cardTitle} loading="lazy" />
 			</div>
 		{/if}
+	</a>
+
+	<TagPills
+		tags={post?.record?.tags || post?.tags || []}
+		onTagClick={handleTagClick}
+	/>
+
+	<a class="card-link" href={cardViewHref} tabindex="0">
 		<div class="card-content">
 			<h3 class="card-title">{cardTitle}</h3>
 			{#if cardDescription}
@@ -675,24 +643,14 @@
 		</a>
 	{/if}
 
-	{#if typePills.length > 0}
-		<div class="pills-strip">
-			<div class="pills">
-				{#each typePills as pill}
-					<span
-						class="pill"
-						style="background:{pill.style.bg};color:{pill.style
-							.color}">{pill.label}</span
-					>
-				{/each}
-			</div>
-		</div>
-	{/if}
-
 	{#if profilePic || authorName || formattedDate}
 		<div class="card-footer">
 			{#if profilePic}
 				<img src={profilePic} alt={authorName} class="author-avatar" />
+			{:else}
+				<div class="author-avatar author-avatar-fallback">
+					<User size={20} />
+				</div>
 			{/if}
 			<div class="author-info">
 				{#if authorName}
@@ -805,27 +763,6 @@
 		gap: 0.6rem;
 	}
 
-	.pills-strip {
-		padding: 0.75rem 1rem 0;
-	}
-
-	.pills {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.4rem;
-	}
-
-	.pill {
-		display: inline-block;
-		padding: 0.3rem 0.7rem;
-		border-radius: 20px;
-		font-size: 0.75rem;
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		white-space: nowrap;
-	}
-
 	.card-title {
 		margin: 0;
 		font-size: 1.1rem;
@@ -898,6 +835,19 @@
 		border-radius: 50%;
 		object-fit: cover;
 		border: 2px solid rgba(0, 0, 0, 0.1);
+	}
+
+	.author-avatar-fallback {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: #e8dccf;
+		color: #5d4e42;
+	}
+
+	.author-avatar-fallback :global(svg) {
+		width: 1.25rem;
+		height: 1.25rem;
 	}
 
 	.author-info {

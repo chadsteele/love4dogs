@@ -40,20 +40,18 @@ function runSchemaTests() {
 		title: 'Profile Title',
 		description: 'Profile description',
 		html: '<p>Hello</p>',
-		tags: ['profile', 'Urgent', 'profile', 'l4d-type:profile', 'l4d-type:post'],
+		tags: ['profile', 'Urgent', 'profile'],
 	});
 
 	assert(record.isProfile(), 'Schema record treats profile tag as profile identity');
 	const json = record.toJSON();
 	assertEqual(json.title, 'Profile Title', 'Schema JSON preserves title');
 	assert(Array.isArray(json.tags), 'Schema JSON includes tags array');
-	assert(json.tags.includes(PROFILE_TAG), 'Schema JSON includes normalized profile tag');
-	assert(!json.tags.includes('l4d-type:post'), 'Schema JSON strips legacy post type tag');
+	assert(json.tags.includes(PROFILE_TAG), 'Schema JSON includes profile tag');
 	assertEqual(json.name, 'Profile Title', 'Schema JSON includes compatibility name alias');
 
-	const normalized = normalizeSchemaTags(['Profile', 'event', 'l4d-type:profile', 'l4d-type:post']);
-	assert(normalized.includes('profile'), 'normalizeSchemaTags maps legacy profile type to profile tag');
-	assert(!normalized.includes('l4d-type:post'), 'normalizeSchemaTags removes legacy post tag');
+	const normalized = normalizeSchemaTags(['Profile', 'event']);
+	assert(normalized.includes('profile'), 'normalizeSchemaTags normalizes profile tag');
 	assert(isProfileSchemaRecord({tags: normalized}), 'isProfileSchemaRecord detects profile tag');
 	assert(!isProfileSchemaRecord({tags: ['event']}), 'isProfileSchemaRecord false when no profile tag');
 }
@@ -64,7 +62,6 @@ function runPostTypeTagCompatibilityTests() {
 	assertEqual(extractPostTypeFromTags(profileTags), 'profile', 'extractPostTypeFromTags recognizes profile tag');
 
 	const postTags = upsertTypeTag(['event'], 'post');
-	assert(!postTags.some((tag) => String(tag).includes('l4d-type:post')), 'upsertTypeTag(post) does not add legacy post type tag');
 	assertEqual(extractPostTypeFromTags(postTags), '', 'extractPostTypeFromTags returns empty for non-profile tags');
 }
 

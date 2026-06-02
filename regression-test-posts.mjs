@@ -349,16 +349,21 @@ async function main() {
 	assertEqual(loaded.combinedJson, bundle.combinedJson, 'Reconstructed JSON matches original exactly');
 	const reconstructedParsed = JSON.parse(loaded.combinedJson);
 	const reconstructedPrimary = reconstructedParsed?.primary || {};
-	assert(/<img\b/i.test(String(reconstructedPrimary?.html || '')), 'Reconstructed primary.html includes inline image tags');
+	// primary.html is intentionally omitted from the combined JSON (html lives in subsequent chunks).
+	// Validate HTML presence via subsequent instead.
+	const reconstructedHtml = Array.isArray(reconstructedParsed?.subsequent)
+		? reconstructedParsed.subsequent.join('')
+		: '';
+	assert(/<img\b/i.test(reconstructedHtml), 'Reconstructed subsequent HTML includes inline image tags');
 	let allUploadedUrlsPresentInPrimaryHtml = true;
 	for (const url of uploadedImageUrls) {
-		if (!String(reconstructedPrimary?.html || '').includes(url)) {
+		if (!reconstructedHtml.includes(url)) {
 			allUploadedUrlsPresentInPrimaryHtml = false;
-			fail(`Uploaded image URL present in reconstructed primary.html: ${url.slice(0, 60)}...`);
+			fail(`Uploaded image URL present in reconstructed subsequent HTML: ${url.slice(0, 60)}...`);
 		}
 	}
 	if (allUploadedUrlsPresentInPrimaryHtml) {
-		pass('All uploaded image URLs present in reconstructed primary.html');
+		pass('All uploaded image URLs present in reconstructed subsequent HTML');
 	}
 
 	const recoveredTexts = (Array.isArray(loaded.posts) ? loaded.posts : [])

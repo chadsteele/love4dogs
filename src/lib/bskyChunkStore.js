@@ -1,6 +1,9 @@
 const DEFAULT_CHUNK_ALT_PAYLOAD_TARGET_CHARS = 2000
 const DEFAULT_CONTENT_CHUNK_SIZE = 1800
 const STATIC_HTML_DICT_VERSION = 1
+// Leave a small buffer below the hard limit so coalesce can absorb tiny residuals
+// that binary-split would otherwise leave as orphaned 1-3 char fragments.
+const SPLIT_BUFFER_CHARS = 40
 const BSKY_PUBLIC_XRPC = "https://public.api.bsky.app/xrpc"
 function sortUniqueHtmlCandidates(candidates = []) {
 	const unique = [...new Set(candidates.map((entry) => String(entry || "")).filter(Boolean))]
@@ -365,8 +368,9 @@ function splitFragmentByAltPayload(
 		while (low <= high) {
 			const mid = Math.floor((low + high) / 2)
 			const candidate = source.slice(start, start + mid)
+			const effectiveMax = Math.max(50, maxPayloadChars - SPLIT_BUFFER_CHARS)
 			const payloadLength = measureChunkAltPayloadLength(candidate, meta)
-			if (payloadLength <= maxPayloadChars) {
+			if (payloadLength <= effectiveMax) {
 				best = mid
 				low = mid + 1
 			} else {
@@ -527,8 +531,11 @@ export function buildCombinedPayloadBundle(
 		options?.maxPayloadChars || DEFAULT_CHUNK_ALT_PAYLOAD_TARGET_CHARS,
 	)
 	const forceCompression = true
+	// Strip large html blob from primary: the reader always uses subsequent.join("") for
+	// display, so storing html in primary is pure duplication and doubles the combined JSON.
+	const {html: _primaryHtml, ...primaryForBundle} = primaryPayload || {}
 	const combinedJson = JSON.stringify({
-		primary: primaryPayload,
+		primary: primaryForBundle,
 		subsequent: subsequentPayload,
 	})
 	const limited = enforceAltPayloadLimit([combinedJson], maxPayloadChars, {
@@ -726,9 +733,12 @@ export async function publishChunkBundleToBsky({
 		       .map((entry) => String(entry?.uri || "").trim())
 		       .filter(Boolean)
 	       const chunkManifest = buildChunkUriManifest(chunkUris)
+	       // Omit the full html from the manifest image alt — it is already stored in the
+	       // chunk posts. Keeping it bloats the manifest to 20K+ chars unnecessarily.
+	       const {html: _manifestHtml, ...manifestSummary} = manifestPrimaryPayload || {}
 	       const originPayload = {
 		       u: uuid,
-		       primary: manifestPrimaryPayload,
+		       primary: manifestSummary,
 		       chunks: chunkManifest,
 	       }
 	       const originMedia = normalizedPrimaryMedia.map((entry) => ({...entry}))

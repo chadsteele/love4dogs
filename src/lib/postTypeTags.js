@@ -16,7 +16,6 @@ export function upsertTypeTag(tags = [], postType = '') {
 	const existing = (Array.isArray(tags) ? tags : [])
 		.map((entry) => String(entry || '').trim().toLowerCase())
 		.filter(Boolean)
-		.filter((entry) => !entry.startsWith('l4d-type:'))
 		.filter((entry) => entry !== 'profile');
 	if (type === 'profile') existing.push('profile');
 	return [...new Set(existing)].slice(0, 20);
@@ -26,7 +25,6 @@ export function extractPostTypeFromTags(tags = []) {
 	for (const tag of Array.isArray(tags) ? tags : []) {
 		const value = String(tag || '').trim().toLowerCase();
 		if (value === 'profile') return 'profile';
-		if (value === 'l4d-type:profile') return 'profile';
 	}
 	return '';
 }
