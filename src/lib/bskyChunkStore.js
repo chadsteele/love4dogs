@@ -655,20 +655,9 @@ export async function publishChunkBundleToBsky({
 	const normalizedPrimaryMedia = Array.isArray(primaryMedia)
 		? primaryMedia.map((entry) => ({...entry}))
 		: []
-	       // Always include 'profile' tag for profile posts (if not present)
-	       let normalizedTags = Array.isArray(tags) ? tags : [];
-	       normalizedTags = normalizedTags.map((entry) => String(entry || "").trim().toLowerCase()).filter(Boolean);
-		       // Heuristic: if this is a profile post, always inject 'profile' tag
-		       let isProfile = false;
-		       const canonicalUrl = String(primaryPayload?.canonicalurl || primaryPayload?.canonicalUrl || "").toLowerCase();
-		       const title = String(primaryPayload?.title || "").toLowerCase();
-		       if (canonicalUrl.includes('/profile/') || title.includes('profile')) {
-			       isProfile = true;
-		       }
-		       if (isProfile && !normalizedTags.includes('profile')) {
-			       normalizedTags.unshift('profile');
-		       }
-	       normalizedTags = [...new Set(normalizedTags)];
+	let normalizedTags = Array.isArray(tags) ? tags : [];
+	normalizedTags = normalizedTags.map((entry) => String(entry || "").trim().toLowerCase()).filter(Boolean);
+	normalizedTags = [...new Set(normalizedTags)];
 	const chunkCarrierPool = [
 		...normalizedPrimaryMedia,
 		...(Array.isArray(replyAttachmentPool) ? replyAttachmentPool : []),
@@ -688,9 +677,7 @@ export async function publishChunkBundleToBsky({
 		chunkGroups.push(normalizedChunks.slice(i, i + 4))
 	}
 
-	       // Ensure tags are present in the manifest primary payload
-		       // Force tags into manifest and outgoing post record
-		       let manifestPrimaryPayload = { ...primaryPayload, tags: normalizedTags }
+	let manifestPrimaryPayload = { ...primaryPayload, tags: normalizedTags }
 
 	       const chunkResults = []
 	       for (let i = 0; i < chunkGroups.length; i += 1) {

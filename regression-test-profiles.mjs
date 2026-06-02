@@ -199,7 +199,6 @@ async function main() {
 		       uuid,
 		       authorid: `author-${uuid}`,
 		       stamp: Date.now().toString(36),
-		       canonicalurl: `https://love4dogs.club/profile/view/${uuid}`,
 		       title: profileName,
 		       description: profileDescription,
 		       address: coloradoLocation.address,
@@ -437,7 +436,6 @@ async function main() {
 	assertEqual(recoPrimary?.uuid, uuid, 'primary.uuid matches');
 	assertEqual(recoPrimary?.title, profileName, 'primary.title matches');
 	assert(typeof recoPrimary?.description === 'string' && recoPrimary.description.length > 0, 'primary.description present and non-empty');
-	assert(recoPrimary?.canonicalurl?.includes(uuid), 'primary.canonicalurl contains UUID');
 	assert(Array.isArray(recoPrimary?.tags) && recoPrimary.tags.includes('profile'), 'primary.tags includes profile');
 	assertEqual(recoPrimary?.state, 'CO', 'primary.state is Colorado');
 	assertEqual(recoPrimary?.country, 'USA', 'primary.country is USA');

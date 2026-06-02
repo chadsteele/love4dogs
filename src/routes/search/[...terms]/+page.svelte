@@ -5,6 +5,7 @@
 	import {CircleAlert, Map as MapIcon, RefreshCw} from "lucide-svelte"
 	import OneCard from "$lib/OneCard.svelte"
 	import NavBar from "$lib/NavBar.svelte"
+	import {readSearchTerm, writeSearchTerm} from "$lib/searchStore"
 
 	const BSKY_REQUIRED_QUERY_TERM = "canonicalurl"
 	const FAVORITE_SEARCH_TERMS_KEY =
@@ -77,6 +78,26 @@
 		return base
 			? `${base} ${BSKY_REQUIRED_QUERY_TERM}`
 			: BSKY_REQUIRED_QUERY_TERM
+	}
+
+	function getSearchTokens(value = "") {
+		return normalizeSearchTerm(value).split(" ").filter(Boolean)
+	}
+
+	function toggleSearchTag(tag = "") {
+		const token = String(tag || "")
+			.trim()
+			.toLowerCase()
+			.replace(/^#/, "")
+		if (!token) return
+		const next = [...getSearchTokens(searchTerm)]
+		const index = next.indexOf(token)
+		if (index >= 0) {
+			next.splice(index, 1)
+		} else {
+			next.push(token)
+		}
+		searchTerm = next.join(" ")
 	}
 
 	function visiblePosts() {
@@ -211,14 +232,15 @@
 	onMount(() => {
 		favoriteSearchTerms = readFavoriteSearchTerms()
 
-		// Seed search from URL params, then ?q=, then default
+		// Seed search from URL params, then ?q=, then localStorage, then default
 		const qParam = new URLSearchParams(window.location.search).get("q")
 		if (urlTerms) {
 			searchTerm = urlTerms
 		} else if (qParam) {
 			searchTerm = normalizeSearchTerm(qParam)
 		} else {
-			searchTerm = readDefaultSearchTerm()
+			const savedTerm = readSearchTerm()
+			searchTerm = savedTerm || readDefaultSearchTerm()
 		}
 
 		loadFeed()
@@ -226,6 +248,11 @@
 		return () => {
 			if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
 		}
+	})
+
+	// Persist search term to localStorage whenever it changes
+	$effect(() => {
+		writeSearchTerm(searchTerm)
 	})
 </script>
 
@@ -340,7 +367,7 @@
 			{:else}
 				<div class="post-list">
 					{#each visiblePosts() as post (post.displayKey || post.uri)}
-						<OneCard {post} />
+						<OneCard {post} onTagClick={toggleSearchTag} />
 					{/each}
 				</div>
 			{/if}
@@ -619,7 +646,7 @@
 	}
 
 	.post-list {
-		columns: 3;
+		columns: 2;
 		column-gap: 0.9rem;
 	}
 

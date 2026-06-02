@@ -1,10 +1,13 @@
 <script>
 	import {onMount} from "svelte"
 	import {page} from "$app/state"
+	import {goto} from "$app/navigation"
 	import NavBar from "$lib/NavBar.svelte"
 	import Linkify from "$lib/Linkify.svelte"
 	import ProfilePostHeader from "$lib/ProfilePostHeader.svelte"
+	import AuthorRow from "$lib/AuthorRow.svelte"
 	import {User} from "lucide-svelte"
+	import {readSearchTerm, writeSearchTerm} from "$lib/searchStore"
 
 	// ── props ──────────────────────────────────────────────────────────────────
 	let {type = "post"} = $props()
@@ -47,24 +50,45 @@
 			.replace(/\s+/g, " ")
 	}
 
-	function extractDescriptionTags(value = "") {
-		const matches = String(value || "").matchAll(
-			/(^|\s)#([\p{L}\p{N}_-]+)/gu,
-		)
-		const tags = []
-		for (const match of matches) {
-			const token = normalizeTagToken(match?.[2] || "")
-			if (token) tags.push(token)
+	function collectTagTokens(...sources) {
+		const tokens = []
+		for (const source of sources) {
+			if (!source) continue
+			const candidates = Array.isArray(source) ? source : [source]
+			for (const candidate of candidates) {
+				if (!candidate || typeof candidate !== "object") continue
+				const raw = Array.isArray(candidate?.tags)
+						? candidate.tags
+						: []
+				for (const entry of raw) {
+					const token = normalizeTagToken(entry)
+					if (token) tokens.push(token)
+				}
+			}
 		}
-		return tags
+		return [...new Set(tokens)]
+	}
+
+	function isProfileData(data = {}) {
+		const tags = collectTagTokens(data, data?.primary, data?.combined?.primary)
+		return tags.includes("profile")
+	}
+
+	function bundleHasProfileData(bundle = {}, primary = {}) {
+		const tags = collectTagTokens(
+			primary,
+			bundle?.combined?.primary,
+			Array.isArray(bundle?.posts) ? bundle.posts : [],
+		)
+		return tags.includes("profile")
+	}
+
+	function getCorrectPathType(data = {}) {
+		return isProfileData(data) ? "profile" : "post"
 	}
 
 	function collectDisplayTags(data = {}) {
-		const raw = [
-			...(Array.isArray(data?.tags) ? data.tags : []),
-			...(Array.isArray(data?.hashtags) ? data.hashtags : []),
-			...extractDescriptionTags(data?.description || ""),
-		]
+		const raw = Array.isArray(data?.tags) ? data.tags : []
 		const seen = new Set()
 		const tags = []
 		for (const entry of raw) {
@@ -95,6 +119,7 @@
 			next.push(token)
 		}
 		searchTerm = next.join(" ")
+		// Note: This intentionally only updates searchTerm; it does NOT trigger a search
 	}
 
 	// ── timestamp helpers ──────────────────────────────────────────────────────
@@ -429,7 +454,15 @@
 				const qParam = new URLSearchParams(window.location.search).get(
 					"q",
 				)
-				searchTerm = normalizeSearchTerm(pathTerms || qParam || "")
+				// Priority: URL terms > query param > localStorage > nothing
+				if (pathTerms) {
+					searchTerm = normalizeSearchTerm(pathTerms)
+				} else if (qParam) {
+					searchTerm = normalizeSearchTerm(qParam)
+				} else {
+					const savedTerm = readSearchTerm()
+					searchTerm = savedTerm || ""
+				}
 			}
 
 			if (!uuid) throw new Error("UUID is required")
@@ -487,18 +520,10 @@
 				} else if (derivedCreatedAtMs > 0) {
 					stampValue = String(derivedCreatedAtMs)
 				}
-				// Preserve all original fields from Bluesky API (primary), then add/override html and stamp
-				const tags = Array.isArray(primary?.tags)
-					? [...primary.tags]
-					: []
-				if (!tags.includes("profile")) {
-					tags.push("profile")
-				}
 				jsonData = {
 					...(primary || {}),
 					html: htmlChunks,
 					stamp: stampValue,
-					tags,
 				}
 				writeLocalProfile(uuid, jsonData)
 				writeSessionBundle(uuid, bundle)
@@ -507,6 +532,12 @@
 					uuid,
 				)
 				editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`
+				// Route if data doesn't have profile tag
+				if (!bundleHasProfileData(bundle, jsonData)) {
+					return goto(`/post/view/${encodeURIComponent(uuid)}${slugPath}`, {
+						replaceState: true,
+					})
+				}
 			} else {
 				const media = collectBundleMedia(bundle)
 				const author = extractAuthorFromBundle(bundle)
@@ -523,12 +554,23 @@
 						String(primary?.authorAvatar || "").trim() ||
 						author.authorAvatar,
 				}
+				// Route if data has profile tag
+				if (bundleHasProfileData(bundle, jsonData)) {
+					return goto(`/profile/view/${encodeURIComponent(uuid)}${slugPath}`, {
+						replaceState: true,
+					})
+				}
 			}
 		} catch (e) {
 			error = e?.message || "Failed to load"
 		} finally {
 			loading = false
 		}
+	})
+
+	// Persist search term to localStorage whenever it changes
+	$effect(() => {
+		writeSearchTerm(searchTerm)
 	})
 </script>
 
@@ -612,63 +654,31 @@
 									? ' is-active'
 									: ''}"
 								aria-pressed={activeSearchTokens.has(tag)}
-								onclick={() => toggleSearchTag(tag)}
+								onclick={(event) => {
+									event.preventDefault()
+									event.stopPropagation()
+									toggleSearchTag(tag)
+								}}
 							>
 								#{tag}
 							</button>
 						{/each}
 					</div>
 				{/if}
-				<div class="author-row{isProfile ? ' no-avatar' : ''}">
-					{#if !isProfile}
-						<div class="author-media">
-							{#if jsonData?.authorAvatar}
-								<img
-									src={jsonData.authorAvatar}
-									alt="Author Avatar"
-									class="author-avatar"
-								/>
-							{:else}
-								<span class="author-icon" aria-hidden="true"
-									><User size={16} /></span
-								>
-							{/if}
-						</div>
-					{/if}
-
-					<div class="author-meta">
-						<a
-							class="author-info"
-							href={isProfile
-								? asUrl(jsonData?.canonicalurl) || undefined
-								: authorSearchHref || undefined}
-						>
-							<div class="author-name">
-								{isProfile
-									? jsonData?.name || "Anonymous"
-									: jsonData?.authorName || "Anonymous"}
-							</div>
-						</a>
-
-						{#if formattedStamp}
-							<div class="date-time">{formattedStamp}</div>
-						{/if}
-
-						{#if mapHref && locationLines.length > 0}
-							<div class="location-actions">
-								<a
-									class="map-link"
-									href={mapHref}
-									target="_blank"
-									rel="noreferrer"
-								>
-									{locationLines.join(", ")}
-								</a>
-							</div>
-						{/if}
-					</div>
-				</div>
-
+				<AuthorRow
+					avatar={!isProfile ? jsonData?.authorAvatar : null}
+					name={(isProfile ? jsonData?.name : jsonData?.authorName) ||
+						"Anonymous"}
+					date={formattedStamp}
+					href={isProfile
+						? asUrl(jsonData?.canonicalurl) || undefined
+						: authorSearchHref || undefined}
+					location={mapHref && locationLines.length > 0
+						? locationLines.join(", ")
+						: null}
+					locationHref={mapHref || null}
+					hideAvatar={isProfile}
+				/>
 				{#if !isProfile && jsonData?.name}
 					<h2 class="hero-name">{jsonData.name}</h2>
 				{/if}
@@ -749,117 +759,9 @@
 		padding: 0 1rem 1rem;
 	}
 
-	/* ── post-only: author row ─────────────────────────────────────────────── */
-	.author-row {
-		display: grid;
-		grid-template-columns: auto 1fr;
-		align-items: start;
-		gap: 0.9rem;
-	}
-
-	.author-row.no-avatar {
-		grid-template-columns: 1fr;
-		margin-left: calc(
-			clamp(0.65rem, 1.8vw, 0.9rem) + clamp(76px, 12vw, 128px) +
-				clamp(0.55rem, 1.4vw, 0.9rem)
-		);
-	}
-
-	.author-media {
-		padding-top: 0.9rem;
-	}
-
-	.author-info {
-		display: inline-block;
-		padding-top: 0.9rem;
-		text-decoration: none;
-		color: inherit;
-	}
-
-	.author-row.no-avatar .author-info {
-		padding-top: 0;
-	}
-
-	.author-info:hover .author-name,
-	.author-info:focus-visible .author-name {
-		text-decoration: underline;
-	}
-
-	.author-avatar {
-		width: 44px;
-		height: 44px;
-		border-radius: 50%;
-		object-fit: cover;
-		border: 1px solid rgba(58, 91, 65, 0.24);
-		box-shadow: 0 6px 18px rgba(65, 42, 20, 0.08);
-	}
-
-	.author-icon {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 44px;
-		height: 44px;
-		padding: 0;
-		box-sizing: border-box;
-		border-radius: 50%;
-		border: 1px solid rgba(58, 91, 65, 0.24);
-		background: rgba(255, 255, 255, 0.72);
-		box-shadow: 0 6px 18px rgba(65, 42, 20, 0.08);
-		color: #5f665f;
-	}
-
-	.author-meta {
-		display: grid;
-		gap: 0.15rem;
-		min-width: 0;
-	}
-
-	.author-name {
-		margin: 0;
-		font-size: clamp(1.05rem, 2vw, 1.3rem);
-		font-weight: 700;
-		line-height: 1.1;
-		letter-spacing: -0.01em;
-		color: #2f4336;
-		display: block;
-		white-space: nowrap;
-	}
-
-	.date-time {
-		margin: 0;
-		padding-top: 0;
-		font-size: clamp(0.82rem, 1.45vw, 0.96rem);
-		font-weight: 600;
-		line-height: 1.25;
-		color: #6e756f;
-	}
-
 	/* ── post-only: location ──────────────────────────────────────────────── */
-	.location-actions {
-		margin-top: 0;
-	}
 
-	.map-link {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.45rem;
-		color: #6e756f;
-		font-size: clamp(0.82rem, 1.45vw, 0.96rem);
-		font-weight: 600;
-		line-height: 1.25;
-		text-decoration: none;
-	}
-
-	.map-link :global(svg) {
-		flex: none;
-		stroke-width: 2.15;
-	}
-
-	.map-link:hover,
-	.map-link:focus-visible {
-		text-decoration: underline;
-	}
+	/* Location styles are now handled by AuthorRow component */
 
 	/* ── shared: name + description ───────────────────────────────────────── */
 	.hero-name {
@@ -1092,21 +994,21 @@
 	}
 
 	.skeleton-line-sm {
-		width: 40%;
+		width: 100%;
 	}
 
 	.skeleton-line-lg {
-		width: 56%;
+		width: 100%;
 	}
 
 	.skeleton-line-xl {
-		width: min(78%, 520px);
+		width: 100%;
 		height: 20px;
 		margin-top: 0.8rem;
 	}
 
 	.skeleton-line-wide {
-		width: min(94%, 720px);
+		width: 100%;
 	}
 
 	.skeleton-pill {
@@ -1147,10 +1049,6 @@
 	}
 
 	@media (max-width: 768px) {
-		.author-row.no-avatar {
-			margin-left: 0;
-		}
-
 		.hero-body {
 			padding: 0 0.8rem 0.8rem;
 		}

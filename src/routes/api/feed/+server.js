@@ -28,9 +28,7 @@ async function getSession() {
 	}
 }
 
-const hashtagRegex = /(^|\s)#([\p{L}\p{N}_-]+)/gu;
-
-function extractTags(text = '', tags = [], facets = []) {
+function extractTags(tags = []) {
 	const collected = [];
 
 	for (const tag of tags || []) {
@@ -39,29 +37,39 @@ function extractTags(text = '', tags = [], facets = []) {
 		}
 	}
 
-	for (const facet of facets || []) {
-		for (const feature of facet.features || []) {
-			if (feature.$type === 'app.bsky.richtext.facet#tag' && feature.tag) {
-				collected.push(String(feature.tag).trim().toLowerCase());
-			}
-		}
-	}
-
-	for (const match of text.matchAll(hashtagRegex)) {
-		if (match[2]) {
-			collected.push(match[2].trim().toLowerCase());
-		}
-	}
-
 	return collected;
+}
+
+function extractTagsFromPostWrapper(postWrapper = {}) {
+	const post = postWrapper?.post || postWrapper || {};
+	const embed = post.embed;
+	const media =
+		embed?.$type === 'app.bsky.embed.recordWithMedia#view'
+			? embed.media
+			: embed;
+	const images =
+		media?.$type === 'app.bsky.embed.images#view'
+			? media.images || []
+			: [];
+
+	for (const image of images) {
+		const tags = extractTagsFromAlt(image?.alt || '');
+		if (tags.length) return tags;
+	}
+
+	if (media?.$type === 'app.bsky.embed.video#view') {
+		const tags = extractTagsFromAlt(media?.alt || '');
+		if (tags.length) return tags;
+	}
+
+	return extractTags(Array.isArray(post?.tags) ? post.tags : []);
 }
 
 function countTopTags(posts, limit = 20) {
 	const counts = new Map();
 
 	for (const item of posts) {
-		const record = item?.post?.record || {};
-		const tags = extractTags(record.text, record.tags, record.facets);
+		const tags = extractTagsFromPostWrapper(item);
 		for (const tag of tags) {
 			counts.set(tag, (counts.get(tag) || 0) + 1);
 		}
@@ -107,6 +115,45 @@ function extractIdentityFromAlt(alt = '') {
 	return '';
 }
 
+function extractTagsFromAlt(alt = '') {
+	const source = String(alt || '').trim();
+	if (!source) return [];
+
+	try {
+		const parsed = JSON.parse(source);
+		const candidates = [
+			parsed,
+			parsed?.primary,
+			parsed?.combined?.primary,
+		];
+
+		if (typeof parsed?.h === 'string' && parsed.h.trim()) {
+			try {
+				const inner = JSON.parse(parsed.h);
+				candidates.push(inner, inner?.primary, inner?.combined?.primary);
+			} catch {
+				// Ignore malformed nested payloads.
+			}
+		}
+
+		for (const candidate of candidates) {
+			if (!candidate || typeof candidate !== 'object') continue;
+			const rawTags = Array.isArray(candidate?.tags)
+					? candidate.tags
+					: [];
+			if (rawTags.length) {
+				return rawTags
+					.map((tag) => String(tag || '').trim().toLowerCase())
+					.filter(Boolean);
+			}
+		}
+	} catch {
+		return [];
+	}
+
+	return [];
+}
+
 function extractPostIdentity(postWrapper) {
 	const post = postWrapper?.post || postWrapper || {};
 	const record = post.record || {};
@@ -147,8 +194,8 @@ function dedupePosts(posts = []) {
 		const existing = byIdentity.get(identity);
 
 		// Check if existing or candidate post has the "profile" tag
-		const existingTags = (existing?.record?.tags || []).map(t => String(t || '').trim().toLowerCase());
-		const candidateTags = (post?.record?.tags || []).map(t => String(t || '').trim().toLowerCase());
+		const existingTags = (existing?.tags || []).map(t => String(t || '').trim().toLowerCase());
+		const candidateTags = (post?.tags || []).map(t => String(t || '').trim().toLowerCase());
 		const existingIsProfile = existingTags.includes('profile');
 		const candidateIsProfile = candidateTags.includes('profile');
 
@@ -175,55 +222,13 @@ function dedupePosts(posts = []) {
 	return order.map((identity) => byIdentity.get(identity)).filter(Boolean);
 }
 
-function hasProfileData(imageAlts = [], videoAlt = '') {
-	const checkAlt = (alt = '') => {
-		if (!alt) return false;
-		const source = String(alt || '').trim();
-		if (!source) return false;
-		try {
-			const parsed = JSON.parse(source);
-			const candidates = [
-				parsed,
-				parsed?.primary,
-				parsed?.combined?.primary,
-			];
-			if (typeof parsed?.h === 'string' && parsed.h.trim()) {
-				try {
-					const inner = JSON.parse(parsed.h);
-					candidates.push(
-						inner,
-						inner?.primary,
-						inner?.combined?.primary,
-					);
-				} catch {}
-			}
-			for (const candidate of candidates) {
-				if (!candidate || typeof candidate !== 'object') continue;
-				const profilePic = String(candidate?.profilePic || candidate?.profilepic || '').trim();
-				const backgroundPic = String(candidate?.backgroundPic || candidate?.backgroundpic || '').trim();
-				const name = String(candidate?.name || candidate?.title || candidate?.n || '').trim();
-				const description = String(candidate?.description || candidate?.desc || '').trim();
-				if (profilePic || backgroundPic || name || description) {
-					return true;
-				}
-			}
-		} catch {}
-		return false;
-	};
-
-	for (const alt of imageAlts || []) {
-		if (checkAlt(alt)) return true;
-	}
-	if (checkAlt(videoAlt)) return true;
-	return false;
-}
-
 function mapPost(postWrapper) {
 	const post = postWrapper.post;
 	const record = post.record || {};
 	const images = [];
 	const imageAlts = [];
 	let video = null;
+	let altTags = [];
 
 	const embedView = post.embed;
 	const mediaView = embedView?.$type === 'app.bsky.embed.recordWithMedia#view' ? embedView.media : embedView;
@@ -232,7 +237,11 @@ function mapPost(postWrapper) {
 		for (const image of mediaView.images || []) {
 			if (image.fullsize) {
 				images.push(image.fullsize);
-				imageAlts.push(String(image.alt || ''));
+				const alt = String(image.alt || '');
+				imageAlts.push(alt);
+				if (!altTags.length) {
+					altTags = extractTagsFromAlt(alt);
+				}
 			}
 		}
 	}
@@ -243,19 +252,19 @@ function mapPost(postWrapper) {
 			thumbnail: mediaView.thumbnail || '',
 			alt: mediaView.alt || ''
 		};
+		if (!altTags.length) {
+			altTags = extractTagsFromAlt(String(mediaView.alt || ''));
+		}
 	}
 
 	const identityKey = extractPostIdentity(postWrapper) || post.uri || '';
 
-	// Check if this is a profile post based on image/video metadata
-	const isProfile = hasProfileData(imageAlts, video?.alt || '');
-	const tags = record?.tags || [];
-	const tagsArray = Array.isArray(tags) ? [...tags] : [];
-
-	// Add "profile" tag if this post contains profile data
-	if (isProfile && !tagsArray.some(t => String(t || '').toLowerCase() === 'profile')) {
-		tagsArray.push('profile');
-	}
+	const tagsArray = [...new Set([
+		...(Array.isArray(post?.tags) ? post.tags : []),
+		...altTags,
+	]
+		.map((tag) => String(tag || '').trim().toLowerCase())
+		.filter(Boolean))];
 
 	return {
 		uri: post.uri,
@@ -267,6 +276,7 @@ function mapPost(postWrapper) {
 		images,
 		imageAlts,
 		video,
+		tags: tagsArray,
 		record: {
 			tags: tagsArray,
 			createdAt: record.createdAt || null,

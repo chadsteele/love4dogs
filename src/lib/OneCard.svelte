@@ -4,8 +4,10 @@
 	import {Heart, MessageCircle, Repeat2, User} from "lucide-svelte"
 	import {siBluesky} from "simple-icons"
 	import TagPills from "$lib/TagPills.svelte"
+	import AuthorRow from "$lib/AuthorRow.svelte"
+	import {writeSearchTerm, readSearchTerm} from "$lib/searchStore"
 
-	let {post, onclick = () => {}} = $props()
+	let {post, onclick = () => {}, onTagClick = () => {}} = $props()
 	let hasHydrated = $state(false)
 
 	const BSKY_HANDLE = "love4dogs.club"
@@ -24,41 +26,7 @@
 		})
 	}
 
-	function extractCanonicalUrl(inputPost = {}) {
-		const candidates = [
-			inputPost?.record?.facets,
-			inputPost?.facets,
-			inputPost?.embed?.external?.uri,
-		]
-
-		const bundleAlts = [
-			...(Array.isArray(inputPost?.imageAlts) ? inputPost.imageAlts : []),
-			inputPost?.video?.alt || "",
-		]
-		for (const alt of bundleAlts) {
-			const fromAlt = extractCanonicalUrlFromBundleAlt(alt)
-			if (fromAlt) return fromAlt
-		}
-
-		for (const candidate of candidates) {
-			if (Array.isArray(candidate)) {
-				for (const facet of candidate) {
-					const linkUri = facet?.features?.find(
-						(f) =>
-							f?.$type === "app.bsky.richtext.facet#link" &&
-							typeof f.uri === "string",
-					)?.uri
-					if (linkUri && /^https?:\/\//i.test(linkUri)) {
-						return linkUri
-					}
-				}
-			}
-		}
-
-		return ""
-	}
-
-	function extractCanonicalUrlFromBundleAlt(alt = "") {
+	function extractUuidFromBundleAlt(alt = "") {
 		if (!alt) return ""
 		const source = String(alt || "").trim()
 		if (!source) return ""
@@ -84,10 +52,10 @@
 
 			for (const candidate of candidates) {
 				if (!candidate || typeof candidate !== "object") continue
-				const canonicalUrl = String(
-					candidate?.canonicalurl || candidate?.canonicalUrl || "",
+				const directUuid = String(
+					candidate?.u || candidate?.uuid || candidate?.id || "",
 				).trim()
-				if (canonicalUrl) return canonicalUrl
+				if (directUuid) return directUuid
 			}
 		} catch {
 			return ""
@@ -96,71 +64,81 @@
 		return ""
 	}
 
-	function extractUuidFromCanonical(url = "") {
-		const canonical = String(url || "").trim()
-		if (!canonical) return ""
+	function extractTagsFromBundleAlt(alt = "") {
+		if (!alt) return []
+		const source = String(alt || "").trim()
+		if (!source) return []
 
 		try {
-			const base =
-				typeof window !== "undefined"
-					? window.location.origin
-					: "http://localhost"
-			const parsed = new URL(canonical, base)
-			const host = String(parsed.hostname || "").toLowerCase()
-			const isLocalHost =
-				host === "localhost" || host === "127.0.0.1" || host === "::1"
-			const isLove4DogsHost =
-				host === "love4dogs.club" || host === "www.love4dogs.club"
-			if (!isLocalHost && !isLove4DogsHost) return ""
+			const parsed = JSON.parse(source)
+			const candidates = [
+				parsed,
+				parsed?.primary,
+				parsed?.combined?.primary,
+			]
 
-			const segments = (parsed.pathname || "")
-				.split("/")
-				.map((segment) => segment.trim())
-				.filter(Boolean)
-
-			const viewIndex = segments.findIndex((segment) =>
-				/^(view|edit)$/i.test(segment),
-			)
-			if (viewIndex >= 0 && segments[viewIndex + 1]) {
-				return segments[viewIndex + 1]
+			if (typeof parsed?.h === "string" && parsed.h.trim()) {
+				try {
+					const inner = JSON.parse(parsed.h)
+					candidates.push(
+						inner,
+						inner?.primary,
+						inner?.combined?.primary,
+					)
+				} catch {}
 			}
 
-			return ""
+			for (const candidate of candidates) {
+				if (!candidate || typeof candidate !== "object") continue
+				const rawTags = Array.isArray(candidate?.tags)
+					? candidate.tags
+					: []
+				if (rawTags.length) {
+					return rawTags
+						.map((tag) =>
+							String(tag || "")
+								.trim()
+								.toLowerCase(),
+						)
+						.filter(Boolean)
+				}
+			}
 		} catch {
-			return ""
+			return []
 		}
+
+		return []
 	}
 
-	function extractSlugFromCanonical(rawCanonical = "", uuid = "") {
-		const source = String(rawCanonical || "").trim()
-		if (!source) return ""
+	function resolveCardUuid(inputPost = {}) {
+		const directUuid = String(inputPost?.uuid || "").trim()
+		if (directUuid) return directUuid
 
-		try {
-			const base =
-				typeof window !== "undefined"
-					? window.location.origin
-					: "http://localhost"
-			const normalized = new URL(source, base)
-			const segments = (normalized.pathname || "")
-				.split("/")
-				.map((segment) => segment.trim())
-				.filter(Boolean)
-
-			const viewIndex = segments.findIndex((segment) =>
-				/^(view|edit)$/i.test(segment),
-			)
-			if (viewIndex >= 0 && segments[viewIndex + 2]) {
-				return segments[viewIndex + 2]
-			}
-
-			if (uuid && segments[0] === uuid && segments[1]) {
-				return segments[1]
-			}
-		} catch {
-			// Fall back to title-derived slug.
+		for (const alt of inputPost?.imageAlts || []) {
+			const fromAlt = extractUuidFromBundleAlt(alt)
+			if (fromAlt) return fromAlt
 		}
 
-		return ""
+		return extractUuidFromBundleAlt(inputPost?.video?.alt || "")
+	}
+
+	function resolvePostTags(inputPost = {}) {
+		const directTags = Array.isArray(inputPost?.tags) ? inputPost.tags : []
+		const normalizedDirectTags = directTags
+			.map((tag) =>
+				String(tag || "")
+					.trim()
+					.toLowerCase(),
+			)
+			.filter(Boolean)
+		if (normalizedDirectTags.length) return normalizedDirectTags
+
+		for (const alt of inputPost?.imageAlts || []) {
+			const altTags = extractTagsFromBundleAlt(alt)
+			if (altTags.length) return altTags
+		}
+
+		return extractTagsFromBundleAlt(inputPost?.video?.alt || "")
 	}
 
 	function slugifyValue(value = "") {
@@ -172,12 +150,11 @@
 	}
 
 	function buildCardViewPath(
-		rawCanonical = "",
 		fallbackTitle = "",
 		cardType = "post",
+		inputPost = {},
 	) {
-		const source = String(rawCanonical || "").trim()
-		const uuid = extractUuidFromCanonical(source)
+		const uuid = resolveCardUuid(inputPost)
 		if (!uuid) return ""
 
 		const pathType =
@@ -186,9 +163,8 @@
 				.toLowerCase() === "profile"
 				? "profile"
 				: "post"
-		const slugFromCanonical = extractSlugFromCanonical(source, uuid)
 		const fallbackSlug = slugifyValue(fallbackTitle) || uuid
-		const slug = slugFromCanonical || fallbackSlug
+		const slug = fallbackSlug
 
 		return `/${pathType}/view/${encodeURIComponent(uuid)}/${encodeURIComponent(slug)}`
 	}
@@ -301,7 +277,6 @@
 		const href = cardViewHref
 		if (!href) {
 			console.warn("[OneCard] missing view href", {
-				canonicalUrl,
 				postType,
 				postUri: post?.uri || "",
 			})
@@ -550,13 +525,33 @@
 	}
 
 	function handleTagClick(tag) {
-		// Navigate to search page with the clicked tag
-		const searchTerm = String(tag || "")
+		// Toggle tag in search term, directly updating localStorage
+		const token = String(tag || "")
 			.trim()
 			.toLowerCase()
 			.replace(/^#/, "")
-		if (searchTerm) {
-			window.location.href = `/search/${encodeURIComponent(searchTerm)}`
+		if (!token) return
+
+		// Read current search term from localStorage
+		const current = readSearchTerm()
+		const tokens = current
+			.split(" ")
+			.map((t) => t.trim())
+			.filter(Boolean)
+
+		// Toggle the token in/out
+		const index = tokens.indexOf(token)
+		if (index >= 0) {
+			tokens.splice(index, 1)
+		} else {
+			tokens.push(token)
+		}
+
+		// Write back to localStorage and call parent callback if provided
+		const next = tokens.join(" ")
+		writeSearchTerm(next)
+		if (onTagClick) {
+			onTagClick(token)
 		}
 	}
 
@@ -564,26 +559,19 @@
 	const cardDescription = $derived(getCardDescription())
 	const primaryImage = $derived(getPrimaryImage())
 	const profilePic = $derived(getProfilePic())
+	const resolvedTags = $derived(resolvePostTags(post))
 	const postType = $derived(
 		// Use "profile" tag to identify profiles; otherwise default to "post"
-		Array.isArray(post?.record?.tags) &&
-			post.record.tags.some(
+		(() => {
+			const tags = resolvedTags
+			return tags.some(
 				(tag) => String(tag || "").toLowerCase() === "profile",
 			)
-			? "profile"
-			: "post",
+				? "profile"
+				: "post"
+		})(),
 	)
-	const canonicalUrl = $derived(
-		String(
-			post?.canonicalUrl ||
-				post?.canonicalurl ||
-				extractCanonicalUrl(post) ||
-				"",
-		).trim(),
-	)
-	const cardViewHref = $derived(
-		buildCardViewPath(canonicalUrl, cardTitle, postType),
-	)
+	const cardViewHref = $derived(buildCardViewPath(cardTitle, postType, post))
 	const authorName = $derived(
 		String(post?.author?.displayName || post?.author?.handle || "").trim(),
 	)
@@ -617,9 +605,15 @@
 		{/if}
 	</a>
 
-	<TagPills
-		tags={post?.record?.tags || post?.tags || []}
-		onTagClick={handleTagClick}
+	<TagPills tags={resolvedTags} onTagClick={handleTagClick} />
+
+	<AuthorRow
+		avatar={profilePic}
+		name={authorName || "Anonymous"}
+		date={formattedDate}
+		location={locationLine}
+		locationHref={locationMapsHref}
+		// compact
 	/>
 
 	<a class="card-link" href={cardViewHref} tabindex="0">
@@ -630,38 +624,6 @@
 			{/if}
 		</div>
 	</a>
-
-	{#if locationMapsHref}
-		<a
-			class="location-fields location-link"
-			href={locationMapsHref}
-			target="_blank"
-			rel="noopener noreferrer"
-			onclick={(e) => e.stopPropagation()}
-		>
-			<p class="location-row">📍 {locationLine}</p>
-		</a>
-	{/if}
-
-	{#if profilePic || authorName || formattedDate}
-		<div class="card-footer">
-			{#if profilePic}
-				<img src={profilePic} alt={authorName} class="author-avatar" />
-			{:else}
-				<div class="author-avatar author-avatar-fallback">
-					<User size={20} />
-				</div>
-			{/if}
-			<div class="author-info">
-				{#if authorName}
-					<p class="author-name">{authorName}</p>
-				{/if}
-				{#if formattedDate}
-					<p class="author-date">{formattedDate}</p>
-				{/if}
-			</div>
-		</div>
-	{/if}
 
 	<a
 		class="post-footer"
@@ -822,54 +784,7 @@
 		word-break: break-word;
 	}
 
-	.card-footer {
-		display: flex;
-		align-items: center;
-		gap: 0.6rem;
-		margin-top: 0.4rem;
-	}
-
-	.author-avatar {
-		width: 3rem;
-		height: 3rem;
-		border-radius: 50%;
-		object-fit: cover;
-		border: 2px solid rgba(0, 0, 0, 0.1);
-	}
-
-	.author-avatar-fallback {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background: #e8dccf;
-		color: #5d4e42;
-	}
-
-	.author-avatar-fallback :global(svg) {
-		width: 1.25rem;
-		height: 1.25rem;
-	}
-
-	.author-info {
-		flex: 1;
-		min-width: 0;
-	}
-
-	.author-name {
-		margin: 0;
-		font-size: 0.85rem;
-		font-weight: 600;
-		color: #1f1f1f;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.author-date {
-		margin: 0 0 0 1rem;
-		font-size: 0.75rem;
-		color: #999;
-	}
+	/* Author row styles moved to AuthorRow component */
 
 	.post-footer {
 		display: block;

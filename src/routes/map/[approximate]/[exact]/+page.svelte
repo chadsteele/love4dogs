@@ -5,7 +5,6 @@
 	import {
 		getApproxPostsFromCache,
 		gpsToHash,
-		rewriteLove4DogsUrlForLocalhost,
 		setApproxPostsInCache,
 	} from "$lib/utils"
 
@@ -203,9 +202,9 @@
 			.replace(/^-+|-+$/g, "")
 	}
 
-	function extractCanonicalUrlFromAltPayload(alt = "") {
+	function extractTagsFromAltPayload(alt = "") {
 		const source = String(alt || "").trim()
-		if (!source) return ""
+		if (!source) return []
 
 		try {
 			const parsed = JSON.parse(source)
@@ -230,56 +229,45 @@
 
 			for (const candidate of candidates) {
 				if (!candidate || typeof candidate !== "object") continue
-				for (const key of ["canonicalurl", "canonicalUrl"]) {
-					const value = String(candidate?.[key] || "").trim()
-					if (value) return rewriteLove4DogsUrlForLocalhost(value)
+				const rawTags = Array.isArray(candidate?.tags)
+					? candidate.tags
+					: []
+				if (rawTags.length) {
+					return rawTags
+						.map((tag) =>
+							String(tag || "")
+								.trim()
+								.toLowerCase(),
+						)
+						.filter(Boolean)
 				}
 			}
 		} catch {
-			return ""
+			return []
 		}
 
-		return ""
+		return []
 	}
 
-	function extractUuidFromCanonical(rawCanonical = "") {
-		const canonical = String(rawCanonical || "").trim()
-		if (!canonical) return ""
+	function isProfilePost(post = {}) {
+		// Check if post has the "profile" tag
+		let tags = Array.isArray(post?.tags) ? post.tags : []
 
-		try {
-			const parsed = new URL(
-				canonical,
-				typeof window !== "undefined"
-					? window.location.origin
-					: "http://localhost",
-			)
-			const host = String(parsed.hostname || "").toLowerCase()
-			const isLocalHost =
-				host === "localhost" || host === "127.0.0.1" || host === "::1"
-			const isLove4DogsHost =
-				host === "love4dogs.club" || host === "www.love4dogs.club"
-			if (!isLocalHost && !isLove4DogsHost) {
-				return ""
+		if (!tags.length) {
+			for (const alt of post?.imageAlts || []) {
+				const altTags = extractTagsFromAltPayload(alt)
+				if (altTags.length) {
+					tags = altTags
+					break
+				}
 			}
-		} catch {
-			return ""
 		}
 
-		const viewMatch = canonical.match(
-			/(?:profile|post)\/(?:view|edit)\/([^/]+)/i,
-		)
-		if (viewMatch?.[1]) {
-			return String(viewMatch[1]).trim()
+		if (!tags.length) {
+			tags = extractTagsFromAltPayload(post?.video?.alt || "")
 		}
 
-		const pathMatch = canonical.match(
-			/https?:\/\/[^/]+\/([^/?#]+)(?:\/|\?|#|$)/i,
-		)
-		if (pathMatch?.[1]) {
-			return String(pathMatch[1]).trim()
-		}
-
-		return ""
+		return tags.some((tag) => String(tag || "").toLowerCase() === "profile")
 	}
 
 	function extractAtUriRkey(uri = "") {
@@ -322,13 +310,6 @@
 					candidate?.u || candidate?.uuid || candidate?.id || "",
 				).trim()
 				if (directUuid) return directUuid
-
-				for (const key of ["canonicalurl", "canonicalUrl"]) {
-					const canonical = String(candidate?.[key] || "").trim()
-					const uuidFromCanonical =
-						extractUuidFromCanonical(canonical)
-					if (uuidFromCanonical) return uuidFromCanonical
-				}
 			}
 		} catch {
 			return ""
@@ -337,79 +318,15 @@
 		return ""
 	}
 
-	function extractPostViewHref(post = {}) {
-		for (const facet of post?.facets || []) {
-			for (const feature of facet?.features || []) {
-				if (feature?.$type !== "app.bsky.richtext.facet#link") continue
-				const uri = rewriteLove4DogsUrlForLocalhost(
-					String(feature?.uri || "").trim(),
-				)
-				if (/\/post\/(?:view|edit)\//i.test(uri)) {
-					return uri
-				}
-				if (
-					/^https?:\/\/(?:www\.)?(?:love4dogs\.club|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)(?:\/|$)/i.test(
-						uri,
-					)
-				) {
-					return uri
-				}
-			}
-		}
-
-		for (const alt of post?.imageAlts || []) {
-			const fromAlt = extractCanonicalUrlFromAltPayload(alt)
-			if (/\/post\/view\//i.test(fromAlt)) return fromAlt
-		}
-
-		const fromVideoAlt = extractCanonicalUrlFromAltPayload(
-			post?.video?.alt || "",
-		)
-		if (/\/post\/view\//i.test(fromVideoAlt)) return fromVideoAlt
-
-		return ""
-	}
-
 	function buildPostViewPath(post = {}) {
-		const canonical = extractPostViewHref(post)
+		const pathType = isProfilePost(post) ? "profile" : "post"
 		let uuid = ""
 		const bskyPostRkey = extractAtUriRkey(post?.uri || "")
 		const directUuid = String(post?.uuid || "").trim()
 		if (directUuid && (!bskyPostRkey || directUuid !== bskyPostRkey)) {
 			const directSlug =
 				slugify(String(post?.text || "").split("\n")[0]) || directUuid
-			return `/post/view/${encodeURIComponent(directUuid)}/${encodeURIComponent(directSlug)}`
-		}
-
-		if (canonical) {
-			try {
-				const parsed = new URL(canonical, window.location.origin)
-				const segments = (parsed.pathname || "")
-					.split("/")
-					.map((segment) => segment.trim())
-					.filter(Boolean)
-				const idx = segments.findIndex((segment) => segment === "view")
-				uuid = String(segments[idx + 1] || "").trim()
-				if (!uuid) {
-					uuid = extractUuidFromCanonical(parsed.href)
-				}
-				const slug =
-					String(segments[idx + 2] || "").trim() ||
-					slugify(String(post?.text || "").split("\n")[0]) ||
-					uuid
-				if (uuid && (!bskyPostRkey || uuid !== bskyPostRkey)) {
-					return `/post/view/${encodeURIComponent(uuid)}/${encodeURIComponent(slug)}`
-				}
-				uuid = ""
-			} catch {
-				uuid = extractUuidFromCanonical(canonical)
-				if (uuid && (!bskyPostRkey || uuid !== bskyPostRkey)) {
-					const slug =
-						slugify(String(post?.text || "").split("\n")[0]) || uuid
-					return `/post/view/${encodeURIComponent(uuid)}/${encodeURIComponent(slug)}`
-				}
-				uuid = ""
-			}
+			return `/${pathType}/view/${encodeURIComponent(directUuid)}/${encodeURIComponent(directSlug)}`
 		}
 
 		for (const alt of post?.imageAlts || []) {
@@ -423,7 +340,7 @@
 
 		if (!uuid || (bskyPostRkey && uuid === bskyPostRkey)) return ""
 		const slug = slugify(String(post?.text || "").split("\n")[0]) || uuid
-		return `/post/view/${encodeURIComponent(uuid)}/${encodeURIComponent(slug)}`
+		return `/${pathType}/view/${encodeURIComponent(uuid)}/${encodeURIComponent(slug)}`
 	}
 
 	async function resolvePostViewHrefFromApi(post = {}) {

@@ -1,6 +1,6 @@
 import { env } from '$env/dynamic/private';
 import { MEDIA_TOKEN_PREFIX } from '$lib/utils.js';
-import { extractHashtags, normalizePostType, upsertTypeTag } from '$lib/postTypeTags.js';
+import { normalizePostType, upsertTypeTag } from '$lib/postTypeTags.js';
 import { createHash } from 'node:crypto';
 import { AtpAgent, RichText } from '@atproto/api';
 
@@ -1121,7 +1121,7 @@ export async function POST({ request }) {
 		const requestedPostType = normalizePostType(formData.get('postType'));
 		const explicitTags = parseExplicitTags(formData.get('tags'));
 		let finalTags = upsertTypeTag(
-			[...extractHashtags(rawText), ...explicitTags],
+			explicitTags,
 			requestedPostType
 		);
 

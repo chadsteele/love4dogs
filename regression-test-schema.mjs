@@ -36,7 +36,6 @@ function runSchemaTests() {
 		uuid: 'abc123',
 		authorid: 'shared-author',
 		stamp: 'stamp1',
-		canonicalurl: 'https://love4dogs.club/profile/view/abc123',
 		title: 'Profile Title',
 		description: 'Profile description',
 		html: '<p>Hello</p>',

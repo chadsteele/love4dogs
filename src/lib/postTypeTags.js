@@ -1,10 +1,3 @@
-const HASHTAG_REGEX = /(^|\s)#([\p{L}\p{N}_-]+)/gu;
-
-export function extractHashtags(text = '') {
-	const matches = String(text || '').match(HASHTAG_REGEX) || [];
-	return matches.map((tag) => tag.replace(/^[\s#]+/, '').toLowerCase());
-}
-
 export function normalizePostType(value = '') {
 	const normalized = String(value || '').trim().toLowerCase();
 	if (normalized === 'profile') return 'profile';
@@ -12,12 +5,10 @@ export function normalizePostType(value = '') {
 }
 
 export function upsertTypeTag(tags = [], postType = '') {
-	const type = normalizePostType(postType);
+	void postType;
 	const existing = (Array.isArray(tags) ? tags : [])
 		.map((entry) => String(entry || '').trim().toLowerCase())
-		.filter(Boolean)
-		.filter((entry) => entry !== 'profile');
-	if (type === 'profile') existing.push('profile');
+		.filter(Boolean);
 	return [...new Set(existing)].slice(0, 20);
 }
 

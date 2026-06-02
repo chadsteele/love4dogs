@@ -195,7 +195,6 @@ async function main() {
 		uuid,
 		authorid: `author-${uuid}`,
 		title,
-		canonicalurl: `https://love4dogs.club/post/view/${uuid}`,
 		description: postDescription,
 		address: coloradoLocation.address,
 		city: coloradoLocation.city,
