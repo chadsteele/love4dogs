@@ -38,6 +38,7 @@ import {
 	sleep,
 	REGRESSION_TAG_POOL,
 	pickNUniqueRandom,
+	generateRealDogPostContent,
 } from './regression-test-common.mjs';
 
 const args = parseArgs();
@@ -45,31 +46,9 @@ const {
 	baseUrl: BASE_URL,
 	author: AUTHOR,
 	indexWaitMs: INDEX_WAIT_MS,
+	testMode,
 } = resolveTestConfig(args);
 const { pass, fail, assert, assertEqual, counts } = createAssertions();
-
-function buildLargePostHtml(uuid, imageUrls = []) {
-	const loremBase =
-		'This is a test post created to verify that chunked Bluesky publishing works correctly end-to-end for posts ' +
-		'that exceed the single-post payload limit. UUID: ' + uuid + '. ';
-
-	const sections = [];
-	sections.push(`<h2>Regression Post ${uuid}</h2>`);
-	for (let i = 0; i < imageUrls.length; i += 1) {
-		const url = String(imageUrls[i] || '').trim();
-		if (!url) continue;
-		sections.push(
-			`<figure><img src="${url}" alt="Regression test image ${i + 1} for post ${uuid}" loading="lazy" decoding="async"><figcaption>Regression image ${i + 1} for post ${uuid}</figcaption></figure>`
-		);
-	}
-	for (let i = 0; i < 10; i += 1) {
-		sections.push(`<p>${loremBase.repeat(8)}</p>`);
-	}
-	sections.push('<p><strong>Why this exists:</strong> It proves that post payloads can be chunked, published, reloaded, and reconstructed without dropping any fragments.</p>');
-	sections.push(`<p>${loremBase.repeat(10)}</p>`);
-
-	return sections.join('\n');
-}
 
 async function fetchAuthorFeedPostsFromPublicBsky(fetchImpl, author, options = {}) {
 	const actor = String(author || '').trim();
@@ -163,18 +142,21 @@ async function main() {
 	console.log('');
 
 	console.log('Step 1: Verify dev server is reachable');
-	try {
-		const ping = await fetch(`${BASE_URL}/api/post?uri=at://invalid`, { method: 'GET' });
-		assert(ping.status > 0, 'Dev server is reachable', `HTTP ${ping.status}`);
-	} catch (err) {
-		fail('Dev server is reachable', err.message);
-		console.error('\n  ERROR: Is the dev server running? Try: npm run dev\n');
-		process.exit(1);
+	if (testMode) {
+		console.log('  [TEST MODE] Skipping server check.');
+	} else {
+		try {
+			const ping = await fetch(`${BASE_URL}/api/post?uri=at://invalid`, { method: 'GET' });
+			assert(ping.status > 0, 'Dev server is reachable', `HTTP ${ping.status}`);
+		} catch (err) {
+			fail('Dev server is reachable', err.message);
+			console.error('\n  ERROR: Is the dev server running? Try: npm run dev\n');
+			process.exit(1);
+		}
 	}
 
 	console.log('\nStep 2: Build and publish a large post');
 	const uuid = generateUuid();
-	const title = `Regression Test Post ${uuid}`;
 	const coloradoLocation = createRandomColoradoLocation();
 	console.log(`  Location hash path: ${coloradoLocation.hashPath}`);
 	console.log(
@@ -182,33 +164,39 @@ async function main() {
 	);
 	const dogImageUrls = await fetchMultipleDogImages(4);
 	const uploadedImages = [];
-	for (let i = 0; i < dogImageUrls.length; i += 1) {
-		const url = dogImageUrls[i];
-		try {
-			const uploaded = await uploadDogImageToBluesky({
-				baseUrl: BASE_URL,
-				imageUrl: url,
-				fetchImpl: fetch,
-			});
-			uploadedImages.push(uploaded);
-			assert(uploaded.blob && typeof uploaded.blob === 'object', `Carrier image ${i + 1}/${dogImageUrls.length} uploaded`);
-		} catch (err) {
-			fail(`Carrier image ${i + 1}/${dogImageUrls.length} upload`, err.message);
-			process.exit(1);
+	if (testMode) {
+		for (const url of dogImageUrls) uploadedImages.push({ url, alt: 'Dog photo', blob: null });
+		console.log('  [TEST MODE] Skipping Bluesky image upload — using raw dog.ceo URLs.');
+	} else {
+		for (let i = 0; i < dogImageUrls.length; i += 1) {
+			const url = dogImageUrls[i];
+			try {
+				const uploaded = await uploadDogImageToBluesky({
+					baseUrl: BASE_URL,
+					imageUrl: url,
+					fetchImpl: fetch,
+				});
+				uploadedImages.push(uploaded);
+				assert(uploaded.blob && typeof uploaded.blob === 'object', `Carrier image ${i + 1}/${dogImageUrls.length} uploaded`);
+			} catch (err) {
+				fail(`Carrier image ${i + 1}/${dogImageUrls.length} upload`, err.message);
+				process.exit(1);
+			}
 		}
 	}
 	const uploadedImageUrls = uploadedImages
 		.map((entry) => String(entry?.url || '').trim())
 		.filter(Boolean);
-	const largePostHtml = buildLargePostHtml(uuid, uploadedImageUrls);
-	// Pick 2 random tags from the pool for this test run
+	// Pick random tags and generate realistic content driven by the primary tag
 	const randomTags = pickNUniqueRandom(REGRESSION_TAG_POOL, 2);
+	const allPostTags = ['regression', 'chunking', 'test', ...randomTags];
+	const { title, description: postDescription, html: largePostHtml } = generateRealDogPostContent(randomTags[0], allPostTags, uuid, uploadedImageUrls);
 	const primaryPayload = {
 		uuid,
 		authorid: `author-${uuid}`,
 		title,
 		canonicalurl: `https://love4dogs.club/post/view/${uuid}`,
-		description: `Automated regression test post for chunked publishing (${uuid}).`,
+		description: postDescription,
 		address: coloradoLocation.address,
 		city: coloradoLocation.city,
 		state: coloradoLocation.state,
@@ -227,7 +215,7 @@ async function main() {
 			zip: coloradoLocation.zip,
 		},
 		html: largePostHtml,
-		tags: ['regression', 'chunking', 'test', ...randomTags],
+		tags: allPostTags,
 	};
 	const subsequentPayload = chunkHtmlByAltPayload(largePostHtml, 2000, { uuid });
 	const bundle = buildCombinedPayloadBundle(primaryPayload, subsequentPayload, {
@@ -273,6 +261,18 @@ async function main() {
 	);
 	const locationLeakInPublishText = findLocationLeakInText(title, coloradoLocation);
 	assert(!locationLeakInPublishText, 'Publish text excludes location data', locationLeakInPublishText);
+	if (testMode) {
+		console.log('\n[TEST MODE] Post payload that would be published:');
+		console.log(JSON.stringify({
+			postText: title,
+			tags: primaryPayload.tags,
+			chunkCount: chunkEntries.length,
+			chunkSizes: chunkEntries.map((e) => e.bundleFragment.length),
+			primaryPayload,
+		}, null, 2));
+		process.exit(0);
+	}
+
 
 	let publishResult;
 	try {

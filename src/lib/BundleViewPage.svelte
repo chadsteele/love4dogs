@@ -512,14 +512,9 @@
 			{/if}
 
 			<div class="hero-body">
-				{#if formattedStamp}
-					<div class="date-time{isProfile ? ' profile-date-time' : ''}">
-						{formattedStamp}
-					</div>
-				{/if}
 				{#if !isProfile}
-					<a class="author-info" href={authorSearchHref || undefined}>
-						<div class="author-row">
+					<div class="author-row">
+						<div class="author-media">
 							{#if jsonData?.authorAvatar}
 								<img
 									src={jsonData.authorAvatar}
@@ -531,31 +526,42 @@
 									><User size={16} /></span
 								>
 							{/if}
-							<div class="author-meta">
+						</div>
+						<div class="author-meta">
+							<a
+								class="author-info"
+								href={authorSearchHref || undefined}
+							>
 								<div class="author-name">
 									{jsonData?.authorName || "Anonymous"}
 								</div>
-							</div>
+							</a>
+							{#if mapHref && locationLines.length > 0}
+								<div class="location-actions">
+									<a
+										class="map-link"
+										href={mapHref}
+										target="_blank"
+										rel="noreferrer"
+									>
+										{locationLines.join(", ")}
+									</a>
+								</div>
+							{/if}
+							{#if formattedStamp}
+								<div
+									class="date-time{isProfile
+										? ' profile-date-time'
+										: ''}"
+								>
+									{formattedStamp}
+								</div>
+							{/if}
 						</div>
-					</a>
-				{/if}
-
-				{#if mapHref && locationLines.length > 0}
-					<div class="location-actions">
-						<a
-							class="map-link"
-							href={mapHref}
-							target="_blank"
-							rel="noreferrer"
-						>
-							<MapPin size={16} aria-hidden="true" />
-							{locationLines.join(", ")}
-						</a>
 					</div>
-				{/if}
-
-				{#if jsonData?.name}
-					<h2 class="hero-name">{jsonData.name}</h2>
+					{#if jsonData?.name}
+						<h2 class="hero-name">{jsonData.name}</h2>
+					{/if}
 				{/if}
 
 				{#if jsonData?.description}
@@ -635,17 +641,22 @@
 	}
 
 	/* ── post-only: author row ─────────────────────────────────────────────── */
+	.author-row {
+		display: grid;
+		grid-template-columns: auto 1fr;
+		align-items: start;
+		gap: 0.9rem;
+	}
+
+	.author-media {
+		padding-top: 0.9rem;
+	}
+
 	.author-info {
-		display: block;
+		display: inline-block;
 		padding-top: 0.9rem;
 		text-decoration: none;
 		color: inherit;
-	}
-
-	.author-row {
-		display: flex;
-		align-items: center;
-		gap: 0.9rem;
 	}
 
 	.author-info:hover .author-name,
@@ -679,7 +690,7 @@
 
 	.author-meta {
 		display: grid;
-		gap: 0.2rem;
+		gap: 0.15rem;
 		min-width: 0;
 	}
 
@@ -690,11 +701,13 @@
 		line-height: 1.1;
 		letter-spacing: -0.01em;
 		color: #2f4336;
+		display: block;
+		white-space: nowrap;
 	}
 
 	.date-time {
 		margin: 0;
-		padding-top: 0.12rem;
+		padding-top: 0;
 		font-size: clamp(0.82rem, 1.45vw, 0.96rem);
 		font-weight: 600;
 		line-height: 1.25;
@@ -711,7 +724,7 @@
 
 	/* ── post-only: location ──────────────────────────────────────────────── */
 	.location-actions {
-		margin-top: 0.45rem;
+		margin-top: 0;
 	}
 
 	.map-link {

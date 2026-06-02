@@ -37,6 +37,7 @@ import {
 	sleep,
 	REGRESSION_TAG_POOL,
 	pickNUniqueRandom,
+	generateRealProfileContent,
 } from './regression-test-common.mjs';
 
 const args = parseArgs();
@@ -44,6 +45,7 @@ const {
 	baseUrl: BASE_URL,
 	author: AUTHOR,
 	indexWaitMs: INDEX_WAIT_MS,
+	testMode,
 } = resolveTestConfig(args);
 const { pass, fail, assert, assertEqual, counts } = createAssertions();
 
@@ -51,56 +53,6 @@ const { pass, fail, assert, assertEqual, counts } = createAssertions();
 // Build a large profile HTML content for subsequent payload
 // (must be large enough to force 4+ chunks)
 // ---------------------------------------------------------------------------
-
-function buildLargeProfileHtml(dogImageUrls, uuid) {
-	const loremBase =
-		'The dog happily bounded through the meadow, tail wagging furiously as it chased a butterfly ' +
-		'across the sun-dappled grass. Its owner laughed and called out, but the dog was too busy ' +
-		'reveling in the sheer joy of the moment to pay much attention. This is a test profile ' +
-		'created to verify that chunked Bluesky publishing works correctly end-to-end for profiles ' +
-		'that exceed the single-post payload limit. UUID: ' + uuid + '. ';
-
-	// Generate enough text to push well past the 4-chunk threshold (~8000 char JSON).
-	// Each figure adds ~300 chars, each paragraph block adds ~500 chars.
-	const sections = [];
-
-	sections.push(`<p>${loremBase.repeat(4)}</p>`);
-
-	for (let i = 0; i < dogImageUrls.length; i++) {
-		const url = dogImageUrls[i];
-		sections.push(
-			`<figure><img src="${url}" alt="Dog photo ${i + 1} — regression test image for profile ${uuid}" loading=lazy decoding=async fetchpriority=high>` +
-			`<figcaption>Dog photo ${i + 1}: captured on a beautiful day at the park. This lovely canine is full of energy and love.</figcaption></figure>`
-		);
-		sections.push(
-			`<p>Section ${i + 1}: ${loremBase.repeat(3)} This photo was taken during our regular morning walk. ` +
-			`The breed shown here is one of many wonderful companions that bring joy to families everywhere. ` +
-			`Photo index ${i + 1} of ${dogImageUrls.length}. Source: ${url}</p>`
-		);
-	}
-
-	sections.push(`<p><strong>About This Profile</strong></p>`);
-	sections.push(`<p>${loremBase.repeat(5)}</p>`);
-	sections.push(`<p>Profile UUID: ${uuid}. This section exists to ensure the total payload size ` +
-		`exceeds the four-chunk threshold required for this regression test. ` +
-		`Each chunk holds approximately 2000 characters of compressed JSON. ` +
-		`We repeat content here to pad the payload: ${loremBase.repeat(6)}</p>`);
-
-	sections.push(`<p><strong>Health &amp; Wellness</strong></p>`);
-	sections.push(`<p>${loremBase.repeat(4)} Vaccinations are current. Annual vet checkups are scheduled. ` +
-		`Dental hygiene is maintained with weekly brushing. A balanced diet and regular exercise ` +
-		`keep this dog in peak condition. ${loremBase.repeat(3)}</p>`);
-
-	sections.push(`<p><strong>Training Achievements</strong></p>`);
-	sections.push(`<p>${loremBase.repeat(4)} Completed beginner obedience, intermediate agility, and ` +
-		`advanced off-leash reliability courses. ${loremBase.repeat(3)}</p>`);
-
-	sections.push(`<p><strong>Contact Information</strong></p>`);
-	sections.push(`<p>${loremBase.repeat(3)} For inquiries about this profile please use the contact ` +
-		`form on the website. ${loremBase.repeat(4)}</p>`);
-
-	return sections.join('\n');
-}
 
 async function waitForCompleteProfileBundle({
 	fetchImpl = fetch,
@@ -169,14 +121,18 @@ async function main() {
 
 	// ─── Step 1: Verify dev server is reachable ──────────────────────────────
 	console.log('Step 1: Verify dev server is reachable');
-	try {
-		const ping = await fetch(`${BASE_URL}/api/post?uri=at://invalid`, { method: 'GET' });
-		// We expect a 400 (invalid URI), not a connection error
-		assert(ping.status > 0, 'Dev server is reachable', `HTTP ${ping.status}`);
-	} catch (err) {
-		fail('Dev server is reachable', err.message);
-		console.error('\n  ERROR: Is the dev server running? Try: npm run dev\n');
-		process.exit(1);
+	if (testMode) {
+		console.log('  [TEST MODE] Skipping server check.');
+	} else {
+		try {
+			const ping = await fetch(`${BASE_URL}/api/post?uri=at://invalid`, { method: 'GET' });
+			// We expect a 400 (invalid URI), not a connection error
+			assert(ping.status > 0, 'Dev server is reachable', `HTTP ${ping.status}`);
+		} catch (err) {
+			fail('Dev server is reachable', err.message);
+			console.error('\n  ERROR: Is the dev server running? Try: npm run dev\n');
+			process.exit(1);
+		}
 	}
 
 	// ─── Step 2: Fetch random dog images ─────────────────────────────────────
@@ -197,22 +153,27 @@ async function main() {
 	// ─── Step 3: Upload images to Bluesky via local server ───────────────────
 	console.log('\nStep 3: Upload images to Bluesky via local server');
 	const uploadedImages = [];
-	for (let i = 0; i < dogImageUrls.length; i++) {
-		const url = dogImageUrls[i];
-		try {
-			const uploaded = await uploadDogImageToBluesky({
-				baseUrl: BASE_URL,
-				imageUrl: url,
-				fetchImpl: fetch,
-			});
-			uploadedImages.push(uploaded);
-			assert(
-				uploaded.blob && typeof uploaded.blob === 'object',
-				`Image ${i + 1}/${IMAGE_COUNT} uploaded: ${url.slice(0, 55)}...`
-			);
-		} catch (err) {
-			fail(`Image ${i + 1}/${IMAGE_COUNT} upload`, err.message);
-			process.exit(1);
+	if (testMode) {
+		for (const url of dogImageUrls) uploadedImages.push({ url, alt: 'Dog photo', blob: null });
+		console.log('  [TEST MODE] Skipping Bluesky image upload — using raw dog.ceo URLs.');
+	} else {
+		for (let i = 0; i < dogImageUrls.length; i++) {
+			const url = dogImageUrls[i];
+			try {
+				const uploaded = await uploadDogImageToBluesky({
+					baseUrl: BASE_URL,
+					imageUrl: url,
+					fetchImpl: fetch,
+				});
+				uploadedImages.push(uploaded);
+				assert(
+					uploaded.blob && typeof uploaded.blob === 'object',
+					`Image ${i + 1}/${IMAGE_COUNT} uploaded: ${url.slice(0, 55)}...`
+				);
+			} catch (err) {
+				fail(`Image ${i + 1}/${IMAGE_COUNT} upload`, err.message);
+				process.exit(1);
+			}
 		}
 	}
 
@@ -226,17 +187,11 @@ async function main() {
 		`  Map URL preview: ${BASE_URL}/map/${coloradoLocation.approximate}/${coloradoLocation.exact}`,
 	);
 
-	const profileName = `Regression Test ${uuid}`;
-	const profileDescription =
-		`Automated regression test profile (${uuid}). ` +
-		'This profile is published to verify that 4+ chunk publishing and reconstruction works end-to-end. ' +
-		'It should be safe to delete after the test completes.';
-	const contentHtml = buildLargeProfileHtml(dogImageUrls, uuid);
-
-	       // Pick 2 random tags from the pool for this test run
-	       const randomTags = pickNUniqueRandom(REGRESSION_TAG_POOL, 2);
-	       // Always include 'profile', lowercase, unique
-	       const tags = ['profile', 'regression', 'chunking', ...randomTags]
+	// Pick random tags and generate realistic profile content driven by primary tag
+	const randomTags = pickNUniqueRandom(REGRESSION_TAG_POOL, 2);
+	const { name: profileName, description: profileDescription, html: contentHtml } = generateRealProfileContent(randomTags[0], randomTags, uuid, dogImageUrls);
+	// Always include 'profile', lowercase, unique
+	const tags = ['profile', 'regression', 'chunking', 'test', ...randomTags]
 		       .map((t) => String(t).toLowerCase().trim())
 		       .filter(Boolean);
 	       const uniqueTags = Array.from(new Set(tags));
@@ -337,6 +292,18 @@ async function main() {
 
 	// ─── Step 6: Publish chunk bundle to Bluesky ─────────────────────────────
 	console.log('\nStep 6: Publish chunk bundle to Bluesky');
+	if (testMode) {
+		console.log('\n[TEST MODE] Profile payload that would be published:');
+		console.log(JSON.stringify({
+			postText: [profileName, profileDescription.slice(0, 80)].filter(Boolean).join('\n').slice(0, 295),
+			tags: uniqueTags,
+			chunkCount: chunkEntries.length,
+			chunkSizes: chunkEntries.map((e) => e.bundleFragment.length),
+			primaryPayload,
+		}, null, 2));
+		process.exit(0);
+	}
+
 	const postText = [profileName, profileDescription.slice(0, 80)]
 		.filter(Boolean)
 		.join('\n')
