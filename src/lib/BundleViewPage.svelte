@@ -23,6 +23,7 @@
 	let derivedCreatedAtMs = $state(0)
 	let editProfileUrl = $state("")
 	let chunkUris = $state([])
+	let searchTerm = $state("")
 
 	function setView(view = "feed") {
 		currentView = String(view || "feed")
@@ -30,6 +31,72 @@
 
 	function asUrl(value) {
 		return typeof value === "string" ? value : ""
+	}
+
+	function normalizeSearchTerm(value = "") {
+		return String(value || "")
+			.trim()
+			.replace(/\s+/g, " ")
+	}
+
+	function normalizeTagToken(value = "") {
+		return String(value || "")
+			.trim()
+			.toLowerCase()
+			.replace(/^#/, "")
+			.replace(/\s+/g, " ")
+	}
+
+	function extractDescriptionTags(value = "") {
+		const matches = String(value || "").matchAll(
+			/(^|\s)#([\p{L}\p{N}_-]+)/gu,
+		)
+		const tags = []
+		for (const match of matches) {
+			const token = normalizeTagToken(match?.[2] || "")
+			if (token) tags.push(token)
+		}
+		return tags
+	}
+
+	function collectDisplayTags(data = {}) {
+		const raw = [
+			...(Array.isArray(data?.tags) ? data.tags : []),
+			...(Array.isArray(data?.hashtags) ? data.hashtags : []),
+			...extractDescriptionTags(data?.description || ""),
+		]
+		const seen = new Set()
+		const tags = []
+		for (const entry of raw) {
+			const token = normalizeTagToken(entry)
+			if (!token || seen.has(token)) continue
+			if (token === "profile") continue
+			if (token.startsWith("l4d-type:")) continue
+			seen.add(token)
+			tags.push(token)
+			if (tags.length >= 20) break
+		}
+		return tags
+	}
+
+	function getSearchTokens(value = "") {
+		return normalizeSearchTerm(value)
+			.split(" ")
+			.map((entry) => normalizeTagToken(entry))
+			.filter(Boolean)
+	}
+
+	function toggleSearchTag(tag = "") {
+		const token = normalizeTagToken(tag)
+		if (!token) return
+		const next = [...getSearchTokens(searchTerm)]
+		const index = next.indexOf(token)
+		if (index >= 0) {
+			next.splice(index, 1)
+		} else {
+			next.push(token)
+		}
+		searchTerm = next.join(" ")
 	}
 
 	// ── timestamp helpers ──────────────────────────────────────────────────────
@@ -345,10 +412,28 @@
 	)
 	const locationLines = $derived(buildLocationLines(jsonData))
 	const mapHref = $derived(buildMapHref(jsonData))
+	const displayTags = $derived(collectDisplayTags(jsonData || {}))
+	const activeSearchTokens = $derived(new Set(getSearchTokens(searchTerm)))
 
 	// ── data loading ───────────────────────────────────────────────────────────
 	onMount(async () => {
 		try {
+			if (typeof window !== "undefined") {
+				const pathTerms = window.location.pathname.startsWith(
+					"/search/",
+				)
+					? window.location.pathname
+							.slice("/search/".length)
+							.split("/")
+							.map((segment) => decodeURIComponent(segment || ""))
+							.join(" ")
+					: ""
+				const qParam = new URLSearchParams(window.location.search).get(
+					"q",
+				)
+				searchTerm = normalizeSearchTerm(pathTerms || qParam || "")
+			}
+
 			if (!uuid) throw new Error("UUID is required")
 			const slug = String(page.params?.slug || "")
 			const slugPath = slug ? `/${slug}` : ""
@@ -451,7 +536,12 @@
 		? 'profile-view-page'
 		: 'post-view-page'}"
 >
-	<NavBar {currentView} {editProfileUrl} onSetView={setView} />
+	<NavBar
+		bind:searchTerm
+		{currentView}
+		{editProfileUrl}
+		onSetView={setView}
+	/>
 
 	{#if loading || (!error && !jsonData)}
 		<section
@@ -512,6 +602,22 @@
 			{/if}
 
 			<div class="hero-body">
+				{#if displayTags.length > 0}
+					<div class="tag-pills" aria-label="Description tags">
+						{#each displayTags as tag}
+							<button
+								type="button"
+								class="tag-pill{activeSearchTokens.has(tag)
+									? ' is-active'
+									: ''}"
+								aria-pressed={activeSearchTokens.has(tag)}
+								onclick={() => toggleSearchTag(tag)}
+							>
+								#{tag}
+							</button>
+						{/each}
+					</div>
+				{/if}
 				{#if !isProfile}
 					<div class="author-row">
 						<div class="author-media">
@@ -766,6 +872,38 @@
 		line-height: 1.45;
 		white-space: pre-wrap;
 		word-break: break-word;
+	}
+
+	.tag-pills {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: 0.45rem;
+		padding: 0.5rem 0 0.45rem;
+	}
+
+	.tag-pill {
+		border: 1px solid rgba(59, 110, 79, 0.3);
+		background: rgba(59, 110, 79, 0.1);
+		color: #305741;
+		border-radius: 999px;
+		padding: 0.22rem 0.65rem;
+		font-size: 0.82rem;
+		font-weight: 600;
+		line-height: 1.2;
+		cursor: pointer;
+	}
+
+	.tag-pill:hover,
+	.tag-pill:focus-visible {
+		border-color: #305741;
+		background: rgba(59, 110, 79, 0.18);
+	}
+
+	.tag-pill.is-active {
+		background: #305741;
+		border-color: #305741;
+		color: #fffaf1;
 	}
 
 	/* ── post-only: media gallery ─────────────────────────────────────────── */

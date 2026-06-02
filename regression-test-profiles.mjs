@@ -191,7 +191,7 @@ async function main() {
 	const randomTags = pickNUniqueRandom(REGRESSION_TAG_POOL, 2);
 	const { name: profileName, description: profileDescription, html: contentHtml } = generateRealProfileContent(randomTags[0], randomTags, uuid, dogImageUrls);
 	// Always include 'profile', lowercase, unique
-	const tags = ['profile', 'regression', 'chunking', 'test', ...randomTags]
+	const tags = ['profile',  'test', ...randomTags]
 		       .map((t) => String(t).toLowerCase().trim())
 		       .filter(Boolean);
 	       const uniqueTags = Array.from(new Set(tags));

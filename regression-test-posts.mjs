@@ -189,7 +189,7 @@ async function main() {
 		.filter(Boolean);
 	// Pick random tags and generate realistic content driven by the primary tag
 	const randomTags = pickNUniqueRandom(REGRESSION_TAG_POOL, 2);
-	const allPostTags = ['regression', 'chunking', 'test', ...randomTags];
+	const allPostTags = [ 'test', ...randomTags];
 	const { title, description: postDescription, html: largePostHtml } = generateRealDogPostContent(randomTags[0], allPostTags, uuid, uploadedImageUrls);
 	const primaryPayload = {
 		uuid,
