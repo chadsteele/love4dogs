@@ -4,11 +4,11 @@
 	import NavBar from "$lib/NavBar.svelte"
 	import Linkify from "$lib/Linkify.svelte"
 	import ProfilePostHeader from "$lib/ProfilePostHeader.svelte"
-	import {MapPin, User} from "lucide-svelte"
+	import {User} from "lucide-svelte"
 
 	// ── props ──────────────────────────────────────────────────────────────────
 	let {type = "post"} = $props()
-	const isProfile = type === "profile"
+	const isProfile = $derived(type === "profile")
 
 	// ── profile-only cache constants ───────────────────────────────────────────
 	const PROFILE_VIEW_CACHE_PREFIX = "love4dogs.profile-view-cache"
@@ -70,7 +70,6 @@
 		for (const entry of raw) {
 			const token = normalizeTagToken(entry)
 			if (!token || seen.has(token)) continue
-			if (token === "profile") continue
 			if (token.startsWith("l4d-type:")) continue
 			seen.add(token)
 			tags.push(token)
@@ -590,14 +589,10 @@
 	{:else if jsonData}
 		<section class="panel hero">
 			{#if isProfile}
-				{console.log("PROFILE jsonData", jsonData)}
 				<ProfilePostHeader
 					profilePic={asUrl(jsonData?.profilePic)}
 					backgroundPic={asUrl(jsonData?.backgroundPic)}
-					title={jsonData?.name || ""}
-					name={jsonData?.name || ""}
 					url={asUrl(jsonData?.canonicalurl)}
-					stamp={formattedStamp}
 				/>
 			{/if}
 
@@ -618,8 +613,8 @@
 						{/each}
 					</div>
 				{/if}
-				{#if !isProfile}
-					<div class="author-row">
+				<div class="author-row{isProfile ? ' no-avatar' : ''}">
+					{#if !isProfile}
 						<div class="author-media">
 							{#if jsonData?.authorAvatar}
 								<img
@@ -633,47 +628,49 @@
 								>
 							{/if}
 						</div>
-						<div class="author-meta">
-							<a
-								class="author-info"
-								href={authorSearchHref || undefined}
-							>
-								<div class="author-name">
-									{jsonData?.authorName || "Anonymous"}
-								</div>
-							</a>
-							{#if mapHref && locationLines.length > 0}
-								<div class="location-actions">
-									<a
-										class="map-link"
-										href={mapHref}
-										target="_blank"
-										rel="noreferrer"
-									>
-										{locationLines.join(", ")}
-									</a>
-								</div>
-							{/if}
-							{#if formattedStamp}
-								<div
-									class="date-time{isProfile
-										? ' profile-date-time'
-										: ''}"
-								>
-									{formattedStamp}
-								</div>
-							{/if}
-						</div>
-					</div>
-					{#if jsonData?.name}
-						<h2 class="hero-name">{jsonData.name}</h2>
 					{/if}
+
+					<div class="author-meta">
+						<a
+							class="author-info"
+							href={isProfile
+								? asUrl(jsonData?.canonicalurl) || undefined
+								: authorSearchHref || undefined}
+						>
+							<div class="author-name">
+								{isProfile
+									? jsonData?.name || "Anonymous"
+									: jsonData?.authorName || "Anonymous"}
+							</div>
+						</a>
+
+						{#if formattedStamp}
+							<div class="date-time">{formattedStamp}</div>
+						{/if}
+
+						{#if mapHref && locationLines.length > 0}
+							<div class="location-actions">
+								<a
+									class="map-link"
+									href={mapHref}
+									target="_blank"
+									rel="noreferrer"
+								>
+									{locationLines.join(", ")}
+								</a>
+							</div>
+						{/if}
+					</div>
+				</div>
+
+				{#if !isProfile && jsonData?.name}
+					<h2 class="hero-name">{jsonData.name}</h2>
 				{/if}
 
 				{#if jsonData?.description}
-					<p class="hero-description">
+					<div class="hero-description">
 						<Linkify>{jsonData.description}</Linkify>
-					</p>
+					</div>
 				{/if}
 
 				{#if !isProfile && !bodyHtmlContainsMedia(jsonData?.html) && (jsonData?.images?.length || jsonData?.videos?.length)}
@@ -754,6 +751,14 @@
 		gap: 0.9rem;
 	}
 
+	.author-row.no-avatar {
+		grid-template-columns: 1fr;
+		margin-left: calc(
+			clamp(0.65rem, 1.8vw, 0.9rem) + clamp(76px, 12vw, 128px) +
+				clamp(0.55rem, 1.4vw, 0.9rem)
+		);
+	}
+
 	.author-media {
 		padding-top: 0.9rem;
 	}
@@ -763,6 +768,10 @@
 		padding-top: 0.9rem;
 		text-decoration: none;
 		color: inherit;
+	}
+
+	.author-row.no-avatar .author-info {
+		padding-top: 0;
 	}
 
 	.author-info:hover .author-name,
@@ -820,14 +829,6 @@
 		color: #6e756f;
 	}
 
-	.is-profile .profile-date-time {
-		padding-top: 0.8rem;
-		margin-left: calc(
-			clamp(0.65rem, 1.8vw, 0.9rem) + clamp(76px, 12vw, 128px) +
-				clamp(0.55rem, 1.4vw, 0.9rem)
-		);
-	}
-
 	/* ── post-only: location ──────────────────────────────────────────────── */
 	.location-actions {
 		margin-top: 0;
@@ -866,7 +867,7 @@
 
 	.hero-description {
 		margin: 0;
-		padding: 0.1rem 0 0.7rem;
+		padding: 1rem;
 		font-size: 1rem;
 		color: #51463a;
 		line-height: 1.45;
@@ -944,15 +945,6 @@
 		word-break: break-word;
 	}
 
-	/* Profile view: add left margin to offset avatar overlay */
-	.is-profile .location-actions,
-	.is-profile .hero-description {
-		margin-left: calc(
-			clamp(0.65rem, 1.8vw, 0.9rem) + clamp(76px, 12vw, 128px) +
-				clamp(0.55rem, 1.4vw, 0.9rem)
-		);
-	}
-
 	.content-html :global(img) {
 		display: block;
 		width: auto;
@@ -1015,59 +1007,6 @@
 		color: #5f665f;
 	}
 
-	/* ── profile-only: chunk manifest ─────────────────────────────────────── */
-	.chunk-manifest {
-		margin-top: 1rem;
-		padding: 0.9rem;
-		border-radius: 14px;
-		background: rgba(245, 239, 225, 0.9);
-		border: 1px solid rgba(58, 91, 65, 0.14);
-	}
-
-	.chunk-manifest-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0.75rem;
-		margin-bottom: 0.75rem;
-	}
-
-	.chunk-manifest-label {
-		margin: 0 0 0.25rem;
-		font-size: 0.8rem;
-		text-transform: uppercase;
-		letter-spacing: 0.08em;
-		color: #6d5f4c;
-	}
-
-	.chunk-manifest h3 {
-		margin: 0;
-		font-size: 1rem;
-		color: #2f2b24;
-	}
-
-	.chunk-download {
-		border: 1px solid rgba(58, 91, 65, 0.18);
-		border-radius: 999px;
-		padding: 0.45rem 0.8rem;
-		background: #fffaf1;
-		color: #38543b;
-		font-size: 0.9rem;
-		cursor: pointer;
-	}
-
-	.chunk-list {
-		margin: 0;
-		padding-left: 1.2rem;
-		display: grid;
-		gap: 0.35rem;
-	}
-
-	.chunk-list a {
-		color: #375d46;
-		word-break: break-all;
-	}
-
 	/* ── shared: error ────────────────────────────────────────────────────── */
 	.error {
 		padding: 0.5rem 0;
@@ -1097,14 +1036,6 @@
 		display: flex;
 		align-items: center;
 		gap: 0.9rem;
-	}
-
-	.skeleton-author {
-		padding-top: 0.9rem;
-	}
-
-	.skeleton-profile-header {
-		margin-top: -28px;
 	}
 
 	.skeleton-stack {
@@ -1172,10 +1103,6 @@
 		width: min(94%, 720px);
 	}
 
-	.skeleton-line-half {
-		width: 52%;
-	}
-
 	.skeleton-pill {
 		width: 88px;
 		height: 22px;
@@ -1214,6 +1141,10 @@
 	}
 
 	@media (max-width: 768px) {
+		.author-row.no-avatar {
+			margin-left: 0;
+		}
+
 		.hero-body {
 			padding: 0 0.8rem 0.8rem;
 		}

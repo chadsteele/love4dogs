@@ -1,16 +1,5 @@
 <script>
-	let {
-		profilePic = "",
-		backgroundPic = "",
-		title = "",
-		name = "",
-		description = "",
-		url = "",
-		stamp = "",
-	} = $props()
-
-	const headerTitle = $derived(String(title || name || "").trim())
-	const headerDescription = $derived(String(description || "").trim())
+	let {profilePic = "", backgroundPic = "", url = ""} = $props()
 
 	function asUrl(value) {
 		return typeof value === "string" ? value : ""
@@ -37,20 +26,6 @@
 
 	{#if asUrl(profilePic)}
 		<img class="avatar" src={asUrl(profilePic)} alt="Profile" />
-	{/if}
-
-	{#if headerTitle}
-		<div class="title-row" class:no-avatar={!asUrl(profilePic)}>
-			<div class="title-stack">
-				<h3 class="title">{headerTitle}</h3>
-				{#if stamp}
-					<div class="date-time">{stamp}</div>
-				{/if}
-				{#if headerDescription}
-					<p class="description">{headerDescription}</p>
-				{/if}
-			</div>
-		</div>
 	{/if}
 </button>
 
@@ -99,43 +74,6 @@
 		border-radius: 50%;
 		border: 3px solid rgba(255, 255, 255, 0.85);
 		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-	}
-
-	.title-row {
-		min-height: calc(var(--avatar-size) / 2 + 0.5rem);
-		padding: 0 0.85rem 0.5rem
-			calc(var(--avatar-left) + var(--avatar-size) + var(--title-gap));
-		display: flex;
-		align-items: flex-end;
-	}
-
-	.title-row.no-avatar {
-		padding-left: 0.85rem;
-		min-height: auto;
-	}
-
-	.title-stack {
-		display: grid;
-		gap: 0.22rem;
-	}
-
-	.title {
-		margin: 0;
-		font-family: inherit;
-		font-size: 1.35rem;
-		line-height: 1.05;
-		font-weight: 700;
-		color: #1f1f1f;
-		word-break: break-word;
-	}
-
-	.description {
-		margin: 0.35rem 0 0;
-		font-family: inherit;
-		font-size: var(--font-size-card-description);
-		line-height: var(--line-height-body);
-		color: var(--color-text-body);
-		word-break: break-word;
 	}
 
 	@media (max-width: 600px) {
