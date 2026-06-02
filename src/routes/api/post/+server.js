@@ -2,8 +2,10 @@ import { env } from '$env/dynamic/private';
 import { MEDIA_TOKEN_PREFIX } from '$lib/utils.js';
 import { extractHashtags, normalizePostType, upsertTypeTag } from '$lib/postTypeTags.js';
 import { createHash } from 'node:crypto';
+import { AtpAgent, RichText } from '@atproto/api';
 
 const BSKY_XRPC = 'https://bsky.social/xrpc';
+const BSKY_PUBLIC_SERVICE = 'https://public.api.bsky.app';
 const MAX_IMAGE_SIZE_BYTES = 2_000_000; // Bluesky's hard limit is 2,000,000 bytes (not 2 MiB)
 const MAX_VIDEO_SIZE_BYTES = 100 * 1024 * 1024;
 const MEDIA_CACHE_PREFIX = MEDIA_TOKEN_PREFIX;
@@ -13,6 +15,7 @@ const DELETE_DELAY_BASE_MAX_MS = 5_000;
 const DELETE_DELAY_MAX_MS = 60_000;
 
 let cachedSession = null;
+const richTextAgent = new AtpAgent({ service: BSKY_PUBLIC_SERVICE });
 
 function getCredentials() {
 	const identifier = env.BSKY_USERNAME || env.username;
@@ -20,64 +23,35 @@ function getCredentials() {
 	return { identifier, secret };
 }
 
-function utf8ByteLength(text) {
-	return new TextEncoder().encode(text).length;
+function escapeRegExp(value = '') {
+	return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function buildFacets(text) {
-	const facets = [];
-	const urlRegex = /https?:\/\/[^\s]+/g;
-	const hashtagRegex = /(^|\s)#([\p{L}\p{N}_-]+)/gu;
+function buildTextWithVisibleTags(text = '', tags = []) {
+	const baseText = String(text || '').trim();
+	const normalizedTags = (Array.isArray(tags) ? tags : [])
+		.map((entry) => String(entry || '').trim().toLowerCase())
+		.filter(Boolean);
+	if (!normalizedTags.length) return baseText;
 
-	for (const match of text.matchAll(urlRegex)) {
-		let uri = match[0];
-		const start = match.index;
-		let end = start + uri.length;
-
-		while (/[),.!?:;]$/.test(uri)) {
-			uri = uri.slice(0, -1);
-			end -= 1;
-		}
-
-		if (!uri) continue;
-
-		facets.push({
-			index: {
-				byteStart: utf8ByteLength(text.slice(0, start)),
-				byteEnd: utf8ByteLength(text.slice(0, end))
-			},
-			features: [
-				{
-					$type: 'app.bsky.richtext.facet#link',
-					uri
-				}
-			]
-		});
+	const missingTokens = [];
+	for (const tag of normalizedTags) {
+		const token = `#${tag}`;
+		const re = new RegExp(`(^|\\s)${escapeRegExp(token)}(?=$|\\s|[.,!?;:])`, 'i');
+		if (!re.test(baseText)) missingTokens.push(token);
 	}
 
-	for (const match of text.matchAll(hashtagRegex)) {
-		const prefix = match[1] || '';
-		const tag = match[2] || '';
-		if (!tag) continue;
+	if (!missingTokens.length) return baseText;
+	if (!baseText) return missingTokens.join(' ');
+	return `${baseText}\n\n${missingTokens.join(' ')}`;
+}
 
-		const hashStart = match.index + prefix.length;
-		const hashEnd = hashStart + tag.length + 1;
-
-		facets.push({
-			index: {
-				byteStart: utf8ByteLength(text.slice(0, hashStart)),
-				byteEnd: utf8ByteLength(text.slice(0, hashEnd))
-			},
-			features: [
-				{
-					$type: 'app.bsky.richtext.facet#tag',
-					tag
-				}
-			]
-		});
-	}
-
-	return facets;
+async function buildRichTextFacets(text = '') {
+	const value = String(text || '');
+	if (!value.trim()) return [];
+	const rt = new RichText({ text: value });
+	await rt.detectFacets(richTextAgent);
+	return Array.isArray(rt.facets) ? rt.facets : [];
 }
 
 function parseExplicitTags(rawValue = '') {
@@ -781,9 +755,11 @@ export async function POST({ request }) {
 			}
 
 			const blob = await uploadBlob(session.accessJwt, file, 'Image');
+			const cachePostText = cacheText.slice(0, 300);
+			const cacheFacets = await buildRichTextFacets(cachePostText);
 			const record = {
 				$type: 'app.bsky.feed.post',
-				text: cacheText.slice(0, 300),
+				text: cachePostText,
 				createdAt: new Date().toISOString(),
 				embed: {
 					$type: 'app.bsky.embed.images',
@@ -795,6 +771,7 @@ export async function POST({ request }) {
 					]
 				}
 			};
+			if (cacheFacets.length) record.facets = cacheFacets;
 
 			let cacheSession = session;
 			let createRes = await fetch(`${BSKY_XRPC}/com.atproto.repo.createRecord`, {
@@ -1143,49 +1120,57 @@ export async function POST({ request }) {
 
 		const requestedPostType = normalizePostType(formData.get('postType'));
 		const explicitTags = parseExplicitTags(formData.get('tags'));
-		const tags = upsertTypeTag(
+		let finalTags = upsertTypeTag(
 			[...extractHashtags(rawText), ...explicitTags],
 			requestedPostType
 		);
 
+		// If this is a chunked/profile post, extract tags from manifest in alt field.
+		if (uploadedMedia.length > 0) {
+			const firstImage = uploadedMedia.find((entry) => entry?.kind === 'image');
+			if (firstImage && typeof firstImage.alt === 'string') {
+				try {
+					const manifest = JSON.parse(firstImage.alt);
+					if (manifest && Array.isArray(manifest.primary?.tags)) {
+						finalTags = upsertTypeTag(
+							manifest.primary.tags
+								.map((t) => String(t).trim().toLowerCase())
+								.filter(Boolean),
+							requestedPostType
+						);
+					} else if (Array.isArray(manifest.tags)) {
+						finalTags = upsertTypeTag(
+							manifest.tags
+								.map((t) => String(t).trim().toLowerCase())
+								.filter(Boolean),
+							requestedPostType
+						);
+					}
+				} catch {
+					// alt is not JSON; ignore.
+				}
+			}
+		}
 
-			       // Prepare visible hashtags for text
-			       let visibleTags = tags && tags.length > 0 ? tags.map(t => t.startsWith('#') ? t : `#${t}`).join(' ') : '';
-			       let textWithTags = rawText;
-			       if (visibleTags) {
-				       // Only append if not already present
-				       if (!rawText.includes(visibleTags)) {
-					       textWithTags = rawText.trim() + '\n\n' + visibleTags;
-				       }
-			       }
+		const textWithTags = buildTextWithVisibleTags(rawText, finalTags);
+		const finalTextLength = [...textWithTags].length;
+		if (finalTextLength > 300) {
+			return new Response(
+				JSON.stringify({ error: 'Post text exceeds 300 character limit after adding tags.' }),
+				{
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				}
+			);
+		}
 
-			       // Default record
-			       const record = {
-				       $type: 'app.bsky.feed.post',
-				       text: textWithTags,
-				       createdAt: new Date().toISOString(),
-				       tags
-			       };
-
-		       // If this is a chunked/profile post, extract tags from manifest in alt field
-		       if (uploadedMedia.length > 0) {
-			       // Try to find a manifest in the alt field of the first uploaded image
-			       const firstImage = uploadedMedia.find((entry) => entry?.kind === 'image');
-			       if (firstImage && typeof firstImage.alt === 'string') {
-				       try {
-					       const manifest = JSON.parse(firstImage.alt);
-					       if (manifest && Array.isArray(manifest.primary?.tags)) {
-						       record.tags = manifest.primary.tags.map((t) => String(t).trim().toLowerCase()).filter(Boolean);
-					       } else if (Array.isArray(manifest.tags)) {
-						       record.tags = manifest.tags.map((t) => String(t).trim().toLowerCase()).filter(Boolean);
-					       }
-				       } catch (e) {
-					       // alt is not JSON, ignore
-				       }
-			       }
-		       }
-
-		const facets = buildFacets(rawText);
+		const facets = await buildRichTextFacets(textWithTags);
+		const record = {
+			$type: 'app.bsky.feed.post',
+			text: textWithTags,
+			createdAt: new Date().toISOString(),
+			tags: finalTags
+		};
 		if (facets.length) record.facets = facets;
 
 		const embed = buildImageEmbed(uploaded);
@@ -1284,7 +1269,7 @@ export async function POST({ request }) {
 		}
 
 		const result = await createRecordRes.json();
-		return new Response(JSON.stringify({ ok: true, result, tags }), {
+		return new Response(JSON.stringify({ ok: true, result, tags: finalTags }), {
 			headers: { 'content-type': 'application/json' }
 		});
 	} catch (error) {

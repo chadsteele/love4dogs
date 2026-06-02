@@ -446,7 +446,11 @@
 	<title>{isProfile ? "Profile" : "Post"} | Love4Dogs</title>
 </svelte:head>
 
-<main class="page {isProfile ? 'profile-view-page' : 'post-view-page'}">
+<main
+	class="page{isProfile ? ' is-profile' : ''} {isProfile
+		? 'profile-view-page'
+		: 'post-view-page'}"
+>
 	<NavBar {currentView} {editProfileUrl} onSetView={setView} />
 
 	{#if loading || (!error && !jsonData)}
@@ -459,11 +463,7 @@
 				<div class="skeleton-cover"></div>
 			{/if}
 			<div class="hero-body">
-				<div
-					class="skeleton-row {isProfile
-						? 'skeleton-profile-header'
-						: 'skeleton-author'}"
-				>
+				<div class="skeleton-row">
 					<div class="skeleton skeleton-avatar"></div>
 					<div class="skeleton-stack">
 						<div
@@ -486,6 +486,7 @@
 				<div class="skeleton skeleton-line skeleton-line-wide"></div>
 				<div class="skeleton skeleton-line skeleton-line-wide"></div>
 				<div class="skeleton skeleton-line skeleton-line-wide"></div>
+				<!-- Profile-specific skeletons can remain conditional if needed -->
 				{#if isProfile}
 					<div class="skeleton skeleton-chunk-header"></div>
 					<div
@@ -512,7 +513,7 @@
 
 			<div class="hero-body">
 				{#if formattedStamp}
-					<div class="date-time">
+					<div class="date-time{isProfile ? ' profile-date-time' : ''}">
 						{formattedStamp}
 					</div>
 				{/if}
@@ -595,7 +596,7 @@
 					</section>
 				{/if}
 
-				<div class="content-html{isProfile ? ' profile-content' : ''}">
+				<div class="content-html">
 					{@html jsonData?.html || ""}
 				</div>
 			</div>
@@ -700,6 +701,14 @@
 		color: #6e756f;
 	}
 
+	.is-profile .profile-date-time {
+		padding-top: 0.8rem;
+		margin-left: calc(
+			clamp(0.65rem, 1.8vw, 0.9rem) + clamp(76px, 12vw, 128px) +
+				clamp(0.55rem, 1.4vw, 0.9rem)
+		);
+	}
+
 	/* ── post-only: location ──────────────────────────────────────────────── */
 	.location-actions {
 		margin-top: 0.45rem;
@@ -785,8 +794,8 @@
 	}
 
 	/* Profile view: add left margin to offset avatar overlay */
-	.location-actions,
-	.hero-description {
+	.is-profile .location-actions,
+	.is-profile .hero-description {
 		margin-left: calc(
 			clamp(0.65rem, 1.8vw, 0.9rem) + clamp(76px, 12vw, 128px) +
 				clamp(0.55rem, 1.4vw, 0.9rem)
