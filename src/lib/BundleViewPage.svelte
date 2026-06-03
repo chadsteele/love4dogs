@@ -667,8 +667,9 @@
 				{/if}
 				<AuthorRow
 					avatar={!isProfile ? jsonData?.authorAvatar : null}
-					name={(isProfile ? jsonData?.name : jsonData?.authorName) ||
-						"Anonymous"}
+					name={(isProfile
+						? jsonData?.name || jsonData?.title || jsonData?.authorName
+						: jsonData?.authorName) || "Anonymous"}
 					date={formattedStamp}
 					href={isProfile
 						? asUrl(jsonData?.canonicalurl) || undefined

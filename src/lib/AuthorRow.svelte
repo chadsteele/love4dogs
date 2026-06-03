@@ -31,7 +31,9 @@
 	{/if}
 
 	<div class="author-meta">
-		{#if href && String(name || "").trim().toLowerCase() !== "anonymous"}
+		{#if href && String(name || "")
+				.trim()
+				.toLowerCase() !== "anonymous"}
 			<a class="author-info" {href}>
 				<div class="author-name">{name}</div>
 			</a>
@@ -129,6 +131,7 @@
 		object-fit: cover;
 		border: 1px solid rgba(58, 91, 65, 0.24);
 		box-shadow: 0 6px 18px rgba(65, 42, 20, 0.08);
+		margin-left: 0.2rem;
 	}
 
 	.author-row.compact .author-avatar {
@@ -151,6 +154,7 @@
 		background: rgba(255, 255, 255, 0.72);
 		box-shadow: 0 6px 18px rgba(65, 42, 20, 0.08);
 		color: #5f665f;
+		margin-left: 0.2rem;
 	}
 
 	.author-row.compact .author-icon {

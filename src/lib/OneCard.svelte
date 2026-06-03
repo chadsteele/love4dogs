@@ -9,8 +9,48 @@
 
 	let {post, onclick = () => {}, onTagClick = () => {}} = $props()
 	let hasHydrated = $state(false)
+	const altCandidatesCache = new Map()
+	const altRecordCache = new Map()
+	const altLocationCache = new Map()
 
 	const BSKY_HANDLE = "love4dogs.club"
+
+	function getAltCandidates(alt = "") {
+		const source = String(alt || "").trim()
+		if (!source) return []
+		if (altCandidatesCache.has(source)) {
+			return altCandidatesCache.get(source)
+		}
+
+		let candidates = []
+		try {
+			const parsed = JSON.parse(source)
+			candidates = [
+				parsed,
+				parsed?.primary,
+				parsed?.combined?.primary,
+			]
+
+			if (typeof parsed?.h === "string" && parsed.h.trim()) {
+				try {
+					const inner = JSON.parse(parsed.h)
+					candidates.push(
+						inner,
+						inner?.primary,
+						inner?.combined?.primary,
+					)
+				} catch {}
+			}
+		} catch {
+			candidates = []
+		}
+
+		const normalized = candidates.filter(
+			(candidate) => candidate && typeof candidate === "object",
+		)
+		altCandidatesCache.set(source, normalized)
+		return normalized
+	}
 
 	function bskyUrl(uri = "") {
 		const rkey = uri.split("/").pop()
@@ -27,84 +67,30 @@
 	}
 
 	function extractUuidFromBundleAlt(alt = "") {
-		if (!alt) return ""
-		const source = String(alt || "").trim()
-		if (!source) return ""
-
-		try {
-			const parsed = JSON.parse(source)
-			const candidates = [
-				parsed,
-				parsed?.primary,
-				parsed?.combined?.primary,
-			]
-
-			if (typeof parsed?.h === "string" && parsed.h.trim()) {
-				try {
-					const inner = JSON.parse(parsed.h)
-					candidates.push(
-						inner,
-						inner?.primary,
-						inner?.combined?.primary,
-					)
-				} catch {}
-			}
-
-			for (const candidate of candidates) {
-				if (!candidate || typeof candidate !== "object") continue
-				const directUuid = String(
-					candidate?.u || candidate?.uuid || candidate?.id || "",
-				).trim()
-				if (directUuid) return directUuid
-			}
-		} catch {
-			return ""
+		for (const candidate of getAltCandidates(alt)) {
+			const directUuid = String(
+				candidate?.u || candidate?.uuid || candidate?.id || "",
+			).trim()
+			if (directUuid) return directUuid
 		}
 
 		return ""
 	}
 
 	function extractTagsFromBundleAlt(alt = "") {
-		if (!alt) return []
-		const source = String(alt || "").trim()
-		if (!source) return []
-
-		try {
-			const parsed = JSON.parse(source)
-			const candidates = [
-				parsed,
-				parsed?.primary,
-				parsed?.combined?.primary,
-			]
-
-			if (typeof parsed?.h === "string" && parsed.h.trim()) {
-				try {
-					const inner = JSON.parse(parsed.h)
-					candidates.push(
-						inner,
-						inner?.primary,
-						inner?.combined?.primary,
+		for (const candidate of getAltCandidates(alt)) {
+			const rawTags = Array.isArray(candidate?.tags)
+				? candidate.tags
+				: []
+			if (rawTags.length) {
+				return rawTags
+					.map((tag) =>
+						String(tag || "")
+							.trim()
+							.toLowerCase(),
 					)
-				} catch {}
+					.filter(Boolean)
 			}
-
-			for (const candidate of candidates) {
-				if (!candidate || typeof candidate !== "object") continue
-				const rawTags = Array.isArray(candidate?.tags)
-					? candidate.tags
-					: []
-				if (rawTags.length) {
-					return rawTags
-						.map((tag) =>
-							String(tag || "")
-								.trim()
-								.toLowerCase(),
-						)
-						.filter(Boolean)
-				}
-			}
-		} catch {
-			return []
 		}
 
 		return []
@@ -169,30 +155,16 @@
 		return `/${pathType}/view/${encodeURIComponent(uuid)}/${encodeURIComponent(slug)}`
 	}
 
-	function extractProfileData(alt = "") {
+	function getRecord(alt = "") {
 		if (!alt) return null
 		const source = String(alt || "").trim()
 		if (!source) return null
+		if (altRecordCache.has(source)) {
+			return altRecordCache.get(source)
+		}
 
 		try {
-			const parsed = JSON.parse(source)
-			const candidates = [
-				parsed,
-				parsed?.primary,
-				parsed?.combined?.primary,
-			]
-
-			if (typeof parsed?.h === "string" && parsed.h.trim()) {
-				try {
-					const inner = JSON.parse(parsed.h)
-					candidates.push(
-						inner,
-						inner?.primary,
-						inner?.combined?.primary,
-					)
-				} catch {}
-			}
-
+			const candidates = getAltCandidates(source)
 			const pick = (keys = []) => {
 				for (const candidate of candidates) {
 					if (!candidate || typeof candidate !== "object") continue
@@ -212,15 +184,18 @@
 			const description = pick(["description", "desc"])
 
 			if (!profilePic && !backgroundPic && !name && !description)
-				return null
+				return altRecordCache.set(source, null), null
 
-			return {
+			const recordData = {
 				profilePic: profilePic || null,
 				backgroundPic: backgroundPic || null,
 				name: name || null,
 				description: description || null,
 			}
+			altRecordCache.set(source, recordData)
+			return recordData
 		} catch {
+			altRecordCache.set(source, null)
 			return null
 		}
 	}
@@ -244,11 +219,11 @@
 		if (titleMatch) return titleMatch
 
 		for (const alt of post?.imageAlts || []) {
-			const parsed = extractProfileData(alt)
+			const parsed = getRecord(alt)
 			if (parsed?.name) return parsed.name
 		}
 
-		const videoAlt = extractProfileData(post?.video?.alt || "")
+		const videoAlt = getRecord(post?.video?.alt || "")
 		if (videoAlt?.name) return videoAlt.name
 
 		return "Untitled"
@@ -262,11 +237,11 @@
 		}
 
 		for (const alt of post?.imageAlts || []) {
-			const parsed = extractProfileData(alt)
+			const parsed = getRecord(alt)
 			if (parsed?.description) return parsed.description
 		}
 
-		const videoAlt = extractProfileData(post?.video?.alt || "")
+		const videoAlt = getRecord(post?.video?.alt || "")
 		if (videoAlt?.description) return videoAlt.description
 
 		return ""
@@ -298,13 +273,13 @@
 	function getPrimaryImage() {
 		// Check for profile background pic first
 		for (const alt of post?.imageAlts || []) {
-			const parsed = extractProfileData(alt)
+			const parsed = getRecord(alt)
 			if (parsed?.backgroundPic) {
 				return normalizeImageUrl(parsed.backgroundPic)
 			}
 		}
 
-		const videoAlt = extractProfileData(post?.video?.alt || "")
+		const videoAlt = getRecord(post?.video?.alt || "")
 		if (videoAlt?.backgroundPic) {
 			return normalizeImageUrl(videoAlt.backgroundPic)
 		}
@@ -319,18 +294,30 @@
 
 	function getProfilePic() {
 		for (const alt of post?.imageAlts || []) {
-			const parsed = extractProfileData(alt)
+			const parsed = getRecord(alt)
 			if (parsed?.profilePic) {
 				return normalizeImageUrl(parsed.profilePic)
 			}
 		}
 
-		const videoAlt = extractProfileData(post?.video?.alt || "")
+		const videoAlt = getRecord(post?.video?.alt || "")
 		if (videoAlt?.profilePic) {
 			return normalizeImageUrl(videoAlt.profilePic)
 		}
 
 		return null
+	}
+
+	function getProfileDisplayName() {
+		for (const alt of post?.imageAlts || []) {
+			const parsed = getRecord(alt)
+			if (parsed?.name) return parsed.name
+		}
+
+		const videoAlt = getRecord(post?.video?.alt || "")
+		if (videoAlt?.name) return videoAlt.name
+
+		return ""
 	}
 
 	function parseLocationDetailsLine(detailsLine = "") {
@@ -378,25 +365,12 @@
 		if (!alt) return null
 		const source = String(alt || "").trim()
 		if (!source) return null
+		if (altLocationCache.has(source)) {
+			return altLocationCache.get(source)
+		}
 
 		try {
-			const parsed = JSON.parse(source)
-			const candidates = [
-				parsed,
-				parsed?.primary,
-				parsed?.combined?.primary,
-			]
-
-			if (typeof parsed?.h === "string" && parsed.h.trim()) {
-				try {
-					const inner = JSON.parse(parsed.h)
-					candidates.push(
-						inner,
-						inner?.primary,
-						inner?.combined?.primary,
-					)
-				} catch {}
-			}
+			const candidates = getAltCandidates(source)
 
 			const pick = (keys = []) => {
 				for (const candidate of candidates) {
@@ -435,10 +409,16 @@
 				pick(["country"]) ||
 				pickFromLocation(["country", "countryName"])
 
-			if (!address && !city && !state && !zip && !country) return null
+			if (!address && !city && !state && !zip && !country) {
+				altLocationCache.set(source, null)
+				return null
+			}
 
-			return {address, city, state, zip, country}
+			const locationData = {address, city, state, zip, country}
+			altLocationCache.set(source, locationData)
+			return locationData
 		} catch {
+			altLocationCache.set(source, null)
 			return null
 		}
 	}
@@ -572,8 +552,18 @@
 		})(),
 	)
 	const cardViewHref = $derived(buildCardViewPath(cardTitle, postType, post))
+	const profileDisplayName = $derived(getProfileDisplayName())
 	const authorName = $derived(
-		String(post?.author?.displayName || post?.author?.handle || "").trim(),
+		postType === "profile"
+			? String(
+					profileDisplayName ||
+						post?.author?.displayName ||
+						post?.author?.handle ||
+						"",
+				).trim()
+			: String(
+					post?.author?.displayName || post?.author?.handle || "",
+				).trim(),
 	)
 	const formattedDate = $derived(formatDate(post?.createdAt || ""))
 	const comments = $derived(post?.comments || [])
@@ -618,7 +608,9 @@
 
 	<a class="card-link" href={cardViewHref} tabindex="0">
 		<div class="card-content">
-			<h3 class="card-title">{cardTitle}</h3>
+			{#if postType !== "profile"}
+				<h3 class="card-title">{cardTitle}</h3>
+			{/if}
 			{#if cardDescription}
 				<p class="card-description">{cardDescription}</p>
 			{/if}

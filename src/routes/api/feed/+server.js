@@ -271,6 +271,12 @@ function mapPost(postWrapper) {
 		displayKey: identityKey,
 		cid: post.cid,
 		text: record.text || '',
+		author: {
+			did: String(post?.author?.did || '').trim(),
+			handle: String(post?.author?.handle || '').trim(),
+			displayName: String(post?.author?.displayName || '').trim(),
+			avatar: String(post?.author?.avatar || '').trim(),
+		},
 		facets: Array.isArray(record.facets) ? record.facets : [],
 		createdAt: record.createdAt || null,
 		images,
