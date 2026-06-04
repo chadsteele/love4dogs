@@ -28,16 +28,48 @@ function randomId(length = 12) {
 	return out
 }
 
+let cachedAuthorId = '';
+
 export function getOrCreateSharedAuthorId(fallback = "") {
-	const fallbackValue = normalizeString(fallback)
-	if (typeof localStorage === "undefined") return fallbackValue || randomId()
+	const fallbackValue = normalizeString(fallback);
+	if (cachedAuthorId) return cachedAuthorId;
 
-	const existing = normalizeString(localStorage.getItem(SHARED_AUTHOR_ID_KEY))
-	if (existing) return existing
+	let existing = '';
+	if (typeof localStorage !== 'undefined') {
+		existing = normalizeString(localStorage.getItem(SHARED_AUTHOR_ID_KEY));
+	}
 
-	const created = fallbackValue || randomId()
-	localStorage.setItem(SHARED_AUTHOR_ID_KEY, created)
-	return created
+	if (existing) {
+		cachedAuthorId = existing;
+		// Async cache to IndexedDB
+		import('./db.js').then(({ setSetting }) => {
+			setSetting(SHARED_AUTHOR_ID_KEY, existing).catch(() => {});
+		}).catch(() => {});
+		return existing;
+	}
+
+	const created = fallbackValue || randomId();
+	cachedAuthorId = created;
+
+	if (typeof localStorage !== 'undefined') {
+		try {
+			localStorage.setItem(SHARED_AUTHOR_ID_KEY, created);
+		} catch {}
+	}
+
+	import('./db.js').then(({ setSetting }) => {
+		setSetting(SHARED_AUTHOR_ID_KEY, created).catch(() => {});
+	}).catch(() => {});
+
+	return created;
+}
+
+if (typeof window !== 'undefined') {
+	import('./db.js').then(({ getSetting }) => {
+		getSetting(SHARED_AUTHOR_ID_KEY).then((val) => {
+			if (val) cachedAuthorId = val;
+		}).catch(() => {});
+	}).catch(() => {});
 }
 
 export function normalizeSchemaTags(tags = []) {

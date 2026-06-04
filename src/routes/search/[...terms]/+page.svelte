@@ -6,6 +6,7 @@
 	import OneCard from "$lib/OneCard.svelte"
 	import NavBar from "$lib/NavBar.svelte"
 	import {readSearchTerm, writeSearchTerm} from "$lib/searchStore"
+	import { getSetting, getAllPosts, setPost } from "$lib/db"
 
 	const FAVORITE_SEARCH_TERMS_KEY =
 		"love4dogs.settings.favorite-search-terms-v1"
@@ -41,12 +42,9 @@
 			.replace(/\s+/g, " ")
 	}
 
-	function readFavoriteSearchTerms() {
-		if (typeof window === "undefined") return []
+	async function readFavoriteSearchTerms() {
 		try {
-			const parsed = JSON.parse(
-				localStorage.getItem(FAVORITE_SEARCH_TERMS_KEY) || "[]",
-			)
+			const parsed = await getSetting(FAVORITE_SEARCH_TERMS_KEY, [])
 			if (!Array.isArray(parsed)) return []
 			const seen = new Set()
 			const next = []
@@ -65,11 +63,9 @@
 		}
 	}
 
-	function readDefaultSearchTerm() {
-		if (typeof window === "undefined") return ""
-		return normalizeSearchTerm(
-			localStorage.getItem(DEFAULT_SEARCH_TERM_KEY) || "",
-		)
+	async function readDefaultSearchTerm() {
+		const val = await getSetting(DEFAULT_SEARCH_TERM_KEY, "")
+		return normalizeSearchTerm(val)
 	}
 
 	function buildFeedQuery(rawQuery = "") {
@@ -175,8 +171,51 @@
 			feedCursor = json.cursor || null
 			feedCursorHost = json.cursorHost || null
 			hasMorePosts = !!json.cursor
+
+			// Cache fetched posts to IndexedDB
+			for (const post of posts) {
+				if (post && post.uri) {
+					await setPost(post.uri, post)
+				}
+			}
 		} catch (error) {
 			if (requestId !== lastFeedRequestId) return
+
+			// Offline fallback
+			const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+			if (isOffline || error.message?.includes("failed to fetch") || error.message?.includes("network")) {
+				try {
+					const allCached = await getAllPosts()
+					const queryTokens = getSearchTokens(searchTerm).map(t => t.toLowerCase())
+					if (queryTokens.length > 0) {
+						posts = allCached.filter(post => {
+							const text = String(post.text || '').toLowerCase()
+							const name = String(post.name || '').toLowerCase()
+							const desc = String(post.description || '').toLowerCase()
+							const tags = (post.tags || []).map(t => String(t || '').toLowerCase())
+							return queryTokens.every(token => 
+								text.includes(token) || 
+								name.includes(token) || 
+								desc.includes(token) ||
+								tags.includes(token)
+							)
+						})
+					} else {
+						posts = allCached
+					}
+					posts.sort((a, b) => {
+						const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0
+						const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0
+						return timeB - timeA
+					})
+					feedCursor = null
+					hasMorePosts = false
+					feedError = "Offline mode. Showing cached search results."
+					return
+				} catch (cacheErr) {
+					console.error("Local search fallback failed:", cacheErr)
+				}
+			}
 			feedError = error.message || "Failed loading feed."
 		} finally {
 			if (requestId === lastFeedRequestId) loadingPosts = false
@@ -225,8 +264,8 @@
 		searchTerm.trim().length > 0 && visiblePosts().length === 0,
 	)
 
-	onMount(() => {
-		favoriteSearchTerms = readFavoriteSearchTerms()
+	onMount(async () => {
+		favoriteSearchTerms = await readFavoriteSearchTerms()
 
 		// Seed search from URL params, then ?q=, then localStorage, then default
 		const qParam = new URLSearchParams(window.location.search).get("q")
@@ -235,11 +274,11 @@
 		} else if (qParam) {
 			searchTerm = normalizeSearchTerm(qParam)
 		} else {
-			const savedTerm = readSearchTerm()
-			searchTerm = savedTerm || readDefaultSearchTerm()
+			const savedTerm = await readSearchTerm()
+			searchTerm = savedTerm || await readDefaultSearchTerm()
 		}
 
-		loadFeed()
+		await loadFeed()
 
 		return () => {
 			if (searchDebounceTimer) clearTimeout(searchDebounceTimer)

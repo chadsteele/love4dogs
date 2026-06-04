@@ -5,6 +5,8 @@
 	import RandomEmojis from "$lib/RandomEmojis.svelte"
 	import {rewriteLove4DogsUrlForLocalhost} from "$lib/utils"
 
+	import {setSetting} from "./db.js"
+
 	let {mode = "page", onClose} = $props()
 	const isModal = $derived(mode === "modal")
 
@@ -38,7 +40,7 @@
 	onMount(() => {
 		if (isModal) return
 		if (typeof window === "undefined") return
-		localStorage.setItem(ABOUT_PAGE_VISIT_KEY, String(Date.now()))
+		setSetting(ABOUT_PAGE_VISIT_KEY, String(Date.now())).catch(() => {})
 	})
 
 	async function goBack() {

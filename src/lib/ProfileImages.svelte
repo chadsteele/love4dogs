@@ -3,6 +3,8 @@
 	const NORMALIZED_IMAGE_MAX_DIM = 1800
 	import {User, Pencil} from "lucide-svelte"
 	import {mediaTokenFromFile} from "$lib/utils"
+	import {setOfflineImage} from "$lib/db.js"
+
 
 	let {
 		profileUploadedMedia = $bindable([]),
@@ -169,6 +171,23 @@
 	}
 
 	async function uploadImage(file) {
+		if (typeof navigator !== "undefined" && navigator.onLine === false) {
+			const offlineId = Math.random().toString(36).slice(2, 10) + '-' + Date.now();
+			await setOfflineImage(offlineId, file);
+			return {
+				ok: true,
+				url: `/offline-media/${offlineId}`,
+				blob: {
+					ref: {
+						$link: offlineId
+					},
+					mimeType: file.type || "image/png",
+					size: file.size
+				},
+				isOfflineMedia: true,
+				offlineId: offlineId
+			};
+		}
 		const normalized = await normalizeImageForSlot(
 			file,
 			NORMALIZED_IMAGE_MAX_DIM,

@@ -59,6 +59,8 @@
 			addressText: completeAddress || addressText,
 			confirmedAddress: (completeAddress || addressText).trim(),
 			locationConfirmed: true,
+			confirmedLocation: localConfirmedLocation,
+			modalLocation: modalLocation,
 			error: "",
 		})
 	}

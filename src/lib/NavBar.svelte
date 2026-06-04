@@ -44,32 +44,32 @@
 	)
 	const navAvatarSrc = $derived(String(navCurrentProfile?.avatarUrl || ""))
 
-	function refreshNavProfiles() {
-		navProfiles = listStoredProfiles()
-		navCurrentUuid = getCurrentProfileUuid()
+	async function refreshNavProfiles() {
+		navProfiles = await listStoredProfiles()
+		navCurrentUuid = await getCurrentProfileUuid()
 	}
-
-	function goToProfileChooser() {
-		const count = navProfiles.length
-		if (!navCurrentUuid || count === 0) {
-			goto(buildNewProfileEditPath())
-			return
-		}
-		if (count === 1) {
-			goto(`/profile/edit/${encodeURIComponent(navCurrentUuid)}`)
-			return
-		}
-		profileMenuOpen = !profileMenuOpen
-		selectionMenuOpen = false
-	}
-
-	function chooseCurrentProfile(uuid = "") {
-		const next = String(uuid || "").trim()
-		if (!next) return
-		setCurrentProfileUuid(next)
-		navCurrentUuid = next
-		profileMenuOpen = false
-	}
+ 
+ 	function goToProfileChooser() {
+ 		const count = navProfiles.length
+ 		if (!navCurrentUuid || count === 0) {
+ 			goto(buildNewProfileEditPath())
+ 			return
+ 		}
+ 		if (count === 1) {
+ 			goto(`/profile/edit/${encodeURIComponent(navCurrentUuid)}`)
+ 			return
+ 		}
+ 		profileMenuOpen = !profileMenuOpen
+ 		selectionMenuOpen = false
+ 	}
+ 
+ 	async function chooseCurrentProfile(uuid = "") {
+ 		const next = String(uuid || "").trim()
+ 		if (!next) return
+ 		await setCurrentProfileUuid(next)
+ 		navCurrentUuid = next
+ 		profileMenuOpen = false
+ 	}
 
 	function openProfileManager() {
 		profileMenuOpen = false

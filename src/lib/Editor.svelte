@@ -7,6 +7,7 @@
 	import {oneDark} from "@codemirror/theme-one-dark"
 	import {basicSetup} from "codemirror"
 	import {mediaOriginFromFile, mediaTokenFromFile} from "$lib/utils"
+	import {setOfflineImage} from "$lib/db.js"
 	import {
 		Bold,
 		Heading1 as H1,
@@ -397,14 +398,42 @@
 		if (!pellEditor) return
 		const contentEl = pellEditor.content
 		try {
-			const thumb = await createThumbnailDataUrl(file)
 			const alt = file.name || "Image"
+			const normalized = await normalizeImageForUpload(file)
+			if (typeof navigator !== "undefined" && navigator.onLine === false) {
+				const offlineId = Math.random().toString(36).slice(2, 10) + '-' + Date.now();
+				await setOfflineImage(offlineId, normalized)
+				const offlineUrl = `/offline-media/${offlineId}`
+				insertHtmlAtCaret(
+					contentEl,
+					`<img src="${offlineUrl}" data-origin="${offlineUrl}" alt="${alt.replace(/"/g, "&quot;")}" />`,
+				)
+				uploadedMedia = [
+					...uploadedMedia,
+					{
+						kind: "image",
+						alt,
+						blob: {
+							ref: {
+								$link: offlineId
+							},
+							mimeType: normalized.type || "image/png",
+							size: normalized.size
+						},
+						sourceName: file.name,
+						sourceUrl: offlineUrl,
+						isOfflineMedia: true,
+						offlineId: offlineId
+					},
+				]
+				return
+			}
+			const thumb = await createThumbnailDataUrl(file)
 			const dataOrigin = mediaOriginFromFile(file)
 			insertHtmlAtCaret(
 				contentEl,
 				`<img src="${thumb}" data-origin="${dataOrigin.replace(/"/g, "&quot;")}" alt="${alt.replace(/"/g, "&quot;")}" />`,
 			)
-			const normalized = await normalizeImageForUpload(file)
 			const sourceUrl = await mediaTokenFromFile(file)
 			if (!sourceUrl) return
 			const uploaded = await uploadCachedImage(normalized, sourceUrl)
@@ -426,8 +455,37 @@
 	async function handleVideoFile(file) {
 		if (!pellEditor) return
 		const contentEl = pellEditor.content
-		const objUrl = URL.createObjectURL(file)
 		const name = file.name || "Video"
+		if (typeof navigator !== "undefined" && navigator.onLine === false) {
+			try {
+				const offlineId = Math.random().toString(36).slice(2, 10) + '-' + Date.now();
+				await setOfflineImage(offlineId, file)
+				const offlineUrl = `/offline-media/${offlineId}`
+				insertHtmlAtCaret(contentEl, `<video src="${offlineUrl}" controls></video>`)
+				uploadedMedia = [
+					...uploadedMedia,
+					{
+						kind: "video",
+						alt: name,
+						blob: {
+							ref: {
+								$link: offlineId
+							},
+							mimeType: file.type || "video/mp4",
+							size: file.size
+						},
+						sourceName: file.name,
+						sourceUrl: offlineUrl,
+						isOfflineMedia: true,
+						offlineId: offlineId
+					},
+				]
+			} catch (err) {
+				console.error("[Editor] Video insert failed:", err)
+			}
+			return
+		}
+		const objUrl = URL.createObjectURL(file)
 		insertHtmlAtCaret(contentEl, `<video src="${objUrl}" controls></video>`)
 		try {
 			localUploadProgressActive = true

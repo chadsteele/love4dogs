@@ -2,6 +2,7 @@ import {
 	PUBLIC_CONTACT_ALPHABET,
 	PUBLIC_CONTACT_OUTPUT_ALPHABET
 } from '$env/static/public';
+import { getSetting, setSetting } from './db.js';
 
 export const MEDIA_TOKEN_PREFIX = '🎞️';
 export const MEDIA_TOKEN_HEX_LENGTH = 12;
@@ -181,30 +182,16 @@ function isValidCoordinate(lat, lon) {
 	return Number.isFinite(lat) && Number.isFinite(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180;
 }
 
-function getLocalStorageJson(key) {
-	if (typeof window === 'undefined') return null;
-
-	try {
-		const raw = localStorage.getItem(key);
-		if (!raw) return null;
-		return JSON.parse(raw);
-	} catch {
-		return null;
-	}
+async function getLocalStorageJson(key) {
+	return await getSetting(key);
 }
 
-function setLocalStorageJson(key, value) {
-	if (typeof window === 'undefined') return;
-
-	try {
-		localStorage.setItem(key, JSON.stringify(value));
-	} catch {
-		// Ignore cache write failures (private mode/storage limits).
-	}
+async function setLocalStorageJson(key, value) {
+	await setSetting(key, value);
 }
 
-function getCachedLocation(cacheKey, ttlMs) {
-	const parsed = getLocalStorageJson(cacheKey);
+async function getCachedLocation(cacheKey, ttlMs) {
+	const parsed = await getLocalStorageJson(cacheKey);
 	if (!parsed?.savedAt || !parsed?.location) return null;
 
 	if (Date.now() - parsed.savedAt > ttlMs) {
@@ -214,16 +201,16 @@ function getCachedLocation(cacheKey, ttlMs) {
 	return parsed.location;
 }
 
-function setCachedLocation(cacheKey, location) {
-	setLocalStorageJson(cacheKey, { savedAt: Date.now(), location });
+async function setCachedLocation(cacheKey, location) {
+	await setLocalStorageJson(cacheKey, { savedAt: Date.now(), location });
 }
 
 function reverseGeoCacheKey(lat, lon) {
 	return `${lat},${lon}`;
 }
 
-function getCachedReverseGeo(cacheKey, lat, lon) {
-	const parsed = getLocalStorageJson(cacheKey);
+async function getCachedReverseGeo(cacheKey, lat, lon) {
+	const parsed = await getLocalStorageJson(cacheKey);
 	if (!parsed || typeof parsed !== 'object') return null;
 
 	const key = reverseGeoCacheKey(lat, lon);
@@ -243,8 +230,8 @@ function getCachedReverseGeo(cacheKey, lat, lon) {
 	};
 }
 
-function setCachedReverseGeo(cacheKey, maxEntries, lat, lon, value) {
-	const parsed = getLocalStorageJson(cacheKey);
+async function setCachedReverseGeo(cacheKey, maxEntries, lat, lon, value) {
+	const parsed = await getLocalStorageJson(cacheKey);
 	const cache = parsed && typeof parsed === 'object' ? parsed : {};
 
 	const key = reverseGeoCacheKey(lat, lon);
@@ -264,11 +251,11 @@ function setCachedReverseGeo(cacheKey, maxEntries, lat, lon, value) {
 	const entries = Object.entries(cache);
 	if (entries.length > maxEntries) {
 		entries.sort((a, b) => (b[1]?.savedAt || 0) - (a[1]?.savedAt || 0));
-		setLocalStorageJson(cacheKey, Object.fromEntries(entries.slice(0, maxEntries)));
+		await setLocalStorageJson(cacheKey, Object.fromEntries(entries.slice(0, maxEntries)));
 		return;
 	}
 
-	setLocalStorageJson(cacheKey, cache);
+	await setLocalStorageJson(cacheKey, cache);
 }
 
 export function buildLocationBlock(location, mapBaseUrl = DEFAULT_MAP_BASE_URL) {
@@ -310,7 +297,7 @@ export async function lookupLocationDetails(lat, lon, options = {}) {
 	let formattedAddress = '';
 	let fromCache = false;
 
-	const reverseGeo = getCachedReverseGeo(reverseGeoCacheKeyName, nextLat, nextLon);
+	const reverseGeo = await getCachedReverseGeo(reverseGeoCacheKeyName, nextLat, nextLon);
 	if (reverseGeo) {
 		houseNumber = reverseGeo.houseNumber;
 		road = reverseGeo.road;
@@ -343,7 +330,7 @@ export async function lookupLocationDetails(lat, lon, options = {}) {
 				.filter(Boolean)
 				.join(', ');
 			formattedAddress = String(data?.display_name || fallbackFormatted || '').trim();
-			setCachedReverseGeo(reverseGeoCacheKeyName, reverseGeoMaxEntries, nextLat, nextLon, {
+			await setCachedReverseGeo(reverseGeoCacheKeyName, reverseGeoMaxEntries, nextLat, nextLon, {
 				houseNumber,
 				road,
 				neighbourhood,
@@ -391,7 +378,7 @@ export async function lookupLocationWithCache(options = {}) {
 	const reverseGeoMaxEntries = options.reverseGeoMaxEntries || DEFAULT_REVERSE_GEO_MAX_ENTRIES;
 	const acceptLanguage = options.acceptLanguage || 'en';
 
-	const cachedLocation = getCachedLocation(locationCacheKey, locationCacheTtlMs);
+	const cachedLocation = await getCachedLocation(locationCacheKey, locationCacheTtlMs);
 	if (cachedLocation) {
 		return { location: cachedLocation, error: '', fromCache: true };
 	}
@@ -413,7 +400,7 @@ export async function lookupLocationWithCache(options = {}) {
 			reverseGeoMaxEntries,
 			acceptLanguage
 		});
-		setCachedLocation(locationCacheKey, location);
+		await setCachedLocation(locationCacheKey, location);
 		return { location, error: '', fromCache: false };
 	} catch {
 		return {
@@ -484,66 +471,93 @@ function pruneMapApproxCacheData(raw, { ttlMs, maxEntries }) {
 	return Object.fromEntries(entries.slice(0, maxEntries));
 }
 
-function readMapApproxCache(options = {}) {
+async function readMapApproxCache(options = {}) {
 	const { cacheKey, ttlMs, maxEntries } = mapApproxCacheOptions(options);
-	const parsed = getLocalStorageJson(cacheKey);
+	const parsed = await getLocalStorageJson(cacheKey);
 	const pruned = pruneMapApproxCacheData(parsed, { ttlMs, maxEntries });
-	setLocalStorageJson(cacheKey, pruned);
+	await setLocalStorageJson(cacheKey, pruned);
 	return pruned;
 }
 
-function writeMapApproxCache(data, options = {}) {
+async function writeMapApproxCache(data, options = {}) {
 	const { cacheKey, ttlMs, maxEntries } = mapApproxCacheOptions(options);
 	const pruned = pruneMapApproxCacheData(data, { ttlMs, maxEntries });
-	setLocalStorageJson(cacheKey, pruned);
+	await setLocalStorageJson(cacheKey, pruned);
 	return pruned;
 }
 
-export function getApproxPostsFromCache(approximate = '', options = {}) {
+export async function getApproxCacheEntry(approximate = '', options = {}) {
 	if (typeof window === 'undefined') return null;
 	const key = String(approximate || '').trim().toLowerCase();
 	if (!key) return null;
-	const cache = readMapApproxCache(options);
+	const cache = await readMapApproxCache(options);
+	return cache[key] || null;
+}
+
+export async function getApproxPostsFromCache(approximate = '', options = {}) {
+	if (typeof window === 'undefined') return null;
+	const key = String(approximate || '').trim().toLowerCase();
+	if (!key) return null;
+	const cache = await readMapApproxCache(options);
 	const entry = cache[key];
 	return entry ? entry.posts : null;
 }
 
-export function setApproxPostsInCache(approximate = '', posts = [], options = {}) {
+export async function setApproxPostsInCache(approximate = '', posts = [], options = {}) {
 	if (typeof window === 'undefined') return;
 	const key = String(approximate || '').trim().toLowerCase();
 	if (!key) return;
-	const cache = readMapApproxCache(options);
+	const cache = await readMapApproxCache(options);
 	const sanitizedPosts = Array.isArray(posts)
 		? posts.map((post) => sanitizeApproxPost(post)).filter(Boolean)
 		: [];
+
+	const existingEntry = cache[key];
+	const preservedLocalPosts = [];
+	if (existingEntry && Array.isArray(existingEntry.posts)) {
+		for (const post of existingEntry.posts) {
+			if (post.isUserPost) {
+				preservedLocalPosts.push(post);
+			}
+		}
+	}
+
+	const bskyPostsFiltered = sanitizedPosts.filter(
+		(bp) => !preservedLocalPosts.some((lp) => lp.uri === bp.uri)
+	);
+	const finalPosts = [...preservedLocalPosts, ...bskyPostsFiltered];
+
 	cache[key] = {
 		savedAt: Date.now(),
-		posts: sanitizedPosts
+		posts: finalPosts,
+		hasLocalPost: preservedLocalPosts.length > 0
 	};
-	writeMapApproxCache(cache, options);
+	await writeMapApproxCache(cache, options);
 }
 
-export function upsertApproxPostInCache(post = {}, options = {}) {
+export async function upsertApproxPostInCache(post = {}, options = {}) {
 	if (typeof window === 'undefined') return;
 	const sanitized = sanitizeApproxPost(post);
 	if (!sanitized?.approximate) return;
-	const cache = readMapApproxCache(options);
+	sanitized.isUserPost = true; // Mark as user-added post
+	const cache = await readMapApproxCache(options);
 	const existing = Array.isArray(cache[sanitized.approximate]?.posts)
 		? cache[sanitized.approximate].posts
 		: [];
 	const withoutUri = existing.filter((entry) => entry?.uri !== sanitized.uri);
 	cache[sanitized.approximate] = {
 		savedAt: Date.now(),
-		posts: [sanitized, ...withoutUri]
+		posts: [sanitized, ...withoutUri],
+		hasLocalPost: true
 	};
-	writeMapApproxCache(cache, options);
+	await writeMapApproxCache(cache, options);
 }
 
-export function removeApproxPostFromCache(uri = '', options = {}) {
+export async function removeApproxPostFromCache(uri = '', options = {}) {
 	if (typeof window === 'undefined') return;
 	const targetUri = String(uri || '').trim();
 	if (!targetUri) return;
-	const cache = readMapApproxCache(options);
+	const cache = await readMapApproxCache(options);
 	for (const [approximate, entry] of Object.entries(cache)) {
 		const posts = Array.isArray(entry?.posts) ? entry.posts : [];
 		const filtered = posts.filter((post) => post?.uri !== targetUri);
@@ -553,7 +567,7 @@ export function removeApproxPostFromCache(uri = '', options = {}) {
 			posts: filtered
 		};
 	}
-	writeMapApproxCache(cache, options);
+	await writeMapApproxCache(cache, options);
 }
 
 function singleHash(lat, lon) {

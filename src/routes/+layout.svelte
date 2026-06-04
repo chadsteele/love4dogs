@@ -1,8 +1,23 @@
 <script>
+	import {onMount} from "svelte"
+	import {browser} from "$app/environment"
 	import {fullPageEditor} from "$lib/fullPageEditor.js"
 	import {getCalendarYear} from "$lib/dateTime"
 	let {children} = $props()
 	const currentYear = getCalendarYear()
+
+	onMount(() => {
+		if (browser && "serviceWorker" in navigator) {
+			navigator.serviceWorker
+				.register("/service-worker.js", { type: "module" })
+				.then((reg) => {
+					console.log("ServiceWorker registered with scope:", reg.scope)
+				})
+				.catch((err) => {
+					console.error("ServiceWorker registration failed:", err)
+				})
+		}
+	})
 </script>
 
 <div class="bg-kenburns" aria-hidden="true"></div>

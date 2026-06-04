@@ -3,6 +3,7 @@
 	import {goto} from "$app/navigation"
 	import NavBar from "$lib/NavBar.svelte"
 	import ProfileList from "$lib/ProfileList.svelte"
+	import { getSetting, setSetting, removeSetting } from "$lib/db.js"
 	import {
 		buildNewProfileEditPath,
 		deleteStoredProfileByUuid,
@@ -64,79 +65,72 @@
 		return next
 	}
 
-	function readFavoriteTerms() {
-		if (typeof localStorage === "undefined") return []
+	async function readFavoriteTerms() {
 		try {
-			const parsed = JSON.parse(
-				localStorage.getItem(FAVORITE_SEARCH_TERMS_KEY) || "[]",
-			)
+			const parsed = await getSetting(FAVORITE_SEARCH_TERMS_KEY, [])
 			return uniqueTerms(Array.isArray(parsed) ? parsed : [])
 		} catch {
 			return []
 		}
 	}
 
-	function writeFavoriteTerms(next = []) {
-		if (typeof localStorage === "undefined") return
-		localStorage.setItem(
+	async function writeFavoriteTerms(next = []) {
+		await setSetting(
 			FAVORITE_SEARCH_TERMS_KEY,
-			JSON.stringify(uniqueTerms(next)),
+			uniqueTerms(next),
 		)
 	}
 
-	function readDefaultSearchTerm() {
-		if (typeof localStorage === "undefined") return ""
-		return normalizeTerm(
-			localStorage.getItem(DEFAULT_SEARCH_TERM_KEY) || "",
-		)
+	async function readDefaultSearchTerm() {
+		const val = await getSetting(DEFAULT_SEARCH_TERM_KEY, "")
+		return normalizeTerm(val || "")
 	}
 
-	function writeDefaultSearchTerm(value = "") {
-		if (typeof localStorage === "undefined") return
+	async function writeDefaultSearchTerm(value = "") {
 		const normalized = normalizeTerm(value)
 		if (!normalized) {
-			localStorage.removeItem(DEFAULT_SEARCH_TERM_KEY)
+			await removeSetting(DEFAULT_SEARCH_TERM_KEY)
 			return
 		}
-		localStorage.setItem(DEFAULT_SEARCH_TERM_KEY, normalized)
+		await setSetting(DEFAULT_SEARCH_TERM_KEY, normalized)
 	}
 
-	function refreshProfiles() {
-		profiles = listStoredProfiles()
-		currentProfileUuid = getCurrentProfileUuid()
+	async function refreshProfiles() {
+		profiles = await listStoredProfiles()
+		currentProfileUuid = await getCurrentProfileUuid()
 	}
 
-	function addFavoriteTerm(term = "") {
+	async function addFavoriteTerm(term = "") {
 		const normalized = normalizeTerm(term || newFavoriteTerm)
 		if (!normalized) return
 		favoriteTerms = uniqueTerms([normalized, ...favoriteTerms])
-		writeFavoriteTerms(favoriteTerms)
+		await writeFavoriteTerms(favoriteTerms)
 		newFavoriteTerm = ""
 		saveMessage = "Saved favorite search terms."
 	}
 
-	function removeFavoriteTerm(term = "") {
+	async function removeFavoriteTerm(term = "") {
 		const normalized = normalizeTerm(term)
 		if (!normalized) return
 		favoriteTerms = favoriteTerms.filter(
 			(entry) => entry.toLowerCase() !== normalized.toLowerCase(),
 		)
-		writeFavoriteTerms(favoriteTerms)
+		await writeFavoriteTerms(favoriteTerms)
 		saveMessage = "Updated favorite search terms."
 	}
 
-	function saveDefaultTerm() {
+	async function saveDefaultTerm() {
 		defaultSearchTerm = normalizeTerm(defaultSearchTerm)
-		writeDefaultSearchTerm(defaultSearchTerm)
+		await writeDefaultSearchTerm(defaultSearchTerm)
 		saveMessage = defaultSearchTerm
 			? "Saved default search term."
 			: "Cleared default search term."
 	}
 
-	function chooseProfile(uuid = "") {
+	async function chooseProfile(uuid = "") {
 		const next = String(uuid || "").trim()
 		if (!next) return
-		setCurrentProfileUuid(next)
+		await setCurrentProfileUuid(next)
 		currentProfileUuid = next
 		saveMessage = "Current profile updated."
 	}
@@ -168,8 +162,8 @@
 		if (!targetUuid) return
 		try {
 			// Delete locally immediately
-			deleteStoredProfileByUuid(targetUuid)
-			refreshProfiles()
+			await deleteStoredProfileByUuid(targetUuid)
+			await refreshProfiles()
 			// Close modal immediately
 			cancelDeleteProfile()
 
@@ -247,7 +241,7 @@
 					"",
 			).trim()
 			const hasStoredSourceUuid = sourceUuid
-				? Boolean(readStoredProfileByUuid(sourceUuid))
+				? Boolean(await readStoredProfileByUuid(sourceUuid))
 				: false
 			const needsNewUuid = Boolean(
 				sourceUuid &&
@@ -258,7 +252,7 @@
 			)
 			const importUuid =
 				needsNewUuid || !sourceUuid ? generateProfileUuid() : sourceUuid
-			const rebuilt = importStoredProfileFromReconstructedBundle(bundle, {
+			const rebuilt = await importStoredProfileFromReconstructedBundle(bundle, {
 				uuid: importUuid,
 				setCurrent: true,
 			})
@@ -266,7 +260,7 @@
 				throw new Error("The recovered bundle could not be imported.")
 			}
 
-			refreshProfiles()
+			await refreshProfiles()
 			recoveryPostUrl = ""
 			recoveryMessage = needsNewUuid
 				? `Recovered into a new local profile ${importUuid}.`
@@ -278,10 +272,10 @@
 		}
 	}
 
-	onMount(() => {
-		favoriteTerms = readFavoriteTerms()
-		defaultSearchTerm = readDefaultSearchTerm()
-		refreshProfiles()
+	onMount(async () => {
+		favoriteTerms = await readFavoriteTerms()
+		defaultSearchTerm = await readDefaultSearchTerm()
+		await refreshProfiles()
 	})
 </script>
 

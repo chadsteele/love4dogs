@@ -1,4 +1,14 @@
 
+import {
+	getSetting,
+	setSetting,
+	removeSetting,
+	getProfile,
+	setProfile,
+	deleteProfile,
+	getAllProfiles
+} from './db.js';
+
 const PROFILE_STORAGE_PREFIX = "love4dogs.profile-v2"
 const PROFILE_REGISTRY_KEY = "love4dogs.profile-registry-v1"
 const CURRENT_PROFILE_UUID_KEY = "love4dogs.current-profile-uuid"
@@ -139,193 +149,103 @@ export function rebuildStoredProfileFromBskyAltPayload(
 	return rebuildStoredProfileFromBundle(rawBundle, {uuid: providedUuid})
 }
 
-export function importStoredProfileFromReconstructedBundle(
+export async function importStoredProfileFromReconstructedBundle(
 	bundle = {},
 	options = {},
 ) {
 	const rebuilt = rebuildStoredProfileFromBundle(bundle, options)
 	if (!rebuilt) return null
 
-	if (canUseStorage()) {
-		writeStoredProfileByUuid(rebuilt.uuid, rebuilt.profile)
-		upsertStoredProfile(rebuilt.profile)
-		if (options?.setCurrent !== false) {
-			setCurrentProfileUuid(rebuilt.uuid)
-		}
+	await writeStoredProfileByUuid(rebuilt.uuid, rebuilt.profile)
+	await upsertStoredProfile(rebuilt.profile)
+	if (options?.setCurrent !== false) {
+		await setCurrentProfileUuid(rebuilt.uuid)
 	}
 
 	return rebuilt
 }
 
-export function importStoredProfileFromBskyAltPayload(
+export async function importStoredProfileFromBskyAltPayload(
 	payload = {},
 	options = {},
 ) {
 	const rebuilt = rebuildStoredProfileFromBskyAltPayload(payload, options)
 	if (!rebuilt) return null
 
-	if (canUseStorage()) {
-		writeStoredProfileByUuid(rebuilt.uuid, rebuilt.profile)
-		upsertStoredProfile(rebuilt.profile)
-		if (options?.setCurrent !== false) {
-			setCurrentProfileUuid(rebuilt.uuid)
-		}
+	await writeStoredProfileByUuid(rebuilt.uuid, rebuilt.profile)
+	await upsertStoredProfile(rebuilt.profile)
+	if (options?.setCurrent !== false) {
+		await setCurrentProfileUuid(rebuilt.uuid)
 	}
 
 	return rebuilt
 }
 
-export function listStoredProfiles() {
-	if (!canUseStorage()) return []
-	const parsed = safeParseJson(localStorage.getItem(PROFILE_REGISTRY_KEY), [])
+export async function listStoredProfiles() {
+	const parsed = await getSetting(PROFILE_REGISTRY_KEY, [])
 	const normalized = Array.isArray(parsed)
 		? parsed.map((entry) => normalizeRegistryEntry(entry)).filter((entry) => entry.uuid)
 		: []
-
-	const byUuid = new Map(normalized.map((entry) => [entry.uuid, entry]))
-	let changed = !Array.isArray(parsed)
-
-	const legacyProfile = safeParseJson(
-		localStorage.getItem(LEGACY_PROFILE_STORAGE_KEY),
-		null,
-	)
-	if (legacyProfile && typeof legacyProfile === "object") {
-		const legacyUuid = String(legacyProfile?.uuid || "").trim()
-		if (legacyUuid && !byUuid.has(legacyUuid)) {
-			const derived = deriveRegistryFieldsFromStoredProfile(legacyProfile)
-			const legacySavedAt = Number(legacyProfile?.savedAt || Date.now())
-			byUuid.set(legacyUuid, {
-				uuid: legacyUuid,
-				name: derived.name,
-				avatarUrl: derived.avatarUrl,
-				savedAt: Number.isFinite(legacySavedAt)
-					? legacySavedAt
-					: Date.now(),
-			})
-			changed = true
-		}
-	}
-
-	for (let i = 0; i < localStorage.length; i += 1) {
-		const key = String(localStorage.key(i) || "")
-		if (!key.startsWith(PROFILE_STORAGE_KEY_PREFIX)) continue
-
-		const uuid = key.slice(PROFILE_STORAGE_KEY_PREFIX.length).trim()
-		if (!uuid) continue
-
-		const storedProfile = safeParseJson(localStorage.getItem(key), null)
-		const derived = deriveRegistryFieldsFromStoredProfile(storedProfile)
-		const existing = byUuid.get(uuid)
-
-		if (!existing) {
-			byUuid.set(uuid, {
-				uuid,
-				name: derived.name,
-				avatarUrl: derived.avatarUrl,
-				savedAt: Date.now(),
-			})
-			changed = true
-			continue
-		}
-
-		let nextExisting = existing
-		if (!existing.name && derived.name) {
-			nextExisting = {...nextExisting, name: derived.name}
-			changed = true
-		}
-		if (!existing.avatarUrl && derived.avatarUrl) {
-			nextExisting = {...nextExisting, avatarUrl: derived.avatarUrl}
-			changed = true
-		}
-		if (nextExisting !== existing) {
-			byUuid.set(uuid, nextExisting)
-		}
-	}
-
-	const result = Array.from(byUuid.values()).sort((a, b) => b.savedAt - a.savedAt)
-	if (changed) {
-		localStorage.setItem(PROFILE_REGISTRY_KEY, JSON.stringify(result))
-	}
-	return result
+	return normalized.sort((a, b) => b.savedAt - a.savedAt)
 }
 
-export function hasStoredProfiles() {
-	return listStoredProfiles().length > 0
+export async function hasStoredProfiles() {
+	const list = await listStoredProfiles()
+	return list.length > 0
 }
 
-export function readStoredProfileByUuid(uuid = "") {
-	if (!canUseStorage()) return null
-	const key = getProfileStorageKey(uuid)
+export async function readStoredProfileByUuid(uuid = "") {
+	const key = String(uuid || "").trim()
 	if (!key) return null
-	const raw = localStorage.getItem(key)
-	if (!raw) return null
-	const parsed = safeParseJson(raw, null)
-	return parsed && typeof parsed === "object" ? parsed : null
+	return await getProfile(key)
 }
 
-export function writeStoredProfileByUuid(uuid = "", profile = {}) {
-	if (!canUseStorage()) return
-	const key = getProfileStorageKey(uuid)
-	if (!key || !uuid) return
-	localStorage.setItem(key, JSON.stringify(profile))
+export async function writeStoredProfileByUuid(uuid = "", profile = {}) {
+	const key = String(uuid || "").trim()
+	if (!key) return
+	await setProfile(key, profile)
 }
 
-export function getCurrentProfileUuid() {
-	if (!canUseStorage()) return ""
-	const value = String(localStorage.getItem(CURRENT_PROFILE_UUID_KEY) || "")
+export async function getCurrentProfileUuid() {
+	const value = String(await getSetting(CURRENT_PROFILE_UUID_KEY, "") || "")
 	return value.trim()
 }
 
-export function setCurrentProfileUuid(uuid = "") {
-	if (!canUseStorage()) return
+export async function setCurrentProfileUuid(uuid = "") {
 	const next = String(uuid || "").trim()
 	if (!next) {
-		localStorage.removeItem(CURRENT_PROFILE_UUID_KEY)
+		await removeSetting(CURRENT_PROFILE_UUID_KEY)
 		return
 	}
-	localStorage.setItem(CURRENT_PROFILE_UUID_KEY, next)
+	await setSetting(CURRENT_PROFILE_UUID_KEY, next)
 }
 
-export function deleteStoredProfileByUuid(uuid = "") {
-	if (!canUseStorage()) return
+export async function deleteStoredProfileByUuid(uuid = "") {
 	const targetUuid = String(uuid || "").trim()
 	if (!targetUuid) return
 
-	localStorage.removeItem(getProfileStorageKey(targetUuid))
+	await deleteProfile(targetUuid)
 
-	const legacyProfile = safeParseJson(
-		localStorage.getItem(LEGACY_PROFILE_STORAGE_KEY),
-		null,
-	)
-	if (
-		legacyProfile &&
-		typeof legacyProfile === "object" &&
-		String(legacyProfile?.uuid || "").trim() === targetUuid
-	) {
-		localStorage.removeItem(LEGACY_PROFILE_STORAGE_KEY)
-	}
-
-	const remaining = listStoredProfiles().filter(
+	const remaining = (await listStoredProfiles()).filter(
 		(entry) => entry.uuid !== targetUuid,
 	)
-	localStorage.setItem(PROFILE_REGISTRY_KEY, JSON.stringify(remaining))
+	await setSetting(PROFILE_REGISTRY_KEY, remaining)
 
-	if (getCurrentProfileUuid() === targetUuid) {
-		setCurrentProfileUuid(remaining[0]?.uuid || "")
+	if (await getCurrentProfileUuid() === targetUuid) {
+		await setCurrentProfileUuid(remaining[0]?.uuid || "")
 	}
 }
 
-export function upsertStoredProfile(profile = {}) {
-	if (!canUseStorage()) return
+export async function upsertStoredProfile(profile = {}) {
 	const uuid = String(profile?.uuid || "").trim()
 	if (!uuid) return
 	const entry = {
 		uuid,
 		name: String(profile?.profileName || profile?.name || "").trim(),
-		avatarUrl: String(profile?.avatarUrl || "").trim(),
+		avatarUrl: String(profile?.avatarUrl || profile?.avatar || ""),
 		savedAt: Date.now(),
 	}
-	const next = listStoredProfiles().filter((item) => item.uuid !== uuid)
+	const next = (await listStoredProfiles()).filter((item) => item.uuid !== uuid)
 	next.unshift(entry)
-	localStorage.setItem(PROFILE_REGISTRY_KEY, JSON.stringify(next))
+	await setSetting(PROFILE_REGISTRY_KEY, next)
 }

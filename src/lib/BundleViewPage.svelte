@@ -9,6 +9,7 @@
 	import {deriveBundleCreatedAtMs} from "$lib/dateTime"
 	import {CircleAlert as NoticeIcon, User} from "lucide-svelte"
 	import {readSearchTerm, writeSearchTerm} from "$lib/searchStore"
+	import { getProfile, setProfile, getAllPosts, setPost } from "$lib/db"
 
 	// ── props ──────────────────────────────────────────────────────────────────
 	let {type = "post"} = $props()
@@ -304,33 +305,24 @@
 		} catch {}
 	}
 
-	function readLocalProfile(targetUuid) {
-		if (typeof localStorage === "undefined") return null
-		const key = `${PROFILE_VIEW_CACHE_PREFIX}:${targetUuid}`
+	async function readLocalProfile(targetUuid) {
 		try {
-			const parsed = JSON.parse(localStorage.getItem(key) || "null")
+			const parsed = await getProfile(targetUuid)
 			if (!parsed?.cachedAt || !parsed?.data) {
-				localStorage.removeItem(key)
 				return null
 			}
 			if (Date.now() - parsed.cachedAt > PROFILE_VIEW_CACHE_TTL_MS) {
-				localStorage.removeItem(key)
 				return null
 			}
 			return parsed.data
 		} catch {
-			localStorage.removeItem(key)
 			return null
 		}
 	}
 
-	function writeLocalProfile(targetUuid, data) {
-		if (typeof localStorage === "undefined" || !data) return
+	async function writeLocalProfile(targetUuid, data) {
 		try {
-			localStorage.setItem(
-				`${PROFILE_VIEW_CACHE_PREFIX}:${targetUuid}`,
-				JSON.stringify({cachedAt: Date.now(), data}),
-			)
+			await setProfile(targetUuid, {cachedAt: Date.now(), data})
 		} catch {}
 	}
 
@@ -372,11 +364,15 @@
 				} else if (qParam) {
 					searchTerm = normalizeSearchTerm(qParam)
 				} else {
-					const savedTerm = readSearchTerm()
+					const savedTerm = await readSearchTerm()
 					searchTerm = savedTerm || ""
 				}
 			}
+		} catch (e) {
+			console.error("Failed to read search term preference", e)
+		}
 
+		try {
 			if (!uuid) throw new Error("UUID is required")
 			const slug = String(page.params?.slug || "")
 			const slugPath = slug ? `/${slug}` : ""
@@ -400,7 +396,7 @@
 					editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`
 					return
 				}
-				const cached = readLocalProfile(uuid)
+				const cached = await readLocalProfile(uuid)
 				if (cached) {
 					jsonData = cached
 					editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`
@@ -437,7 +433,7 @@
 					html: htmlChunks,
 					stamp: stampValue,
 				}
-				writeLocalProfile(uuid, jsonData)
+				await writeLocalProfile(uuid, jsonData)
 				writeSessionBundle(uuid, bundle)
 				chunkUris = collectChunkUrisFromPosts(
 					Array.isArray(bundle?.posts) ? bundle.posts : [],
@@ -469,6 +465,8 @@
 						String(primary?.authorAvatar || "").trim() ||
 						author.authorAvatar,
 				}
+				// Cache post to IndexedDB
+				await setPost(jsonData.uri || uuid, jsonData)
 				// Route if data has profile tag
 				if (bundleHasProfileData(bundle, jsonData)) {
 					return goto(
@@ -480,6 +478,27 @@
 				}
 			}
 		} catch (e) {
+			// Try offline cache fallback
+			try {
+				if (isProfile) {
+					const cached = await readLocalProfile(uuid)
+					if (cached) {
+						jsonData = cached
+						loading = false
+						return
+					}
+				} else {
+					const cachedPosts = await getAllPosts()
+					const cached = cachedPosts.find(p => p.uuid === uuid || p.uri === uuid)
+					if (cached) {
+						jsonData = cached
+						loading = false
+						return
+					}
+				}
+			} catch (cacheErr) {
+				console.error("Cache fallback failed:", cacheErr)
+			}
 			error = e?.message || "Failed to load"
 		} finally {
 			loading = false

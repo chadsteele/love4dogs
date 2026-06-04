@@ -13,21 +13,21 @@
 	let profiles = $state([])
 	let currentUuid = $state("")
 
-	function refreshProfiles() {
-		profiles = listStoredProfiles()
-		currentUuid = getCurrentProfileUuid()
+	async function refreshProfiles() {
+		profiles = await listStoredProfiles()
+		currentUuid = await getCurrentProfileUuid()
 	}
 
-	function chooseProfile(uuid = "") {
+	async function chooseProfile(uuid = "") {
 		const next = String(uuid || "").trim()
 		if (!next) return
-		setCurrentProfileUuid(next)
+		await setCurrentProfileUuid(next)
 		currentUuid = next
 		goto("/post/edit")
 	}
 
-	onMount(() => {
-		refreshProfiles()
+	onMount(async () => {
+		await refreshProfiles()
 	})
 </script>
 

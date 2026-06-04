@@ -21,6 +21,7 @@
 		mediaTokenFromOrigin,
 		expandMinifiedHtmlTags,
 		minifyHtml,
+		upsertApproxPostInCache,
 	} from "$lib/utils"
 	import {
 		hasRequiredLocationParts,
@@ -48,6 +49,7 @@
 		resolvePostTimestampMs,
 	} from "$lib/dateTime"
 	import ShowAdmin from "$lib/ShowAdmin.svelte"
+	import {enqueueSync} from "$lib/db"
 	import {
 		buildLocalImageProxyUrl,
 		collectUrlTextNodes,
@@ -90,6 +92,12 @@
 	const DEBUG_PROFILE = false
 	const POST_EDIT_PATH_PREFIX = "/post/edit/"
 
+	const getOfflineId = (url) => {
+		if (typeof url !== 'string') return null;
+		const match = url.match(/\/offline-media\/([a-zA-Z0-9-]+)/);
+		return match ? match[1] : null;
+	};
+
 	let uuid = $state("")
 
 	let email = $state("")
@@ -127,9 +135,9 @@
 	let touchedName = $state(false)
 	let touchedEmail = $state(false)
 	let validationActive = $state(false)
-	let profileImageWrapEl
-	let profileNameInputEl
-	let emailInputEl
+	let profileImageWrapEl = $state(null)
+	let profileNameInputEl = $state(null)
+	let emailInputEl = $state(null)
 	let storageReady = $state(false)
 	let initialProfileSnapshot = null
 	let storedSnapshotBaseline = null
@@ -1271,6 +1279,9 @@
 			profileUploadedMedia,
 			backgroundUploadedMedia,
 			editorMediaList,
+			locationConfirmed,
+			confirmedAddress,
+			confirmedLocation,
 		}
 	}
 
@@ -1361,6 +1372,13 @@
 					(entry) => entry && typeof entry === "object",
 				)
 			: []
+		locationConfirmed = Boolean(profile.locationConfirmed || false)
+		confirmedAddress = String(profile.confirmedAddress || "")
+		confirmedLocation = profile.confirmedLocation || null
+		if (confirmedLocation) {
+			modalLocation = { ...confirmedLocation }
+			addressText = confirmedAddress
+		}
 	}
 
 	function validateRequiredFields() {
@@ -1548,26 +1566,6 @@
 		publishing = true
 
 		try {
-			let previousAtUri = String(existingProfileAtUri || "").trim()
-			if (!previousAtUri && uuid) {
-				try {
-					const existingBundleRes = await fetch(
-						`/api/profile-bundle?uuid=${encodeURIComponent(uuid)}`,
-					)
-					const existingBundle = await existingBundleRes
-						.json()
-						.catch(() => ({}))
-					if (existingBundleRes.ok) {
-						previousAtUri = extractRootAtUriFromBundle(
-							existingBundle,
-							uuid,
-						)
-					}
-				} catch {
-					// Best effort only; if no prior URI is known we skip deletion.
-				}
-			}
-
 			const resolvePublishImageCarrier = async (
 				entry,
 				fallbackAlt = "Image",
@@ -1585,7 +1583,32 @@
 				const sourceUrl = String(
 					entry.bskyUrl || entry.url || "",
 				).trim()
-				if (!sourceUrl || !isBskyHostedUrl(sourceUrl)) return null
+				if (!sourceUrl) return null
+
+				const offlineId = getOfflineId(sourceUrl)
+				if (offlineId || entry.isOfflineMedia) {
+					return {
+						...entry,
+						kind: "image",
+						alt,
+						url: sourceUrl,
+						bskyUrl: sourceUrl,
+						isOfflineMedia: true,
+						offlineId: offlineId || entry.offlineId
+					}
+				}
+
+				if (typeof navigator !== "undefined" && navigator.onLine === false) {
+					return {
+						...entry,
+						kind: "image",
+						alt,
+						url: sourceUrl,
+						bskyUrl: sourceUrl
+					}
+				}
+
+				if (!isBskyHostedUrl(sourceUrl)) return null
 
 				const formData = new FormData()
 				formData.append("mode", "resolve-cdn-blob")
@@ -1612,6 +1635,162 @@
 				}
 			}
 
+			if (typeof navigator !== "undefined" && navigator.onLine === false) {
+				try {
+					const publishProfileImage = await resolvePublishImageCarrier(
+						selectedProfileImage,
+						"Profile image",
+					)
+					const publishBackgroundImage = await resolvePublishImageCarrier(
+						selectedBackgroundImage,
+						"Profile background",
+					)
+
+					await saveProfile(false)
+
+					const primaryPayloadForBundle = {
+						type: isPostEditRoute ? "post" : "profile",
+						uuid,
+						authorid: uuid,
+						stamp: profileRecordStamp,
+						email: encryptEmailForPayload(email),
+						profilePic:
+							publishProfileImage?.bskyUrl ||
+							selectedProfileImage?.bskyUrl ||
+							selectedProfileImage?.url ||
+							null,
+						backgroundPic:
+							publishBackgroundImage?.bskyUrl ||
+							selectedBackgroundImage?.bskyUrl ||
+							selectedBackgroundImage?.url ||
+							null,
+						name: profileName,
+						description: profileDescription,
+					}
+					const subsequentPayloadForBundle = mapSubsequentPayloadForBundle(
+						subsequentPostsPayload,
+					)
+					const combinedBundle = buildBskyCombinedPayloadBundle(
+						primaryPayloadForBundle,
+						subsequentPayloadForBundle,
+						{
+							uuid: String(primaryPayloadForBundle?.uuid || uuid || ""),
+							maxPayloadChars: CHUNK_ALT_PAYLOAD_TARGET_CHARS,
+						},
+					)
+					const chunks = buildChunkEntriesFromBundle(combinedBundle)
+
+					const postText = clampPostTextForApi(
+						[profileName.trim(), profileDescription.trim()]
+							.filter(Boolean)
+							.join("\n"),
+					)
+
+					const primaryMedia = []
+					if (publishProfileImage) {
+						primaryMedia.push({
+							...publishProfileImage,
+							kind: "image",
+							alt: String(publishProfileImage.alt || "Profile image"),
+						})
+					}
+					if (publishBackgroundImage) {
+						primaryMedia.push({
+							...publishBackgroundImage,
+							kind: "image",
+							alt: String(
+								publishBackgroundImage.alt || "Profile background",
+							),
+						})
+					}
+
+					const imageAttachments = editorMediaList
+						.filter((entry) => entry?.kind === "image")
+						.map((entry) => ({
+							kind: "image",
+							alt: String(entry.alt || "Image"),
+							blob: entry.blob,
+							url: entry.url || entry.bskyUrl,
+							bskyUrl: entry.bskyUrl || entry.url,
+							isOfflineMedia: entry.isOfflineMedia,
+							offlineId: entry.offlineId || getOfflineId(entry.url || entry.bskyUrl)
+						}))
+					const videoAttachments = editorMediaList
+						.filter((entry) => entry?.kind === "video")
+						.slice(0, 1)
+						.map((entry) => ({
+							kind: "video",
+							alt: String(entry.alt || "Video"),
+							blob: entry.blob,
+							url: entry.url || entry.bskyUrl,
+							bskyUrl: entry.bskyUrl || entry.url,
+							isOfflineMedia: entry.isOfflineMedia,
+							offlineId: entry.offlineId || getOfflineId(entry.url || entry.bskyUrl)
+						}))
+					const fallbackImage = publishProfileImage
+						? [
+								{
+									kind: "image",
+									alt: String(
+										publishProfileImage.alt || "Profile image",
+									),
+									blob: publishProfileImage.blob,
+									url: publishProfileImage.url || publishProfileImage.bskyUrl,
+									bskyUrl: publishProfileImage.bskyUrl || publishProfileImage.url,
+									isOfflineMedia: publishProfileImage.isOfflineMedia,
+									offlineId: publishProfileImage.offlineId
+								},
+							]
+						: []
+					const attachmentPool =
+						imageAttachments.length > 0
+							? imageAttachments
+							: primaryMedia.length > 0
+								? primaryMedia
+								: fallbackImage
+
+					await enqueueSync({
+						uuid,
+						type: isPostEditRoute ? "post" : "profile",
+						postText,
+						chunks,
+						primaryPayload: primaryPayloadForBundle,
+						primaryMedia,
+						replyAttachmentPool: attachmentPool,
+						videoAttachments
+					})
+
+					publishMessage = ""
+					publishError = "Offline. Your updates have been queued and will sync automatically when your internet connection is restored."
+				} catch (err) {
+					console.error("[profile] publishToBluesky:offline-queue-failed", err)
+					publishError = err?.message || "Failed to queue publication offline."
+				} finally {
+					publishing = false
+				}
+				return
+			}
+
+			let previousAtUri = String(existingProfileAtUri || "").trim()
+			if (!previousAtUri && uuid) {
+				try {
+					const existingBundleRes = await fetch(
+						`/api/profile-bundle?uuid=${encodeURIComponent(uuid)}`,
+					)
+					const existingBundle = await existingBundleRes
+						.json()
+						.catch(() => ({}))
+					if (existingBundleRes.ok) {
+						previousAtUri = extractRootAtUriFromBundle(
+							existingBundle,
+							uuid,
+						)
+					}
+				} catch {
+					// Best effort only; if no prior URI is known we skip deletion.
+				}
+			}
+
 			const publishProfileImage = await resolvePublishImageCarrier(
 				selectedProfileImage,
 				"Profile image",
@@ -1622,7 +1801,7 @@
 			)
 
 			debugProfile("[profile] saving draft before publish")
-			saveProfile(false)
+			await saveProfile(false)
 
 			const publishedSlugPath = cleanCanonicalName(profileName)
 				.split("/")
@@ -1795,9 +1974,8 @@
 		}
 	}
 
-	function saveProfile(showMessage = true) {
+	async function saveProfile(showMessage = true) {
 		debugProfile("[profile] saveProfile", {showMessage})
-		if (typeof localStorage === "undefined") return
 		const warning = getDraftSaveWarning()
 		if (warning) {
 			saveWarning = warning
@@ -1811,10 +1989,10 @@
 		const payload = buildStoredProfileForStorage()
 		const snapshot = JSON.stringify(payload)
 		lastAutosaveSnapshot = snapshot
-		writeStoredProfileByUuid(uuid, payload)
+		await writeStoredProfileByUuid(uuid, payload)
 		if (shouldRegisterCurrentProfile(payload)) {
-			setCurrentProfileUuid(uuid)
-			upsertStoredProfile({
+			await setCurrentProfileUuid(uuid)
+			await upsertStoredProfile({
 				uuid,
 				name: profileName,
 				avatarUrl: String(
@@ -1824,12 +2002,23 @@
 				),
 			})
 		}
+		if (locationConfirmed && confirmedLocation) {
+			await upsertApproxPostInCache({
+				uri: existingProfileAtUri || `local-draft://${uuid}`,
+				uuid,
+				text: [profileName, profileDescription].filter(Boolean).join("\n"),
+				lat: confirmedLocation.lat,
+				lon: confirmedLocation.lon,
+				images: selectedProfileImage?.url ? [selectedProfileImage.url] : [],
+				isUserPost: true
+			}).catch(e => console.error("[profile] failed to upsert approx post in cache", e))
+		}
 		if (showMessage) {
 			saveMessage = `Saved at ${formatLocalTime(Date.now())}`
 		}
 	}
 
-	function clearProfileDraft() {
+	async function clearProfileDraft() {
 		debugProfile("[profile] clearProfileDraft:start")
 
 		clearSnapshot = buildStoredProfileForStorage()
@@ -1852,7 +2041,7 @@
 		touchedEmail = false
 		validationActive = false
 		suppressAutosave = false
-		saveProfile(false)
+		await saveProfile(false)
 		setStoredSnapshotBaseline(buildStoredProfileForStorage())
 
 		if (clearUndoTimer) clearTimeout(clearUndoTimer)
@@ -1865,7 +2054,7 @@
 		debugProfile("[profile] clearProfileDraft:done")
 	}
 
-	function undoProfileChanges() {
+	async function undoProfileChanges() {
 		if (!clearSnapshot) return
 		if (clearUndoTimer) {
 			clearTimeout(clearUndoTimer)
@@ -1888,10 +2077,10 @@
 		const snapshot = JSON.stringify(buildStoredProfileForStorage())
 		lastAutosaveSnapshot = snapshot
 		const payload = buildStoredProfileForStorage()
-		writeStoredProfileByUuid(uuid, payload)
+		await writeStoredProfileByUuid(uuid, payload)
 		if (shouldRegisterCurrentProfile(payload)) {
-			setCurrentProfileUuid(uuid)
-			upsertStoredProfile({
+			await setCurrentProfileUuid(uuid)
+			await upsertStoredProfile({
 				uuid,
 				name: profileName,
 				avatarUrl: String(
@@ -1903,19 +2092,19 @@
 		}
 	}
 
-	function handleClearOrUndo() {
+	async function handleClearOrUndo() {
 		if (showUndo) {
-			undoProfileChanges()
+			await undoProfileChanges()
 			return
 		}
-		clearProfileDraft()
+		await clearProfileDraft()
 	}
 
-	function cancelProfileEdit() {
+	async function cancelProfileEdit() {
 		if (initialProfileSnapshot) {
 			suppressAutosave = true
 			applyStoredProfile(initialProfileSnapshot)
-			saveProfile(false)
+			await saveProfile(false)
 			suppressAutosave = false
 		}
 		saveMessage = ""
@@ -1964,35 +2153,39 @@
 			: null
 		let disposed = false
 
-		if (routeUuid && typeof localStorage !== "undefined") {
-			if (isPostEditRoute) {
-				fetch(
-					`/api/profile-bundle?uuid=${encodeURIComponent(routeUuid)}`,
-				)
-					.then(async (response) => {
-						if (!response.ok) return null
-						return await response.json().catch(() => null)
-					})
-					.then((bundle) => {
-						if (disposed) return
-						if (bundle && typeof bundle === "object") {
-							debugProfile(
-								"[profile] onMount:loaded post-edit bundle from api",
-								{routeUuid},
+		async function init() {
+			try {
+				if (routeUuid) {
+					if (isPostEditRoute) {
+						try {
+							const response = await fetch(
+								`/api/profile-bundle?uuid=${encodeURIComponent(routeUuid)}`,
 							)
-							applyBundleToEditor(bundle, routeUuid)
-							initialProfileSnapshot =
-								cloneStoredProfile(buildStoredProfile())
-							setStoredSnapshotBaseline(
-								buildStoredProfileForStorage(),
-							)
-							storageReady = true
-							saveProfile(false)
-							return
+							if (response.ok) {
+								const bundle = await response.json().catch(() => null)
+								if (!disposed && bundle && typeof bundle === "object") {
+									debugProfile(
+										"[profile] onMount:loaded post-edit bundle from api",
+										{routeUuid},
+									)
+									applyBundleToEditor(bundle, routeUuid)
+									initialProfileSnapshot =
+										cloneStoredProfile(buildStoredProfile())
+									setStoredSnapshotBaseline(
+										buildStoredProfileForStorage(),
+									)
+									storageReady = true
+									await saveProfile(false)
+									return
+								}
+							}
+						} catch (e) {
+							debugProfile("[profile] fetch bundle error", e)
 						}
 
+						if (disposed) return
 						debugProfile(
-							"[profile] onMount:post-edit uuid not found; starting empty",
+							"[profile] onMount:post-edit uuid not found or offline; starting empty",
 							{routeUuid},
 						)
 						uuid = routeUuid
@@ -2010,129 +2203,83 @@
 							buildStoredProfileForStorage(),
 						)
 						storageReady = true
-					})
-					.catch(() => {
-						if (disposed) return
-						uuid = routeUuid
-						existingProfileAtUri = ""
-						email = ""
-						profileName = ""
-						profileDescription = ""
-						contentHtml = ""
-						profileUploadedMedia = []
-						backgroundUploadedMedia = []
-						editorMediaList = []
+						return
+					}
+
+					const sessionBundle = readBundleSessionCache(routeUuid)
+					if (sessionBundle) {
+						debugProfile("[profile] onMount:loaded session bundle", {
+							routeUuid,
+						})
+						applyBundleToEditor(sessionBundle, routeUuid)
 						initialProfileSnapshot =
 							cloneStoredProfile(buildStoredProfile())
-						setStoredSnapshotBaseline(
-							buildStoredProfileForStorage(),
-						)
+						setStoredSnapshotBaseline(buildStoredProfileForStorage())
 						storageReady = true
-					})
-				return () => {
-					disposed = true
-					if (intervalId) clearInterval(intervalId)
-				}
-			}
+						await saveProfile(false)
+						return
+					}
 
-			const sessionBundle = readBundleSessionCache(routeUuid)
-			if (sessionBundle) {
-				debugProfile("[profile] onMount:loaded session bundle", {
-					routeUuid,
-				})
-				applyBundleToEditor(sessionBundle, routeUuid)
-				initialProfileSnapshot =
-					cloneStoredProfile(buildStoredProfile())
-				setStoredSnapshotBaseline(buildStoredProfileForStorage())
-				storageReady = true
-				saveProfile(false)
-				return () => {
-					if (intervalId) clearInterval(intervalId)
-				}
-			}
+					const viewCacheData = readProfileViewCache(routeUuid)
+					if (viewCacheData) {
+						debugProfile("[profile] onMount:loaded profile view cache", {
+							routeUuid,
+						})
+						applyViewCacheToEditor(viewCacheData, routeUuid)
+						initialProfileSnapshot =
+							cloneStoredProfile(buildStoredProfile())
+						setStoredSnapshotBaseline(buildStoredProfileForStorage())
+						storageReady = true
+						await saveProfile(false)
+						return
+					}
 
-			const viewCacheData = readProfileViewCache(routeUuid)
-			if (viewCacheData) {
-				debugProfile("[profile] onMount:loaded profile view cache", {
-					routeUuid,
-				})
-				applyViewCacheToEditor(viewCacheData, routeUuid)
-				initialProfileSnapshot =
-					cloneStoredProfile(buildStoredProfile())
-				setStoredSnapshotBaseline(buildStoredProfileForStorage())
-				storageReady = true
-				saveProfile(false)
-				return () => {
-					if (intervalId) clearInterval(intervalId)
-				}
-			}
-
-			const storedByRouteUuid = readStoredProfileByUuid(routeUuid)
-			if (storedByRouteUuid) {
-				debugProfile(
-					"[profile] onMount:loaded stored profile by route uuid",
-					{
-						routeUuid,
-					},
-				)
-				applyStoredProfile(storedByRouteUuid)
-				setCurrentProfileUuid(routeUuid)
-				initialProfileSnapshot =
-					cloneStoredProfile(buildStoredProfile())
-				setStoredSnapshotBaseline(buildStoredProfileForStorage())
-				storageReady = true
-				return () => {
-					if (intervalId) clearInterval(intervalId)
-				}
-			}
-
-			fetch(`/api/profile-bundle?uuid=${encodeURIComponent(routeUuid)}`)
-				.then(async (response) => {
-					if (!response.ok) return null
-					return await response.json().catch(() => null)
-				})
-				.then((bundle) => {
-					if (disposed) return
-					if (bundle && typeof bundle === "object") {
+					const storedByRouteUuid = await readStoredProfileByUuid(routeUuid)
+					if (storedByRouteUuid) {
 						debugProfile(
-							"[profile] onMount:loaded bundle from api",
+							"[profile] onMount:loaded stored profile by route uuid",
 							{
 								routeUuid,
 							},
 						)
-						applyBundleToEditor(bundle, routeUuid)
+						applyStoredProfile(storedByRouteUuid)
+						await setCurrentProfileUuid(routeUuid)
 						initialProfileSnapshot =
 							cloneStoredProfile(buildStoredProfile())
-						setStoredSnapshotBaseline(
-							buildStoredProfileForStorage(),
-						)
+						setStoredSnapshotBaseline(buildStoredProfileForStorage())
 						storageReady = true
-						saveProfile(false)
 						return
 					}
 
-					debugProfile(
-						"[profile] onMount:route uuid not found; starting new profile",
-						{routeUuid},
-					)
-					uuid = routeUuid
-					existingProfileAtUri = ""
-					email = ""
-					profileName = ""
-					profileDescription = ""
-					contentHtml = ""
-					profileUploadedMedia = []
-					backgroundUploadedMedia = []
-					editorMediaList = []
-					initialProfileSnapshot =
-						cloneStoredProfile(buildStoredProfile())
-					setStoredSnapshotBaseline(buildStoredProfileForStorage())
-					storageReady = true
-				})
-				.catch(() => {
+					try {
+						const response = await fetch(`/api/profile-bundle?uuid=${encodeURIComponent(routeUuid)}`)
+						if (response.ok) {
+							const bundle = await response.json().catch(() => null)
+							if (!disposed && bundle && typeof bundle === "object") {
+								debugProfile(
+									"[profile] onMount:loaded bundle from api",
+									{
+										routeUuid,
+									},
+								)
+								applyBundleToEditor(bundle, routeUuid)
+								initialProfileSnapshot =
+									cloneStoredProfile(buildStoredProfile())
+								setStoredSnapshotBaseline(
+									buildStoredProfileForStorage(),
+								)
+								storageReady = true
+								await saveProfile(false)
+								return
+							}
+						}
+					} catch (e) {
+						debugProfile("[profile] fetch profile-bundle error", e)
+					}
+
 					if (disposed) return
 					debugProfile(
-						"[profile] onMount:route uuid not found; starting new profile",
+						"[profile] onMount:route uuid not found or offline; starting new profile",
 						{routeUuid},
 					)
 					uuid = routeUuid
@@ -2148,89 +2295,78 @@
 						cloneStoredProfile(buildStoredProfile())
 					setStoredSnapshotBaseline(buildStoredProfileForStorage())
 					storageReady = true
-				})
-			return () => {
-				disposed = true
-				if (intervalId) clearInterval(intervalId)
-			}
-		}
-
-		if (typeof localStorage === "undefined") {
-			debugProfile("[profile] onMount:no localStorage")
-			uuid = generateShortUuid()
-			existingProfileAtUri = ""
-			initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
-			setStoredSnapshotBaseline(buildStoredProfileForStorage())
-			storageReady = true
-			return () => {
-				if (intervalId) clearInterval(intervalId)
-			}
-		}
-
-		const currentUuid = getCurrentProfileUuid()
-		const loadUuid = currentUuid
-
-		if (loadUuid) {
-			const storedByUuid = readStoredProfileByUuid(loadUuid)
-			if (storedByUuid) {
-				debugProfile(
-					"[profile] onMount:loaded stored profile by uuid",
-					{
-						loadUuid,
-					},
-				)
-				applyStoredProfile(storedByUuid)
-				setCurrentProfileUuid(loadUuid)
-				initialProfileSnapshot =
-					cloneStoredProfile(buildStoredProfile())
-				setStoredSnapshotBaseline(buildStoredProfileForStorage())
-				storageReady = true
-				return () => {
-					if (intervalId) clearInterval(intervalId)
+					return
 				}
-			}
-		}
 
-		const raw = localStorage.getItem(LEGACY_PROFILE_STORAGE_KEY)
-		if (raw) {
-			try {
-				const parsed = JSON.parse(raw)
-				if (parsed && typeof parsed === "object" && parsed.uuid) {
-					debugProfile("[profile] onMount:migrating legacy profile", {
-						uuid: parsed.uuid,
-					})
-					applyStoredProfile(parsed)
-					writeStoredProfileByUuid(parsed.uuid, parsed)
-					setCurrentProfileUuid(parsed.uuid)
-					upsertStoredProfile({
-						uuid: parsed.uuid,
-						name: parsed.profileName,
-						avatarUrl: String(
-							parsed?.profileUploadedMedia?.[0]?.bskyUrl ||
-								parsed?.profileUploadedMedia?.[0]?.url ||
-								"",
-						),
-					})
-					initialProfileSnapshot =
-						cloneStoredProfile(buildStoredProfile())
-					setStoredSnapshotBaseline(buildStoredProfileForStorage())
-					storageReady = true
-					return () => {
-						if (intervalId) clearInterval(intervalId)
+				const currentUuid = await getCurrentProfileUuid()
+				const loadUuid = currentUuid
+
+				if (loadUuid) {
+					const storedByUuid = await readStoredProfileByUuid(loadUuid)
+					if (storedByUuid) {
+						debugProfile(
+							"[profile] onMount:loaded stored profile by uuid",
+							{
+								loadUuid,
+							},
+						)
+						applyStoredProfile(storedByUuid)
+						await setCurrentProfileUuid(loadUuid)
+						initialProfileSnapshot =
+							cloneStoredProfile(buildStoredProfile())
+						setStoredSnapshotBaseline(buildStoredProfileForStorage())
+						storageReady = true
+						return
 					}
 				}
-			} catch {
-				warnProfile("[profile] onMount:failed to parse legacy profile")
+
+				const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(LEGACY_PROFILE_STORAGE_KEY) : null
+				if (raw) {
+					try {
+						const parsed = JSON.parse(raw)
+						if (parsed && typeof parsed === "object" && parsed.uuid) {
+							debugProfile("[profile] onMount:migrating legacy profile", {
+								uuid: parsed.uuid,
+							})
+							applyStoredProfile(parsed)
+							await writeStoredProfileByUuid(parsed.uuid, parsed)
+							await setCurrentProfileUuid(parsed.uuid)
+							await upsertStoredProfile({
+								uuid: parsed.uuid,
+								name: parsed.profileName,
+								avatarUrl: String(
+									parsed?.profileUploadedMedia?.[0]?.bskyUrl ||
+										parsed?.profileUploadedMedia?.[0]?.url ||
+										"",
+								),
+							})
+							initialProfileSnapshot =
+								cloneStoredProfile(buildStoredProfile())
+							setStoredSnapshotBaseline(buildStoredProfileForStorage())
+							storageReady = true
+							return
+						}
+					} catch {
+						warnProfile("[profile] onMount:failed to parse legacy profile")
+					}
+				}
+
+				debugProfile("[profile] onMount:no current profile; starting empty")
+				uuid = generateShortUuid()
+				existingProfileAtUri = ""
+				initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
+				storageReady = true
+				setStoredSnapshotBaseline(buildStoredProfileForStorage())
+			} catch (err) {
+				console.error("[profile] onMount error", err)
+				storageReady = true
 			}
 		}
 
-		debugProfile("[profile] onMount:no current profile; starting empty")
-		uuid = generateShortUuid()
-		existingProfileAtUri = ""
-		initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
-		storageReady = true
-		setStoredSnapshotBaseline(buildStoredProfileForStorage())
+		init()
+
 		return () => {
+			disposed = true
 			if (intervalId) clearInterval(intervalId)
 		}
 	})
@@ -2568,7 +2704,7 @@
 		{modalLocation}
 		{addressText}
 		{pinMovedInModal}
-		onConfirm={(result) => {
+		onConfirm={async (result) => {
 			if (result.error) {
 				locationError = result.error
 				locationConfirmed = result.locationConfirmed
@@ -2577,8 +2713,15 @@
 			addressText = result.addressText
 			confirmedAddress = result.confirmedAddress
 			locationConfirmed = result.locationConfirmed
+			if (result.confirmedLocation) {
+				confirmedLocation = result.confirmedLocation
+			}
+			if (result.modalLocation) {
+				modalLocation = result.modalLocation
+			}
 			locationError = ""
 			showLocationModal = false
+			await saveProfile(false)
 		}}
 		onCancel={() => {
 			showLocationModal = false

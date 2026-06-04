@@ -6,9 +6,13 @@
 		getApproxPostsFromCache,
 		gpsToHash,
 		setApproxPostsInCache,
+		getApproxCacheEntry,
 	} from "$lib/utils"
+	import { getSetting, setSetting } from "$lib/db.js"
+	import { listStoredProfiles } from "$lib/profileRegistry"
 
 	const LOCAL_MY_POSTS_KEY = "love4dogs.my-post-uris"
+	const SHOW_MY_POSTS_ON_MAP_KEY = "love4dogs.settings.show-my-posts-on-map"
 
 	let {data} = $props()
 	let mapEl = $state(null)
@@ -25,6 +29,8 @@
 	let cacheHashesFetching = $state(0)
 	let showLocalCacheDebug = $state(false)
 	let myPostUris = $state([])
+	let showMyPosts = $state(true)
+	let localProfileUuids = $state([])
 
 	let leaflet = null
 	let mapInstance = null
@@ -635,23 +641,43 @@
 			const missingApproximates = []
 			for (const approximate of cleanApproximates) {
 				if (approxPostsCache.has(approximate)) {
-					cachedPosts.push(
-						...(approxPostsCache.get(approximate) || []),
-					)
-					continue
+					const inMemory = approxPostsCache.get(approximate) || []
+					for (const p of inMemory) {
+						if (!cachedPosts.some(cp => cp.uri === p.uri)) {
+							cachedPosts.push(p)
+						}
+					}
 				}
-				const persistedPosts = getApproxPostsFromCache(approximate)
-				if (Array.isArray(persistedPosts)) {
-					approxPostsCache.set(approximate, persistedPosts)
-					cachedPosts.push(...persistedPosts)
-					continue
+
+				const entry = await getApproxCacheEntry(approximate)
+				if (entry && Array.isArray(entry.posts)) {
+					approxPostsCache.set(approximate, entry.posts)
+					for (const p of entry.posts) {
+						if (!cachedPosts.some(cp => cp.uri === p.uri)) {
+							cachedPosts.push(p)
+						}
+					}
+
+					const ageMs = Date.now() - (entry.savedAt || 0)
+					const isExpired = ageMs > 10 * 60 * 1000 // 10 minutes
+					const hasLocal = entry.hasLocalPost || entry.posts.some(p => p.isUserPost || (p.uuid && localProfileUuids.includes(p.uuid)))
+
+					if (isExpired || (hasLocal && showMyPosts)) {
+						if (approxErrorCache.has(approximate)) {
+							const retryAt = approxErrorCache.get(approximate)
+							if (Date.now() < retryAt) continue
+							approxErrorCache.delete(approximate)
+						}
+						missingApproximates.push(approximate)
+					}
+				} else {
+					if (approxErrorCache.has(approximate)) {
+						const retryAt = approxErrorCache.get(approximate)
+						if (Date.now() < retryAt) continue
+						approxErrorCache.delete(approximate)
+					}
+					missingApproximates.push(approximate)
 				}
-				if (approxErrorCache.has(approximate)) {
-					const retryAt = approxErrorCache.get(approximate)
-					if (Date.now() < retryAt) continue
-					approxErrorCache.delete(approximate)
-				}
-				missingApproximates.push(approximate)
 			}
 
 			hashLoadTotal = cleanApproximates.length
@@ -687,10 +713,10 @@
 					hashLoadDone += 1
 				},
 				requestId,
-				(approximate, posts) => {
+				async (approximate, posts) => {
 					// Drop pins immediately as each hash cell resolves
 					if (requestId !== mapLoadRequestId) return
-					setApproxPostsInCache(approximate, posts)
+					await setApproxPostsInCache(approximate, posts)
 					let changed = false
 					for (const post of posts) {
 						if (!post?.uri) continue
@@ -821,7 +847,11 @@
 
 	function validMapPosts() {
 		return mapPosts.filter(
-			(post) => Number.isFinite(post?.lat) && Number.isFinite(post?.lon),
+			(post) => {
+				if (!Number.isFinite(post?.lat) || !Number.isFinite(post?.lon)) return false
+				if (!showMyPosts && (post.isUserPost || (post.uuid && localProfileUuids.includes(post.uuid)))) return false
+				return true
+			}
 		)
 	}
 
@@ -890,22 +920,25 @@
 	}
 
 	$effect(() => {
-		// Read mapPosts before any early return so Svelte 5 tracks it as a
-		// dependency even when leaflet/mapInstance/markerLayer aren't ready yet.
+		// Read mapPosts and showMyPosts before any early return so Svelte 5 tracks them
 		const _posts = mapPosts
+		const _show = showMyPosts
 		renderMarkers()
 	})
 
-	onMount(() => {
+	$effect(() => {
+		const val = showMyPosts
+		setSetting(SHOW_MY_POSTS_ON_MAP_KEY, val).catch(() => {})
+	})
+
+	onMount(async () => {
 		let destroyed = false
 		if (typeof window !== "undefined") {
 			const host = String(window.location.hostname || "")
 			showLocalCacheDebug =
 				host === "localhost" || host === "127.0.0.1" || host === "::1"
 			try {
-				const parsed = JSON.parse(
-					localStorage.getItem(LOCAL_MY_POSTS_KEY) || "[]",
-				)
+				const parsed = await getSetting(LOCAL_MY_POSTS_KEY, [])
 				myPostUris = Array.isArray(parsed)
 					? [
 							...new Set(
@@ -915,6 +948,18 @@
 					: []
 			} catch {
 				myPostUris = []
+			}
+			try {
+				const val = await getSetting(SHOW_MY_POSTS_ON_MAP_KEY, true)
+				showMyPosts = val !== false
+			} catch {
+				showMyPosts = true
+			}
+			try {
+				const profilesList = await listStoredProfiles()
+				localProfileUuids = profilesList.map(p => p.uuid).filter(Boolean)
+			} catch {
+				localProfileUuids = []
 			}
 		}
 
@@ -1010,6 +1055,12 @@
 				{searchingLocation ? "Searching..." : "Map"}
 			</button>
 		</form>
+		<div class="filter-row">
+			<label class="toggle-my-posts">
+				<input type="checkbox" bind:checked={showMyPosts} />
+				<span>Show my posts on the map</span>
+			</label>
+		</div>
 		{#if searchError}
 			<p class="error">{searchError}</p>
 		{/if}
@@ -1263,6 +1314,31 @@
 		font: inherit;
 		font-size: 0.78rem;
 		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.filter-row {
+		display: flex;
+		align-items: center;
+		margin-top: 0.5rem;
+		margin-bottom: 0.85rem;
+	}
+
+	.toggle-my-posts {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		font-size: 0.9rem;
+		color: #3a5b41;
+		cursor: pointer;
+		user-select: none;
+		font-weight: 500;
+	}
+
+	.toggle-my-posts input[type="checkbox"] {
+		width: 1.1rem;
+		height: 1.1rem;
+		accent-color: #3b6e4f;
 		cursor: pointer;
 	}
 
