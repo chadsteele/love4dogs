@@ -9,13 +9,13 @@
  *   - Bluesky credentials in .env (BSKY_USERNAME / BSKY_PASSWORD)
  *
  * Usage:
- *   node regression-test-posts.mjs [--author=<handle>] [--server=<url>] [--wait=<ms>] [--location=<mauritius|colorado>]
+ *   node regression-test-posts.mjs [--author=<handle>] [--server=<url>] [--wait=<ms>] [--location=<query>]
  *
  * Options:
  *   --author   Bluesky handle or DID of the publishing account (default: BSKY_AUTHOR env or 'love4dogs.club')
  *   --server   Local dev server base URL (default: TEST_SERVER_URL env or 'http://localhost:5173')
  *   --wait     Milliseconds to wait for Bluesky indexing (default: 15000)
- *   --location Test location preset (default: mauritius)
+ *   --location Base location query for geocoding (default: Mauritius)
  */
 
 import {
@@ -162,7 +162,10 @@ async function main() {
 
 	console.log('\nStep 2: Build and publish a large post');
 	const uuid = generateUuid();
-	const testLocation = createRandomTestLocation(LOCATION);
+	const testLocation = await createRandomTestLocation({
+		baseUrl: BASE_URL,
+		location: LOCATION,
+	});
 	const availableProfiles = await loadRegressionProfileSeeds();
 	const selectedProfile = pickRandomRegressionProfileSeed(availableProfiles);
 	if (!selectedProfile) {
@@ -267,8 +270,8 @@ async function main() {
 	assertEqual(uploadedImages.length, dogImageUrls.length, 'Uploaded image count matches source count');
 	assertEqual(primaryPayload.state, testLocation.state, 'Primary payload state matches selected location');
 	assertEqual(primaryPayload.country, testLocation.country, 'Primary payload country matches selected location');
-	assert(/^[0-9]{5}$/.test(String(primaryPayload.zip || '')), 'Primary payload zip is 5 digits');
-	assert(typeof primaryPayload.address === 'string' && primaryPayload.address.length > 0, 'Primary payload includes address');
+	assert(typeof primaryPayload.zip === 'string', 'Primary payload zip is a string');
+	assert(typeof primaryPayload.address === 'string' && primaryPayload.address.trim().length > 0, 'Primary payload includes address');
 	assertEqual(primaryPayload.city, testLocation.city, 'Primary payload city matches selected location');
 	assert(/^[0-9bcdefghjkmnpqrstuvwxyz]{5}$/i.test(String(primaryPayload.location?.approximate || '')), 'Primary payload includes /map approximate hash');
 	assert(/^[0-9bcdefghjkmnpqrstuvwxyz]{9}$/i.test(String(primaryPayload.location?.exact || '')), 'Primary payload includes /map exact hash');

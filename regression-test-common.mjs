@@ -39,21 +39,18 @@ export function resolveTestConfig(args = {}) {
 }
 
 export function normalizeRegressionLocation(value = '') {
-	const normalized = String(value || '')
-		.trim()
-		.toLowerCase();
+	const source = String(value || '').trim();
+	if (!source) return 'Port Louis, Mauritius';
 
-	if (!normalized) return 'mauritius';
+	const normalized = source.toLowerCase();
 	if (['mauritius', 'mu', 'mru', 'port-louis'].includes(normalized)) {
-		return 'mauritius';
+		return 'Port Louis, Mauritius';
 	}
 	if (['colorado', 'co', 'denver', 'usa', 'us'].includes(normalized)) {
-		return 'colorado';
+		return 'Denver, Colorado, USA';
 	}
 
-	throw new Error(
-		`Unsupported regression test location ${JSON.stringify(value)}. Use "mauritius" or "colorado".`
-	);
+	return source;
 }
 
 export function createAssertions() {
@@ -256,90 +253,6 @@ export function findLocationLeakInText(text = '', location = {}) {
 	return '';
 }
 
-const DENVER_METRO_CITIES = [
-	{
-		city: 'Denver',
-		zips: ['80202', '80203', '80204', '80205', '80206', '80209', '80210'],
-		latRange: [39.64, 39.79],
-		lonRange: [-105.11, -104.88],
-	},
-	{
-		city: 'Lakewood',
-		zips: ['80214', '80215', '80226', '80227', '80228', '80232'],
-		latRange: [39.66, 39.75],
-		lonRange: [-105.17, -105.03],
-	},
-	{
-		city: 'Aurora',
-		zips: ['80010', '80011', '80012', '80013', '80014', '80015', '80017'],
-		latRange: [39.66, 39.77],
-		lonRange: [-104.89, -104.70],
-	},
-	{
-		city: 'Arvada',
-		zips: ['80002', '80003', '80004', '80005', '80007'],
-		latRange: [39.78, 39.87],
-		lonRange: [-105.16, -105.04],
-	},
-	{
-		city: 'Westminster',
-		zips: ['80020', '80021', '80023', '80234', '80260'],
-		latRange: [39.83, 39.92],
-		lonRange: [-105.09, -104.95],
-	},
-	{
-		city: 'Littleton',
-		zips: ['80120', '80121', '80122', '80123', '80127', '80128'],
-		latRange: [39.56, 39.64],
-		lonRange: [-105.10, -104.93],
-	},
-];
-
-const MAURITIUS_CITIES = [
-	{
-		city: 'Port Louis',
-		state: 'Port Louis',
-		zips: ['11328', '11329', '11430', '11602'],
-		latRange: [-20.18, -20.14],
-		lonRange: [57.48, 57.53],
-	},
-	{
-		city: 'Curepipe',
-		state: 'Plaines Wilhems',
-		zips: ['74213', '74214', '74401', '74415'],
-		latRange: [-20.34, -20.30],
-		lonRange: [57.50, 57.53],
-	},
-	{
-		city: 'Quatre Bornes',
-		state: 'Plaines Wilhems',
-		zips: ['72249', '72251', '72257', '72301'],
-		latRange: [-20.28, -20.25],
-		lonRange: [57.47, 57.50],
-	},
-	{
-		city: 'Mahebourg',
-		state: 'Grand Port',
-		zips: ['50815', '50816', '50817', '50901'],
-		latRange: [-20.42, -20.39],
-		lonRange: [57.69, 57.73],
-	},
-	{
-		city: 'Grand Baie',
-		state: 'Riviere du Rempart',
-		zips: ['30501', '30503', '30506', '30512'],
-		latRange: [-20.03, -20.00],
-		lonRange: [57.57, 57.61],
-	},
-	{
-		city: 'Flic en Flac',
-		state: 'Black River',
-		zips: ['90501', '90502', '90503', '90512'],
-		latRange: [-20.30, -20.27],
-		lonRange: [57.35, 57.38],
-	},
-];
-
 const STREET_NAMES = [
 	'Aspen',
 	'Pine',
@@ -407,68 +320,146 @@ function buildMapHashes(lat, lon) {
 	return { approximate, exact, path };
 }
 
-export function createRandomColoradoLocation() {
-	const selectedCity = pickRandom(DENVER_METRO_CITIES);
-	const houseNumber = String(100 + Math.floor(Math.random() * 9800));
-	const streetName = pickRandom(STREET_NAMES);
-	const streetType = pickRandom(STREET_TYPES);
-	const zip = pickRandom(selectedCity.zips);
-	const lat = Number(randomInRange(selectedCity.latRange).toFixed(6));
-	const lon = Number(randomInRange(selectedCity.lonRange).toFixed(6));
-	const hashes = buildMapHashes(lat, lon);
+function randomMilesOffset(maxMiles = 30) {
+	return (Math.random() * 2 - 1) * maxMiles;
+}
 
-	const address = `${houseNumber} ${streetName} ${streetType}`;
-
+function offsetCoordinatesByMiles(baseLat, baseLon, maxMiles = 30) {
+	const latMiles = randomMilesOffset(maxMiles);
+	const lonMiles = randomMilesOffset(maxMiles);
+	const latDelta = latMiles / 69;
+	const lonScale = Math.max(0.2, Math.cos((baseLat * Math.PI) / 180));
+	const lonDelta = lonMiles / (69 * lonScale);
 	return {
-		address,
-		city: selectedCity.city,
-		state: 'CO',
-		zip,
-		country: 'USA',
-		lat,
-		lon,
-		approximate: hashes.approximate,
-		exact: hashes.exact,
-		hashPath: hashes.path,
-		formattedAddress: `${address}, ${selectedCity.city}, CO, USA, ${zip}`,
+		lat: Number((baseLat + latDelta).toFixed(6)),
+		lon: Number((baseLon + lonDelta).toFixed(6)),
 	};
 }
 
-export function createRandomMauritiusLocation() {
-	const selectedCity = pickRandom(MAURITIUS_CITIES);
-	const houseNumber = String(1 + Math.floor(Math.random() * 400));
-	const streetName = pickRandom(STREET_NAMES);
-	const streetType = pickRandom(['St', 'Ave', 'Rd', 'Lane', 'Royal Rd']);
-	const zip = pickRandom(selectedCity.zips);
-	const lat = Number(randomInRange(selectedCity.latRange).toFixed(6));
-	const lon = Number(randomInRange(selectedCity.lonRange).toFixed(6));
-	const hashes = buildMapHashes(lat, lon);
-
-	const address = `${houseNumber} ${streetName} ${streetType}`;
-
-	return {
-		address,
-		city: selectedCity.city,
-		state: selectedCity.state,
-		zip,
-		country: 'Mauritius',
-		lat,
-		lon,
-		approximate: hashes.approximate,
-		exact: hashes.exact,
-		hashPath: hashes.path,
-		formattedAddress: `${address}, ${selectedCity.city}, ${selectedCity.state}, Mauritius, ${zip}`,
-	};
+function hasUsableAddress(location = {}) {
+	const line1 = [location.houseNumber, location.road]
+		.map((value) => String(value || '').trim())
+		.filter(Boolean)
+		.join(' ');
+	const hasLocality = Boolean(
+		String(location.city || '').trim() ||
+			String(location.suburb || '').trim() ||
+			String(location.neighbourhood || '').trim() ||
+			String(location.zip || '').trim()
+	);
+	return Boolean(line1 || hasLocality);
 }
 
-export function createRandomTestLocation(location = 'mauritius') {
-	switch (normalizeRegressionLocation(location)) {
-		case 'colorado':
-			return createRandomColoradoLocation();
-		case 'mauritius':
-		default:
-			return createRandomMauritiusLocation();
+async function geocodeBaseLocation({baseUrl, query, fetchImpl = fetch}) {
+	const response = await fetchImpl(`${baseUrl}/api/geocode`, {
+		method: 'POST',
+		headers: {'Content-Type': 'application/json'},
+		body: JSON.stringify({query}),
+	});
+
+	const payload = await response.json().catch(() => ({}));
+	if (!response.ok || payload?.ok === false) {
+		throw new Error(payload?.error || `Geocoding failed for ${JSON.stringify(query)}`);
 	}
+
+	const lat = Number(payload?.lat);
+	const lon = Number(payload?.lon);
+	if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+		throw new Error(`Geocoding returned invalid coordinates for ${JSON.stringify(query)}`);
+	}
+
+	return {lat, lon};
+}
+
+async function reverseGeocodeLocation({baseUrl, lat, lon, fetchImpl = fetch}) {
+	const response = await fetchImpl(`${baseUrl}/api/geocode`, {
+		method: 'POST',
+		headers: {'Content-Type': 'application/json'},
+		body: JSON.stringify({lat, lon, reverse: true}),
+	});
+
+	const payload = await response.json().catch(() => ({}));
+	if (!response.ok || payload?.ok === false) {
+		return null;
+	}
+
+	const location = {
+		lat: Number(payload?.lat),
+		lon: Number(payload?.lon),
+		houseNumber: String(payload?.houseNumber || '').trim(),
+		road: String(payload?.road || '').trim(),
+		neighbourhood: String(payload?.neighbourhood || '').trim(),
+		suburb: String(payload?.suburb || '').trim(),
+		city: String(payload?.city || '').trim(),
+		state: String(payload?.state || '').trim(),
+		country: String(payload?.country || '').trim(),
+		zip: String(payload?.zip || '').trim(),
+		formattedAddress: String(payload?.formattedAddress || '').trim(),
+	};
+
+	if (!Number.isFinite(location.lat) || !Number.isFinite(location.lon)) {
+		return null;
+	}
+
+	if (!hasUsableAddress(location)) {
+		return null;
+	}
+
+	return location;
+}
+
+export async function createRandomTestLocation({
+	baseUrl,
+	location = 'Mauritius',
+	fetchImpl = fetch,
+	maxOffsetMiles = 30,
+	maxAttempts = 12,
+} = {}) {
+	const normalizedLocation = normalizeRegressionLocation(location);
+	const apiBase = String(baseUrl || '').trim();
+	if (!apiBase) {
+		throw new Error('createRandomTestLocation requires baseUrl for geocoding.');
+	}
+
+	const {lat: baseLat, lon: baseLon} = await geocodeBaseLocation({
+		baseUrl: apiBase,
+		query: normalizedLocation,
+		fetchImpl,
+	});
+
+	for (let attempt = 1; attempt <= Math.max(1, maxAttempts); attempt += 1) {
+		const {lat, lon} = offsetCoordinatesByMiles(baseLat, baseLon, maxOffsetMiles);
+		const reverse = await reverseGeocodeLocation({baseUrl: apiBase, lat, lon, fetchImpl});
+		if (!reverse) continue;
+
+		const hashes = buildMapHashes(lat, lon);
+		const addressLine = [reverse.houseNumber, reverse.road]
+			.map((value) => String(value || '').trim())
+			.filter(Boolean)
+			.join(' ');
+
+		return {
+			address: addressLine || reverse.formattedAddress,
+			city: reverse.city,
+			state: reverse.state,
+			zip: reverse.zip,
+			country: reverse.country,
+			lat,
+			lon,
+			approximate: hashes.approximate,
+			exact: hashes.exact,
+			hashPath: hashes.path,
+			formattedAddress: reverse.formattedAddress,
+			houseNumber: reverse.houseNumber,
+			road: reverse.road,
+			neighbourhood: reverse.neighbourhood,
+			suburb: reverse.suburb,
+		};
+	}
+
+	throw new Error(
+		`Unable to reverse geocode a usable address near ${JSON.stringify(normalizedLocation)} after ${maxAttempts} attempts.`
+	);
 }
 
 // ---------------------------------------------------------------------------
