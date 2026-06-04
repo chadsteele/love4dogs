@@ -5,11 +5,14 @@ export function normalizePostType(value = '') {
 }
 
 export function upsertTypeTag(tags = [], postType = '') {
-	void postType;
 	const existing = (Array.isArray(tags) ? tags : [])
 		.map((entry) => String(entry || '').trim().toLowerCase())
 		.filter(Boolean);
-	return [...new Set(existing)].slice(0, 20);
+	const next = existing.filter((entry) => entry !== 'profile');
+	if (normalizePostType(postType) === 'profile') {
+		next.push('profile');
+	}
+	return [...new Set(next)].slice(0, 20);
 }
 
 export function extractPostTypeFromTags(tags = []) {

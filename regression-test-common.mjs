@@ -1,3 +1,5 @@
+import {readFile, writeFile} from 'node:fs/promises';
+
 // Tag pool for regression tests
 export const REGRESSION_TAG_POOL = [
 	'wanted', 'offered', 'volunteer', 'event', 'lost', 'found', 'urgent', 'help', 'meetup',  'rescue', 'supplies', 'transportation', 'medical', 'training',
@@ -22,13 +24,36 @@ export function parseArgs(argv = process.argv.slice(2)) {
 	return args;
 }
 
+const REGRESSION_PROFILE_SEEDS_URL = new URL('./.regression-profile-seeds.json', import.meta.url);
+
 export function resolveTestConfig(args = {}) {
 	return {
 		baseUrl: args.server || process.env.TEST_SERVER_URL || 'http://localhost:5173',
 		author: args.author || process.env.BSKY_AUTHOR || 'love4dogs.club',
 		indexWaitMs: Number(args.wait || process.env.TEST_INDEX_WAIT_MS || 15000),
+		location: normalizeRegressionLocation(
+			args.location || process.env.TEST_LOCATION || 'mauritius',
+		),
 		testMode: 'test' in args,
 	};
+}
+
+export function normalizeRegressionLocation(value = '') {
+	const normalized = String(value || '')
+		.trim()
+		.toLowerCase();
+
+	if (!normalized) return 'mauritius';
+	if (['mauritius', 'mu', 'mru', 'port-louis'].includes(normalized)) {
+		return 'mauritius';
+	}
+	if (['colorado', 'co', 'denver', 'usa', 'us'].includes(normalized)) {
+		return 'colorado';
+	}
+
+	throw new Error(
+		`Unsupported regression test location ${JSON.stringify(value)}. Use "mauritius" or "colorado".`
+	);
 }
 
 export function createAssertions() {
@@ -66,6 +91,70 @@ export function createAssertions() {
 	}
 
 	return { pass, fail, assert, assertEqual, counts };
+}
+
+export async function loadRegressionProfileSeeds() {
+	try {
+		const raw = await readFile(REGRESSION_PROFILE_SEEDS_URL, 'utf8');
+		const parsed = JSON.parse(raw);
+		return Array.isArray(parsed)
+			? parsed.filter((entry) => entry && typeof entry === 'object')
+			: [];
+	} catch (error) {
+		if (error?.code === 'ENOENT') return [];
+		throw error;
+	}
+}
+
+export async function resetRegressionProfileSeeds() {
+	await writeFile(
+		REGRESSION_PROFILE_SEEDS_URL,
+		'[]\n',
+		'utf8',
+	);
+}
+
+export async function saveRegressionProfileSeed(seed = {}) {
+	const normalized = {
+		uuid: String(seed?.uuid || '').trim(),
+		authorid: String(seed?.authorid || seed?.uuid || '').trim(),
+		authorName: String(seed?.authorName || seed?.title || '').trim(),
+		authorAvatar: String(seed?.authorAvatar || seed?.profilePic || '').trim(),
+		location: String(seed?.location || '').trim(),
+		createdAt: new Date().toISOString(),
+	};
+
+	if (!normalized.uuid || !normalized.authorid || !normalized.authorName) {
+		throw new Error('Regression profile seed requires uuid, authorid, and authorName.');
+	}
+
+	const existing = await loadRegressionProfileSeeds();
+	const next = [
+		normalized,
+		...existing.filter((entry) => String(entry?.uuid || '').trim() !== normalized.uuid),
+	].slice(0, 24);
+
+	await writeFile(
+		REGRESSION_PROFILE_SEEDS_URL,
+		`${JSON.stringify(next, null, 2)}\n`,
+		'utf8',
+	);
+
+	return normalized;
+}
+
+export function pickRandomRegressionProfileSeed(seeds = []) {
+	const candidates = Array.isArray(seeds)
+		? seeds.filter((entry) => {
+			const uuid = String(entry?.uuid || '').trim();
+			const authorid = String(entry?.authorid || '').trim();
+			const authorName = String(entry?.authorName || '').trim();
+			return Boolean(uuid && authorid && authorName);
+		})
+		: [];
+
+	if (candidates.length === 0) return null;
+	return pickRandom(candidates);
 }
 
 export function generateUuid(length = 12) {
@@ -206,6 +295,51 @@ const DENVER_METRO_CITIES = [
 	},
 ];
 
+const MAURITIUS_CITIES = [
+	{
+		city: 'Port Louis',
+		state: 'Port Louis',
+		zips: ['11328', '11329', '11430', '11602'],
+		latRange: [-20.18, -20.14],
+		lonRange: [57.48, 57.53],
+	},
+	{
+		city: 'Curepipe',
+		state: 'Plaines Wilhems',
+		zips: ['74213', '74214', '74401', '74415'],
+		latRange: [-20.34, -20.30],
+		lonRange: [57.50, 57.53],
+	},
+	{
+		city: 'Quatre Bornes',
+		state: 'Plaines Wilhems',
+		zips: ['72249', '72251', '72257', '72301'],
+		latRange: [-20.28, -20.25],
+		lonRange: [57.47, 57.50],
+	},
+	{
+		city: 'Mahebourg',
+		state: 'Grand Port',
+		zips: ['50815', '50816', '50817', '50901'],
+		latRange: [-20.42, -20.39],
+		lonRange: [57.69, 57.73],
+	},
+	{
+		city: 'Grand Baie',
+		state: 'Riviere du Rempart',
+		zips: ['30501', '30503', '30506', '30512'],
+		latRange: [-20.03, -20.00],
+		lonRange: [57.57, 57.61],
+	},
+	{
+		city: 'Flic en Flac',
+		state: 'Black River',
+		zips: ['90501', '90502', '90503', '90512'],
+		latRange: [-20.30, -20.27],
+		lonRange: [57.35, 57.38],
+	},
+];
+
 const STREET_NAMES = [
 	'Aspen',
 	'Pine',
@@ -298,6 +432,43 @@ export function createRandomColoradoLocation() {
 		hashPath: hashes.path,
 		formattedAddress: `${address}, ${selectedCity.city}, CO, USA, ${zip}`,
 	};
+}
+
+export function createRandomMauritiusLocation() {
+	const selectedCity = pickRandom(MAURITIUS_CITIES);
+	const houseNumber = String(1 + Math.floor(Math.random() * 400));
+	const streetName = pickRandom(STREET_NAMES);
+	const streetType = pickRandom(['St', 'Ave', 'Rd', 'Lane', 'Royal Rd']);
+	const zip = pickRandom(selectedCity.zips);
+	const lat = Number(randomInRange(selectedCity.latRange).toFixed(6));
+	const lon = Number(randomInRange(selectedCity.lonRange).toFixed(6));
+	const hashes = buildMapHashes(lat, lon);
+
+	const address = `${houseNumber} ${streetName} ${streetType}`;
+
+	return {
+		address,
+		city: selectedCity.city,
+		state: selectedCity.state,
+		zip,
+		country: 'Mauritius',
+		lat,
+		lon,
+		approximate: hashes.approximate,
+		exact: hashes.exact,
+		hashPath: hashes.path,
+		formattedAddress: `${address}, ${selectedCity.city}, ${selectedCity.state}, Mauritius, ${zip}`,
+	};
+}
+
+export function createRandomTestLocation(location = 'mauritius') {
+	switch (normalizeRegressionLocation(location)) {
+		case 'colorado':
+			return createRandomColoradoLocation();
+		case 'mauritius':
+		default:
+			return createRandomMauritiusLocation();
+	}
 }
 
 // ---------------------------------------------------------------------------

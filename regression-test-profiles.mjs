@@ -9,12 +9,13 @@
  *   - Bluesky credentials in .env (BSKY_USERNAME / BSKY_PASSWORD)
  *
  * Usage:
- *   node regression-test.mjs [--author=<handle>] [--server=<url>] [--wait=<ms>]
+ *   node regression-test.mjs [--author=<handle>] [--server=<url>] [--wait=<ms>] [--location=<mauritius|colorado>]
  *
  * Options:
  *   --author   Bluesky handle or DID of the publishing account (default: BSKY_AUTHOR env or 'love4dogs.club')
  *   --server   Local dev server base URL (default: TEST_SERVER_URL env or 'http://localhost:5173')
  *   --wait     Milliseconds to wait for Bluesky indexing (default: 15000)
+ *   --location Test location preset (default: mauritius)
  */
 
 import {
@@ -30,7 +31,7 @@ import {
 	resolveTestConfig,
 	createAssertions,
 	generateUuid,
-	createRandomColoradoLocation,
+	createRandomTestLocation,
 	findLocationLeakInText,
 	fetchMultipleDogImages,
 	uploadDogImageToBluesky,
@@ -38,6 +39,8 @@ import {
 	REGRESSION_TAG_POOL,
 	pickNUniqueRandom,
 	generateRealProfileContent,
+	resetRegressionProfileSeeds,
+	saveRegressionProfileSeed,
 } from './regression-test-common.mjs';
 
 const args = parseArgs();
@@ -45,6 +48,7 @@ const {
 	baseUrl: BASE_URL,
 	author: AUTHOR,
 	indexWaitMs: INDEX_WAIT_MS,
+	location: LOCATION,
 	testMode,
 } = resolveTestConfig(args);
 const { pass, fail, assert, assertEqual, counts } = createAssertions();
@@ -116,8 +120,10 @@ async function main() {
 	console.log('');
 	console.log(`  Server : ${BASE_URL}`);
 	console.log(`  Author : ${AUTHOR}`);
+	console.log(`  Location: ${LOCATION}`);
 	console.log(`  Wait   : ${INDEX_WAIT_MS}ms`);
 	console.log('');
+	await resetRegressionProfileSeeds();
 
 	// ─── Step 1: Verify dev server is reachable ──────────────────────────────
 	console.log('Step 1: Verify dev server is reachable');
@@ -180,11 +186,11 @@ async function main() {
 	// ─── Step 4: Build large profile payload ─────────────────────────────────
 	console.log('\nStep 4: Build large profile payload');
 	const uuid = generateUuid();
-	const coloradoLocation = createRandomColoradoLocation();
+	const testLocation = createRandomTestLocation(LOCATION);
 	console.log(`  UUID: ${uuid}`);
-	console.log(`  Location hash path: ${coloradoLocation.hashPath}`);
+	console.log(`  Location hash path: ${testLocation.hashPath}`);
 	console.log(
-		`  Map URL preview: ${BASE_URL}/map/${coloradoLocation.approximate}/${coloradoLocation.exact}`,
+		`  Map URL preview: ${BASE_URL}/map/${testLocation.approximate}/${testLocation.exact}`,
 	);
 
 	// Pick random tags and generate realistic profile content driven by primary tag
@@ -197,26 +203,26 @@ async function main() {
 	       const uniqueTags = Array.from(new Set(tags));
 	       const primaryPayload = {
 		       uuid,
-		       authorid: `author-${uuid}`,
+		       authorid: uuid,
 		       stamp: Date.now().toString(36),
 		       title: profileName,
 		       description: profileDescription,
-		       address: coloradoLocation.address,
-		       city: coloradoLocation.city,
-		       state: coloradoLocation.state,
-		       zip: coloradoLocation.zip,
-		       country: coloradoLocation.country,
+		       address: testLocation.address,
+		       city: testLocation.city,
+		       state: testLocation.state,
+		       zip: testLocation.zip,
+		       country: testLocation.country,
 		       location: {
-			       lat: coloradoLocation.lat,
-			       lon: coloradoLocation.lon,
-			       approximate: coloradoLocation.approximate,
-			       exact: coloradoLocation.exact,
-			       hashPath: coloradoLocation.hashPath,
-			       formattedAddress: coloradoLocation.formattedAddress,
-			       city: coloradoLocation.city,
-			       state: coloradoLocation.state,
-			       country: coloradoLocation.country,
-			       zip: coloradoLocation.zip,
+			       lat: testLocation.lat,
+			       lon: testLocation.lon,
+			       approximate: testLocation.approximate,
+			       exact: testLocation.exact,
+			       hashPath: testLocation.hashPath,
+			       formattedAddress: testLocation.formattedAddress,
+			       city: testLocation.city,
+			       state: testLocation.state,
+			       country: testLocation.country,
+			       zip: testLocation.zip,
 		       },
 		       profilePic: uploadedImages[0]?.url || null,
 		       backgroundPic: uploadedImages[1]?.url || null,
@@ -233,11 +239,11 @@ async function main() {
 	assert(primaryPayload.tags.includes('profile'), 'Primary payload includes profile tag');
 	assert(primaryPayload.tags.every((t) => typeof t === 'string' && t === t.toLowerCase()), 'All tags are lowercase');
 	assert(typeof primaryPayload.title === 'string', 'Primary payload has title');
-	assertEqual(primaryPayload.state, 'CO', 'Primary payload state is Colorado');
-	assertEqual(primaryPayload.country, 'USA', 'Primary payload country is USA');
+	assertEqual(primaryPayload.state, testLocation.state, 'Primary payload state matches selected location');
+	assertEqual(primaryPayload.country, testLocation.country, 'Primary payload country matches selected location');
 	assert(/^[0-9]{5}$/.test(String(primaryPayload.zip || '')), 'Primary payload zip is 5 digits');
 	assert(typeof primaryPayload.address === 'string' && primaryPayload.address.length > 0, 'Primary payload includes address');
-	assert(typeof primaryPayload.city === 'string' && primaryPayload.city.length > 0, 'Primary payload includes city');
+	assertEqual(primaryPayload.city, testLocation.city, 'Primary payload city matches selected location');
 	assert(/^[0-9bcdefghjkmnpqrstuvwxyz]{5}$/i.test(String(primaryPayload.location?.approximate || '')), 'Primary payload includes /map approximate hash');
 	assert(/^[0-9bcdefghjkmnpqrstuvwxyz]{9}$/i.test(String(primaryPayload.location?.exact || '')), 'Primary payload includes /map exact hash');
 	assert(
@@ -292,6 +298,13 @@ async function main() {
 	// ─── Step 6: Publish chunk bundle to Bluesky ─────────────────────────────
 	console.log('\nStep 6: Publish chunk bundle to Bluesky');
 	if (testMode) {
+		await saveRegressionProfileSeed({
+			uuid,
+			authorid: primaryPayload.authorid,
+			authorName: profileName,
+			authorAvatar: primaryPayload.profilePic,
+			location: LOCATION,
+		});
 		console.log('\n[TEST MODE] Profile payload that would be published:');
 		console.log(JSON.stringify({
 			postText: [profileName, profileDescription.slice(0, 80)].filter(Boolean).join('\n').slice(0, 295),
@@ -307,7 +320,7 @@ async function main() {
 		.filter(Boolean)
 		.join('\n')
 		.slice(0, 295);
-	const locationLeakInPublishText = findLocationLeakInText(postText, coloradoLocation);
+	const locationLeakInPublishText = findLocationLeakInText(postText, testLocation);
 	assert(!locationLeakInPublishText, 'Publish text excludes location data', locationLeakInPublishText);
 
 	let publishResult;
@@ -335,6 +348,13 @@ async function main() {
 	}
 
 	const originUri = publishResult?.originResult?.uri || publishResult?.primaryResult?.uri || '';
+	await saveRegressionProfileSeed({
+		uuid,
+		authorid: primaryPayload.authorid,
+		authorName: profileName,
+		authorAvatar: primaryPayload.profilePic,
+		location: LOCATION,
+	});
 	assert(typeof originUri === 'string' && originUri.startsWith('at://'), `Origin post URI: ${originUri}`);
 	assert(
 		Array.isArray(publishResult?.chunkResults) && publishResult.chunkResults.length > 0,
@@ -395,7 +415,7 @@ async function main() {
 		.map((post) => String(post?.record?.text || ''))
 		.filter(Boolean);
 	const leakedRecoveredText = recoveredTexts.find((text) =>
-		Boolean(findLocationLeakInText(text, coloradoLocation))
+		Boolean(findLocationLeakInText(text, testLocation))
 	);
 	assert(!leakedRecoveredText, 'Recovered post texts exclude location data', leakedRecoveredText || '');
 
@@ -437,11 +457,11 @@ async function main() {
 	assertEqual(recoPrimary?.title, profileName, 'primary.title matches');
 	assert(typeof recoPrimary?.description === 'string' && recoPrimary.description.length > 0, 'primary.description present and non-empty');
 	assert(Array.isArray(recoPrimary?.tags) && recoPrimary.tags.includes('profile'), 'primary.tags includes profile');
-	assertEqual(recoPrimary?.state, 'CO', 'primary.state is Colorado');
-	assertEqual(recoPrimary?.country, 'USA', 'primary.country is USA');
+	assertEqual(recoPrimary?.state, testLocation.state, 'primary.state matches selected location');
+	assertEqual(recoPrimary?.country, testLocation.country, 'primary.country matches selected location');
 	assert(/^[0-9]{5}$/.test(String(recoPrimary?.zip || '')), 'primary.zip is 5 digits');
 	assert(typeof recoPrimary?.address === 'string' && recoPrimary.address.length > 0, 'primary.address present');
-	assert(typeof recoPrimary?.city === 'string' && recoPrimary.city.length > 0, 'primary.city present');
+	assertEqual(recoPrimary?.city, testLocation.city, 'primary.city matches selected location');
 	assert(/^[0-9bcdefghjkmnpqrstuvwxyz]{5}$/i.test(String(recoPrimary?.location?.approximate || '')), 'primary.location.approximate present');
 	assert(/^[0-9bcdefghjkmnpqrstuvwxyz]{9}$/i.test(String(recoPrimary?.location?.exact || '')), 'primary.location.exact present');
 	assert(

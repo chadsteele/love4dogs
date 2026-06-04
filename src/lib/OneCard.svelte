@@ -1,7 +1,13 @@
 <script>
 	import {onMount} from "svelte"
 	import {rewriteLove4DogsUrlForLocalhost} from "$lib/utils"
-	import {Heart, MessageCircle, Repeat2, User} from "lucide-svelte"
+	import {
+		CircleAlert as NoticeIcon,
+		Heart,
+		MessageCircle,
+		Repeat2,
+		User,
+	} from "lucide-svelte"
 	import {siBluesky} from "simple-icons"
 	import TagPills from "$lib/TagPills.svelte"
 	import AuthorRow from "$lib/AuthorRow.svelte"
@@ -25,11 +31,7 @@
 		let candidates = []
 		try {
 			const parsed = JSON.parse(source)
-			candidates = [
-				parsed,
-				parsed?.primary,
-				parsed?.combined?.primary,
-			]
+			candidates = [parsed, parsed?.primary, parsed?.combined?.primary]
 
 			if (typeof parsed?.h === "string" && parsed.h.trim()) {
 				try {
@@ -79,9 +81,7 @@
 
 	function extractTagsFromBundleAlt(alt = "") {
 		for (const candidate of getAltCandidates(alt)) {
-			const rawTags = Array.isArray(candidate?.tags)
-				? candidate.tags
-				: []
+			const rawTags = Array.isArray(candidate?.tags) ? candidate.tags : []
 			if (rawTags.length) {
 				return rawTags
 					.map((tag) =>
@@ -540,6 +540,7 @@
 	const primaryImage = $derived(getPrimaryImage())
 	const profilePic = $derived(getProfilePic())
 	const resolvedTags = $derived(resolvePostTags(post))
+	const hasTestTag = $derived(resolvedTags.includes("test"))
 	const postType = $derived(
 		// Use "profile" tag to identify profiles; otherwise default to "post"
 		(() => {
@@ -605,6 +606,13 @@
 		locationHref={locationMapsHref}
 		// compact
 	/>
+
+	{#if hasTestTag}
+		<div class="test-post-notice" role="note">
+			<NoticeIcon size={15} aria-hidden="true" />
+			<span>Notice: this is not a real post. It is for demonstration only.</span>
+		</div>
+	{/if}
 
 	<a class="card-link" href={cardViewHref} tabindex="0">
 		<div class="card-content">
@@ -737,6 +745,21 @@
 		line-clamp: 2;
 		-webkit-box-orient: vertical;
 		overflow: hidden;
+	}
+
+	.test-post-notice {
+		margin: 0.35rem 1rem 0.2rem;
+		padding: 0.55rem 0.7rem;
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		border-radius: 9px;
+		border: 1px solid rgba(186, 122, 35, 0.45);
+		background: rgba(255, 220, 160, 0.35);
+		color: #6b4515;
+		font-size: 0.86rem;
+		line-height: 1.3;
+		font-weight: 600;
 	}
 
 	.location-fields {

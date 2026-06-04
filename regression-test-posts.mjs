@@ -9,12 +9,13 @@
  *   - Bluesky credentials in .env (BSKY_USERNAME / BSKY_PASSWORD)
  *
  * Usage:
- *   node regression-test-posts.mjs [--author=<handle>] [--server=<url>] [--wait=<ms>]
+ *   node regression-test-posts.mjs [--author=<handle>] [--server=<url>] [--wait=<ms>] [--location=<mauritius|colorado>]
  *
  * Options:
  *   --author   Bluesky handle or DID of the publishing account (default: BSKY_AUTHOR env or 'love4dogs.club')
  *   --server   Local dev server base URL (default: TEST_SERVER_URL env or 'http://localhost:5173')
  *   --wait     Milliseconds to wait for Bluesky indexing (default: 15000)
+ *   --location Test location preset (default: mauritius)
  */
 
 import {
@@ -31,7 +32,7 @@ import {
 	resolveTestConfig,
 	createAssertions,
 	generateUuid,
-	createRandomColoradoLocation,
+	createRandomTestLocation,
 	findLocationLeakInText,
 	fetchMultipleDogImages,
 	uploadDogImageToBluesky,
@@ -39,6 +40,8 @@ import {
 	REGRESSION_TAG_POOL,
 	pickNUniqueRandom,
 	generateRealDogPostContent,
+	loadRegressionProfileSeeds,
+	pickRandomRegressionProfileSeed,
 } from './regression-test-common.mjs';
 
 const args = parseArgs();
@@ -46,6 +49,7 @@ const {
 	baseUrl: BASE_URL,
 	author: AUTHOR,
 	indexWaitMs: INDEX_WAIT_MS,
+	location: LOCATION,
 	testMode,
 } = resolveTestConfig(args);
 const { pass, fail, assert, assertEqual, counts } = createAssertions();
@@ -138,6 +142,7 @@ async function main() {
 	console.log('');
 	console.log(`  Server : ${BASE_URL}`);
 	console.log(`  Author : ${AUTHOR}`);
+	console.log(`  Location: ${LOCATION}`);
 	console.log(`  Wait   : ${INDEX_WAIT_MS}ms`);
 	console.log('');
 
@@ -157,10 +162,20 @@ async function main() {
 
 	console.log('\nStep 2: Build and publish a large post');
 	const uuid = generateUuid();
-	const coloradoLocation = createRandomColoradoLocation();
-	console.log(`  Location hash path: ${coloradoLocation.hashPath}`);
+	const testLocation = createRandomTestLocation(LOCATION);
+	const availableProfiles = await loadRegressionProfileSeeds();
+	const selectedProfile = pickRandomRegressionProfileSeed(availableProfiles);
+	if (!selectedProfile) {
+		fail(
+			'Regression profile seed available',
+			'Run regression-test-profiles.mjs first so posts can use a generated profile author.'
+		);
+		process.exit(1);
+	}
+	pass(`Using profile author seed: ${selectedProfile.authorName} (${selectedProfile.authorid})`);
+	console.log(`  Location hash path: ${testLocation.hashPath}`);
 	console.log(
-		`  Map URL preview: ${BASE_URL}/map/${coloradoLocation.approximate}/${coloradoLocation.exact}`,
+		`  Map URL preview: ${BASE_URL}/map/${testLocation.approximate}/${testLocation.exact}`,
 	);
 	const dogImageUrls = await fetchMultipleDogImages(4);
 	const uploadedImages = [];
@@ -193,25 +208,27 @@ async function main() {
 	const { title, description: postDescription, html: largePostHtml } = generateRealDogPostContent(randomTags[0], allPostTags, uuid, uploadedImageUrls);
 	const primaryPayload = {
 		uuid,
-		authorid: `author-${uuid}`,
+		authorid: selectedProfile.authorid,
+		authorName: selectedProfile.authorName,
+		authorAvatar: selectedProfile.authorAvatar || '',
 		title,
 		description: postDescription,
-		address: coloradoLocation.address,
-		city: coloradoLocation.city,
-		state: coloradoLocation.state,
-		zip: coloradoLocation.zip,
-		country: coloradoLocation.country,
+		address: testLocation.address,
+		city: testLocation.city,
+		state: testLocation.state,
+		zip: testLocation.zip,
+		country: testLocation.country,
 		location: {
-			lat: coloradoLocation.lat,
-			lon: coloradoLocation.lon,
-			approximate: coloradoLocation.approximate,
-			exact: coloradoLocation.exact,
-			hashPath: coloradoLocation.hashPath,
-			formattedAddress: coloradoLocation.formattedAddress,
-			city: coloradoLocation.city,
-			state: coloradoLocation.state,
-			country: coloradoLocation.country,
-			zip: coloradoLocation.zip,
+			lat: testLocation.lat,
+			lon: testLocation.lon,
+			approximate: testLocation.approximate,
+			exact: testLocation.exact,
+			hashPath: testLocation.hashPath,
+			formattedAddress: testLocation.formattedAddress,
+			city: testLocation.city,
+			state: testLocation.state,
+			country: testLocation.country,
+			zip: testLocation.zip,
 		},
 		html: largePostHtml,
 		tags: allPostTags,
@@ -244,13 +261,15 @@ async function main() {
 		'Post HTML includes uploaded image URLs',
 	);
 	assertEqual(primaryPayload.uuid, uuid, 'Primary payload UUID matches');
+	assertEqual(primaryPayload.authorid, selectedProfile.authorid, 'Primary payload authorid matches selected profile');
+	assertEqual(primaryPayload.authorName, selectedProfile.authorName, 'Primary payload authorName matches selected profile');
 	assert(!primaryPayload.tags.includes('profile'), 'Primary payload does not include profile tag');
 	assertEqual(uploadedImages.length, dogImageUrls.length, 'Uploaded image count matches source count');
-	assertEqual(primaryPayload.state, 'CO', 'Primary payload state is Colorado');
-	assertEqual(primaryPayload.country, 'USA', 'Primary payload country is USA');
+	assertEqual(primaryPayload.state, testLocation.state, 'Primary payload state matches selected location');
+	assertEqual(primaryPayload.country, testLocation.country, 'Primary payload country matches selected location');
 	assert(/^[0-9]{5}$/.test(String(primaryPayload.zip || '')), 'Primary payload zip is 5 digits');
 	assert(typeof primaryPayload.address === 'string' && primaryPayload.address.length > 0, 'Primary payload includes address');
-	assert(typeof primaryPayload.city === 'string' && primaryPayload.city.length > 0, 'Primary payload includes city');
+	assertEqual(primaryPayload.city, testLocation.city, 'Primary payload city matches selected location');
 	assert(/^[0-9bcdefghjkmnpqrstuvwxyz]{5}$/i.test(String(primaryPayload.location?.approximate || '')), 'Primary payload includes /map approximate hash');
 	assert(/^[0-9bcdefghjkmnpqrstuvwxyz]{9}$/i.test(String(primaryPayload.location?.exact || '')), 'Primary payload includes /map exact hash');
 	assert(
@@ -258,7 +277,7 @@ async function main() {
 			`${primaryPayload.location?.approximate}/${primaryPayload.location?.exact}`,
 		'Primary payload includes /map hash path',
 	);
-	const locationLeakInPublishText = findLocationLeakInText(title, coloradoLocation);
+	const locationLeakInPublishText = findLocationLeakInText(title, testLocation);
 	assert(!locationLeakInPublishText, 'Publish text excludes location data', locationLeakInPublishText);
 	if (testMode) {
 		console.log('\n[TEST MODE] Post payload that would be published:');
@@ -369,7 +388,7 @@ async function main() {
 		.map((post) => String(post?.record?.text || ''))
 		.filter(Boolean);
 	const leakedRecoveredText = recoveredTexts.find((text) =>
-		Boolean(findLocationLeakInText(text, coloradoLocation))
+		Boolean(findLocationLeakInText(text, testLocation))
 	);
 	assert(!leakedRecoveredText, 'Recovered post texts exclude location data', leakedRecoveredText || '');
 

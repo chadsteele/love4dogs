@@ -6,7 +6,7 @@
 	import Linkify from "$lib/Linkify.svelte"
 	import ProfilePostHeader from "$lib/ProfilePostHeader.svelte"
 	import AuthorRow from "$lib/AuthorRow.svelte"
-	import {User} from "lucide-svelte"
+	import {CircleAlert as NoticeIcon, User} from "lucide-svelte"
 	import {readSearchTerm, writeSearchTerm} from "$lib/searchStore"
 
 	// ── props ──────────────────────────────────────────────────────────────────
@@ -57,9 +57,7 @@
 			const candidates = Array.isArray(source) ? source : [source]
 			for (const candidate of candidates) {
 				if (!candidate || typeof candidate !== "object") continue
-				const raw = Array.isArray(candidate?.tags)
-						? candidate.tags
-						: []
+				const raw = Array.isArray(candidate?.tags) ? candidate.tags : []
 				for (const entry of raw) {
 					const token = normalizeTagToken(entry)
 					if (token) tokens.push(token)
@@ -70,7 +68,11 @@
 	}
 
 	function isProfileData(data = {}) {
-		const tags = collectTagTokens(data, data?.primary, data?.combined?.primary)
+		const tags = collectTagTokens(
+			data,
+			data?.primary,
+			data?.combined?.primary,
+		)
 		return tags.includes("profile")
 	}
 
@@ -436,6 +438,7 @@
 	const locationLines = $derived(buildLocationLines(jsonData))
 	const mapHref = $derived(buildMapHref(jsonData))
 	const displayTags = $derived(collectDisplayTags(jsonData || {}))
+	const hasTestTag = $derived(displayTags.includes("test"))
 	const activeSearchTokens = $derived(new Set(getSearchTokens(searchTerm)))
 
 	// ── data loading ───────────────────────────────────────────────────────────
@@ -534,9 +537,12 @@
 				editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`
 				// Route if data doesn't have profile tag
 				if (!bundleHasProfileData(bundle, jsonData)) {
-					return goto(`/post/view/${encodeURIComponent(uuid)}${slugPath}`, {
-						replaceState: true,
-					})
+					return goto(
+						`/post/view/${encodeURIComponent(uuid)}${slugPath}`,
+						{
+							replaceState: true,
+						},
+					)
 				}
 			} else {
 				const media = collectBundleMedia(bundle)
@@ -556,9 +562,12 @@
 				}
 				// Route if data has profile tag
 				if (bundleHasProfileData(bundle, jsonData)) {
-					return goto(`/profile/view/${encodeURIComponent(uuid)}${slugPath}`, {
-						replaceState: true,
-					})
+					return goto(
+						`/profile/view/${encodeURIComponent(uuid)}${slugPath}`,
+						{
+							replaceState: true,
+						},
+					)
 				}
 			}
 		} catch (e) {
@@ -668,7 +677,9 @@
 				<AuthorRow
 					avatar={!isProfile ? jsonData?.authorAvatar : null}
 					name={(isProfile
-						? jsonData?.name || jsonData?.title || jsonData?.authorName
+						? jsonData?.name ||
+							jsonData?.title ||
+							jsonData?.authorName
 						: jsonData?.authorName) || "Anonymous"}
 					date={formattedStamp}
 					href={isProfile
@@ -680,6 +691,15 @@
 					locationHref={mapHref || null}
 					hideAvatar={isProfile}
 				/>
+				{#if hasTestTag}
+					<div class="test-post-notice" role="note">
+						<NoticeIcon size={16} aria-hidden="true" />
+						<span
+							>Notice: this is not a real post. It is for
+							demonstration only.</span
+						>
+					</div>
+				{/if}
 				{#if !isProfile && jsonData?.name}
 					<h2 class="hero-name">{jsonData.name}</h2>
 				{/if}
@@ -814,6 +834,21 @@
 		background: #305741;
 		border-color: #305741;
 		color: #fffaf1;
+	}
+
+	.test-post-notice {
+		margin: 0.45rem 0 0.65rem;
+		padding: 0.6rem 0.75rem;
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
+		border-radius: 10px;
+		border: 1px solid rgba(186, 122, 35, 0.45);
+		background: rgba(255, 220, 160, 0.35);
+		color: #6b4515;
+		font-size: 0.9rem;
+		line-height: 1.3;
+		font-weight: 600;
 	}
 
 	/* ── post-only: media gallery ─────────────────────────────────────────── */
