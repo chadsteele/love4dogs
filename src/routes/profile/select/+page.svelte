@@ -23,7 +23,7 @@
 		if (!next) return
 		setCurrentProfileUuid(next)
 		currentUuid = next
-		goto("/post")
+		goto("/post/edit")
 	}
 
 	onMount(() => {

@@ -503,7 +503,7 @@ export async function GET({ url }) {
 		const searchJson = await searchRes.json();
 		nextCursor = searchJson.cursor || null;
 		let posts = (searchJson.posts || [])
-			.filter((post) => !isReplyPost(post))
+			.filter((post) => !isReplyPost(post) && extractPostIdentity({ post }))
 			.map((post) => mapPost({ post }));
 		posts = dedupePosts(posts);
 		posts = await hydratePostComments(posts);
@@ -555,7 +555,7 @@ export async function GET({ url }) {
 
 	const authorFeedJson = await authorFeedRes.json();
 	nextCursor = authorFeedJson.cursor || null;
-	const feedItems = (authorFeedJson.feed || []).filter((item) => !isReplyPost(item));
+	const feedItems = (authorFeedJson.feed || []).filter((item) => !isReplyPost(item) && extractPostIdentity(item));
 	console.log(
 		`[feed] author feed: ${authorFeedJson.feed.length} items, ${feedItems.length} non-replies, cursor: ${nextCursor}`
 	);

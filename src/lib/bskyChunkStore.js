@@ -1,4 +1,4 @@
-import { resolvePostTimestampMs } from '$lib/dateTime.js';
+import { resolvePostTimestampMs } from './dateTime.js';
 
 const DEFAULT_CHUNK_ALT_PAYLOAD_TARGET_CHARS = 2000
 const DEFAULT_CONTENT_CHUNK_SIZE = 1800

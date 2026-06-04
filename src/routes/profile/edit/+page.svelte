@@ -65,6 +65,12 @@
 		replaceMediaUrlInHtml,
 		resolveUploadSourceUrl,
 		tryDecodeUrlComponent,
+		loadImageFile,
+		canvasToPngBlob,
+		replaceFileExt,
+		normalizeImageForSlot,
+		isInlineMediaDataUrl,
+		stripInlineMediaDataUrlsFromHtml,
 	} from "$lib/editorMediaInterop"
 
 	const LEGACY_PROFILE_STORAGE_KEY = "love4dogs.profile-v2"
@@ -251,75 +257,7 @@
 		return normalized.slice(0, Math.max(0, maxChars))
 	}
 
-	async function loadImageFile(file) {
-		return await new Promise((resolve, reject) => {
-			const objectUrl = URL.createObjectURL(file)
-			const image = new Image()
-			image.onload = () => {
-				URL.revokeObjectURL(objectUrl)
-				resolve(image)
-			}
-			image.onerror = () => {
-				URL.revokeObjectURL(objectUrl)
-				reject(new Error(`Unable to read image: ${file.name}`))
-			}
-			image.src = objectUrl
-		})
-	}
 
-	function canvasToPngBlob(canvas) {
-		return new Promise((resolve) => {
-			canvas.toBlob((blob) => resolve(blob), "image/png")
-		})
-	}
-
-	function replaceFileExt(fileName = "", nextExt = ".png") {
-		if (!fileName) return `upload${nextExt}`
-		const withoutExt = fileName.replace(/\.[^/.]+$/, "")
-		return `${withoutExt}${nextExt}`
-	}
-
-	async function normalizeImageForSlot(file, maxWidth, maxHeight) {
-		const image = await loadImageFile(file)
-		const scale = Math.min(
-			1,
-			maxWidth / Math.max(1, image.naturalWidth),
-			maxHeight / Math.max(1, image.naturalHeight),
-		)
-
-		let width = Math.max(1, Math.round(image.naturalWidth * scale))
-		let height = Math.max(1, Math.round(image.naturalHeight * scale))
-
-		const canvas = document.createElement("canvas")
-		const context = canvas.getContext("2d")
-		if (!context)
-			throw new Error("Unable to process image on this browser.")
-
-		while (true) {
-			canvas.width = width
-			canvas.height = height
-			context.clearRect(0, 0, width, height)
-			context.drawImage(image, 0, 0, width, height)
-
-			const blob = await canvasToPngBlob(canvas)
-			if (!blob) throw new Error(`Unable to convert image: ${file.name}`)
-
-			if (blob.size <= 2_000_000) {
-				return new File([blob], replaceFileExt(file.name, ".png"), {
-					type: "image/png",
-					lastModified: Date.now(),
-				})
-			}
-
-			const nextWidth = Math.max(1, Math.floor(width * 0.9))
-			const nextHeight = Math.max(1, Math.floor(height * 0.9))
-			if (nextWidth === width && nextHeight === height) {
-				throw new Error("Image is too large after processing.")
-			}
-			width = nextWidth
-			height = nextHeight
-		}
-	}
 
 	async function isCdnUrlAvailable(url = "") {
 		const target = String(url || "").trim()
@@ -1336,31 +1274,7 @@
 		}
 	}
 
-	function isInlineMediaDataUrl(value = "") {
-		return /^data:(image|video)\//i.test(String(value || "").trim())
-	}
 
-	function stripInlineMediaDataUrlsFromHtml(html = "") {
-		const source = String(html || "")
-		if (!source.trim()) return source
-		if (typeof document === "undefined") {
-			return source.replace(
-				/\b(src|href|poster)=(["'])data:(image|video)\/[^"']*\2/gi,
-				(_match, attr, quote) => `${attr}=${quote}${quote}`,
-			)
-		}
-
-		const root = document.createElement("div")
-		root.innerHTML = source
-		for (const node of root.querySelectorAll("[src],[href],[poster]")) {
-			for (const attr of ["src", "href", "poster"]) {
-				const value = String(node.getAttribute(attr) || "")
-				if (!isInlineMediaDataUrl(value)) continue
-				node.setAttribute(attr, "")
-			}
-		}
-		return root.innerHTML
-	}
 
 	function filterMediaForStorage(list) {
 		if (!Array.isArray(list)) return []

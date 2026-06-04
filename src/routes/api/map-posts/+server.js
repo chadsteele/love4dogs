@@ -337,6 +337,11 @@ function tryAddMappedPost({ postLike, approximate, posts, seen, pageStats, autho
 	}
 
 	const mapped = mapPost(postLike.post ? postLike.post : postLike);
+	const uuid = extractUuidFromMappedPost(mapped);
+	if (!uuid) {
+		pageStats.skippedNoUuid = (pageStats.skippedNoUuid || 0) + 1;
+		return;
+	}
 	const exactFromText = extractExactHash(mapped.text, approximate);
 	const exactFromFacets = extractExactHashFromFacetUris(mapped.facets, approximate);
 	const hashesFromAlt = extractHashesFromMappedPost(mapped);
@@ -555,6 +560,7 @@ async function collectFromAuthorFeed({ author, approximate, posts, seen, allFail
 			].join(' ');
 			const addedKeys = new Set();
 			const mappedUuid = extractUuidFromMappedPost(mapped);
+			if (!mappedUuid) continue;
 			const addMapped = (approx = '', exact = '') => {
 				const normalizedApprox = normalizeApproximate(approx);
 				const normalizedExact = normalizeExact(exact);

@@ -1,4 +1,4 @@
-import {lookupLocationDetails} from "$lib/utils"
+import {lookupLocationDetails} from "./utils.js"
 
 export function hasRequiredLocationParts(location) {
 	if (!location || typeof location !== "object") return false

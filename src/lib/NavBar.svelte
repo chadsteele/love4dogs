@@ -252,7 +252,7 @@
 				<Pencil size={16} /> &nbsp; Edit
 			</a>
 		{:else if !hideCreateButton}
-			<a class="post-route-btn" href="/post" aria-label="Create Post">
+			<a class="post-route-btn" href="/post/edit" aria-label="Create Post">
 				<Plus size={16} /> &nbsp; Create
 			</a>
 		{/if}
