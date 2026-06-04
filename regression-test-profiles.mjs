@@ -15,7 +15,7 @@
  *   --author   Bluesky handle or DID of the publishing account (default: BSKY_AUTHOR env or 'love4dogs.club')
  *   --server   Local dev server base URL (default: TEST_SERVER_URL env or 'http://localhost:5173')
  *   --wait     Milliseconds to wait for Bluesky indexing (default: 15000)
- *   --location Base location query for geocoding (default: Mauritius)
+ *   --location Geocoding location parameter (default: test location)
  */
 
 import {
@@ -120,7 +120,7 @@ async function main() {
 	console.log('');
 	console.log(`  Server : ${BASE_URL}`);
 	console.log(`  Author : ${AUTHOR}`);
-	console.log(`  Location: ${LOCATION}`);
+	console.log(`  Location parameter: ${LOCATION}`);
 	console.log(`  Wait   : ${INDEX_WAIT_MS}ms`);
 	console.log('');
 	await resetRegressionProfileSeeds();
@@ -198,7 +198,7 @@ async function main() {
 
 	// Pick random tags and generate realistic profile content driven by primary tag
 	const randomTags = pickNUniqueRandom(REGRESSION_TAG_POOL, 2);
-	const { name: profileName, description: profileDescription, html: contentHtml } = generateRealProfileContent(randomTags[0], randomTags, uuid, dogImageUrls);
+	const { name: profileName, description: profileDescription, html: contentHtml } = generateRealProfileContent(randomTags[0], randomTags, uuid, dogImageUrls, testLocation);
 	// Always include 'profile', lowercase, unique
 	const tags = ['profile',  'test', ...randomTags]
 		       .map((t) => String(t).toLowerCase().trim())

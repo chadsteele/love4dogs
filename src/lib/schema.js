@@ -76,7 +76,6 @@ export class BlueskySchemaRecord {
 			uuid: this.uuid,
 			authorid: this.authorid,
 			stamp: this.stamp,
-			canonicalurl: this.canonicalurl,
 			title: this.title,
 			profilePic: this.profilePic || null,
 			backgroundPic: this.backgroundPic || null,
@@ -87,7 +86,6 @@ export class BlueskySchemaRecord {
 
 		if (includeCompatAliases) {
 			next.name = this.title
-			next.canonicalUrl = this.canonicalurl
 		}
 
 		return next

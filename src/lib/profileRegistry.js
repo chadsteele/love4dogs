@@ -1,4 +1,3 @@
-import {buildCanonicalUrl} from "$lib/utils"
 
 const PROFILE_STORAGE_PREFIX = "love4dogs.profile-v2"
 const PROFILE_REGISTRY_KEY = "love4dogs.profile-registry-v1"
@@ -109,7 +108,6 @@ export function rebuildStoredProfileFromBundle(
 		profileUploadedMedia: [buildImportedMediaEntry(profilePic, "Profile image")].filter(Boolean),
 		backgroundUploadedMedia: [buildImportedMediaEntry(backgroundPic, "Profile background")].filter(Boolean),
 		editorMediaList: [],
-		canonicalurl: buildCanonicalUrl(newUuid, profileName),
 	}
 
 	return {
@@ -123,7 +121,6 @@ export function rebuildStoredProfileFromBundle(
 		},
 		source: {
 			uuid: String(primary?.uuid || "").trim(),
-			canonicalurl: String(primary?.canonicalurl || "").trim(),
 			postUrl: String(primary?.postUrl || "").trim(),
 		},
 	}

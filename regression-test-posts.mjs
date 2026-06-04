@@ -15,7 +15,7 @@
  *   --author   Bluesky handle or DID of the publishing account (default: BSKY_AUTHOR env or 'love4dogs.club')
  *   --server   Local dev server base URL (default: TEST_SERVER_URL env or 'http://localhost:5173')
  *   --wait     Milliseconds to wait for Bluesky indexing (default: 15000)
- *   --location Base location query for geocoding (default: Mauritius)
+ *   --location Geocoding location parameter (default: test location)
  */
 
 import {
@@ -142,7 +142,7 @@ async function main() {
 	console.log('');
 	console.log(`  Server : ${BASE_URL}`);
 	console.log(`  Author : ${AUTHOR}`);
-	console.log(`  Location: ${LOCATION}`);
+	console.log(`  Location parameter: ${LOCATION}`);
 	console.log(`  Wait   : ${INDEX_WAIT_MS}ms`);
 	console.log('');
 
@@ -208,7 +208,7 @@ async function main() {
 	// Pick random tags and generate realistic content driven by the primary tag
 	const randomTags = pickNUniqueRandom(REGRESSION_TAG_POOL, 2);
 	const allPostTags = [ 'test', ...randomTags];
-	const { title, description: postDescription, html: largePostHtml } = generateRealDogPostContent(randomTags[0], allPostTags, uuid, uploadedImageUrls);
+	const { title, description: postDescription, html: largePostHtml } = generateRealDogPostContent(randomTags[0], allPostTags, uuid, uploadedImageUrls, testLocation);
 	const primaryPayload = {
 		uuid,
 		authorid: selectedProfile.authorid,

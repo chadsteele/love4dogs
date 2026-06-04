@@ -7,7 +7,6 @@
 	import NavBar from "$lib/NavBar.svelte"
 	import {readSearchTerm, writeSearchTerm} from "$lib/searchStore"
 
-	const BSKY_REQUIRED_QUERY_TERM = "canonicalurl"
 	const FAVORITE_SEARCH_TERMS_KEY =
 		"love4dogs.settings.favorite-search-terms-v1"
 	const DEFAULT_SEARCH_TERM_KEY = "love4dogs.settings.default-search-term-v1"
@@ -74,10 +73,7 @@
 	}
 
 	function buildFeedQuery(rawQuery = "") {
-		const base = String(rawQuery || "").trim()
-		return base
-			? `${base} ${BSKY_REQUIRED_QUERY_TERM}`
-			: BSKY_REQUIRED_QUERY_TERM
+		return String(rawQuery || "").trim()
 	}
 
 	function getSearchTokens(value = "") {

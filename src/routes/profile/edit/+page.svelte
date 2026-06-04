@@ -1134,7 +1134,6 @@
 		uuid,
 		authorid: uuid,
 		stamp: profileRecordStamp,
-		canonicalurl,
 		email: encryptEmailForPayload(email),
 		profilePic:
 			selectedProfileImage?.bskyUrl || selectedProfileImage?.url || null,
@@ -1724,7 +1723,6 @@
 			debugProfile("[profile] saving draft before publish")
 			saveProfile(false)
 
-			const publishedCanonicalUrl = buildCanonicalUrl(uuid, profileName)
 			const publishedSlugPath = cleanCanonicalName(profileName)
 				.split("/")
 				.map((segment) => segment.trim())
@@ -1742,7 +1740,6 @@
 				uuid,
 				authorid: uuid,
 				stamp: profileRecordStamp,
-				canonicalurl: publishedCanonicalUrl,
 				email: encryptEmailForPayload(email),
 				profilePic:
 					publishProfileImage?.bskyUrl ||
@@ -1878,7 +1875,6 @@
 			publishMessage = `Published profile + ${publishResult.totalChunkPosts} chunk${publishResult.totalChunkPosts === 1 ? "" : "s"} at ${new Date().toLocaleTimeString()}`
 			debugProfile("[profile] publishToBluesky:success", {
 				message: publishMessage,
-				canonicalUrl: publishedCanonicalUrl,
 				viewUrl: publishedViewUrl,
 			})
 			saveProfile(false)

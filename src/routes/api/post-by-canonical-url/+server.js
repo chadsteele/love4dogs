@@ -78,8 +78,8 @@ export async function GET({ url }) {
 
 		const session = await getSession();
 
-		// Search for posts with canonicalurl + uuid
-		const searchQuery = `${uuid} canonicalurl`;
+		// Search for posts using uuid only.
+		const searchQuery = uuid;
 		const res = await fetch(
 			`${BSKY_XRPC}/app.bsky.feed.searchPosts?q=${encodeURIComponent(searchQuery)}&author=${encodeURIComponent(BSKY_HANDLE)}&limit=100`,
 			{

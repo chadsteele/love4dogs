@@ -1060,7 +1060,7 @@ export async function loadMostRecentProfileBundleFromPublicBsky({
 	const id = String(uuid || "").trim()
 	if (!id) throw new Error("Missing uuid route param")
 	const postsByUri = new Map()
-	const searchQueries = [`${id} canonicalurl`.trim(), id].filter(Boolean)
+	const searchQueries = [id].filter(Boolean)
 	for (const query of searchQueries) {
 		const searchUrl = `${BSKY_PUBLIC_XRPC}/app.bsky.feed.searchPosts?q=${encodeURIComponent(query)}&author=${encodeURIComponent(author)}&limit=${encodeURIComponent(String(pageLimit))}`
 		try {

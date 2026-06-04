@@ -481,28 +481,28 @@ const _PERSON_LAST = [
 	'Whitfield', 'Okafor', 'Brooks', 'Cruz', 'Patton', 'Garcia', 'Sullivan', 'Park',
 ];
 const _PARKS = [
-	"Cheesman Park", "Washington Park", "City Park", "Sloan's Lake Park",
-	'Ruby Hill Park', 'Cherry Creek Dog Park', 'Stapleton Dog Park', 'Berkeley Lake Park',
+	'Central Park', 'Riverside Park', 'Community Green', 'Lakeside Park',
+	'Hillside Park', 'Canal Dog Park', 'Oak Grove Dog Park', 'Harbor Green Park',
 ];
 const _SHELTERS = [
-	'Maurtius Dumb Friends League', 'Foothills Animal Shelter',
-	'Humane Society of Boulder Valley', 'Arapahoe County Animal Control',
-	'Colorado Animal Rescue', 'Mile High Mutts Rescue', 'Second Chance Humane Society',
+	'Community Animal Shelter', 'Foothills Animal Shelter',
+	'Humane Society of the Valley', 'Regional Animal Control',
+	'Companion Animal Rescue', 'Local Mutts Rescue', 'Second Chance Humane Society',
 ];
 const _ORG_NAMES = [
-	'Rocky Mountain Paws Rescue', 'Colorado Dog Rescue Network',
-	'Mile High Second Chances', 'Centennial Canine Coalition',
-	'Front Range Dog Advocates', 'Maurtius Dog Welfare Alliance',
-	'Pikes Peak Paws', 'Boulder Valley Dog Rescue',
+	'Community Paws Rescue', 'Regional Dog Rescue Network',
+	'Second Chance Canine Coalition', 'Neighborhood Canine Coalition',
+	'Local Dog Advocates', 'Dog Welfare Alliance',
+	'Summit Paws Network', 'Valley Dog Rescue',
 ];
 const _VET_CLINICS = [
 	'Sunrise Veterinary Clinic', 'Foothills Animal Hospital',
-	'Peak Care Veterinary Services', 'Mile High Animal Wellness',
+	'Peak Care Veterinary Services', 'Community Animal Wellness',
 	'Horizon Veterinary Center', 'Alpine Pet Care Clinic',
 ];
 const _TRAINER_ORGS = [
-	'Colorado Dog Trainers Guild', 'Balanced Paws Training',
-	'Rocky Rim Dog Sports', 'Front Range Canine Academy',
+	'Local Dog Trainers Guild', 'Balanced Paws Training',
+	'Canine Skills Collective', 'Regional Canine Academy',
 	'Summit Dog Training Center', 'Alpine Obedience Club',
 ];
 const _WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
@@ -536,7 +536,7 @@ function _imgFigures(imageUrls = []) {
 const _FILLER = [
 	'<p>We continue to monitor the situation and will post updates here as they become available. Thank you to everyone in our community who has reached out with support, tips, and kind words. Your compassion truly makes a difference for dogs and their families in our area.</p>',
 	'<p>If you have additional information or would like to help, please use the contact form on this page. We review all messages and respond as quickly as we can. Every piece of information helps, no matter how small it seems.</p>',
-	'<p>Our local dog community has shown incredible solidarity in situations like this. Whether through sharing posts, donating supplies, or simply spreading the word, each action contributes to a better outcome. Together we make a real difference for every dog in need across Colorado.</p>',
+	'<p>Our local dog community has shown incredible solidarity in situations like this. Whether through sharing posts, donating supplies, or simply spreading the word, each action contributes to a better outcome. Together we make a real difference for every dog in need across our area.</p>',
 	'<p>Dogs are not just pets — they are family members who bring joy, comfort, and unconditional love into our lives every single day. When one is in need, the entire community rallies. We are deeply grateful for the outpouring of support we have received from neighbors and strangers alike.</p>',
 	'<p>Please remember to check local shelters and rescues even if they are some distance away. Dogs can travel further than expected, especially if startled. Posting on community groups and Nextdoor can dramatically increase visibility and the chance of a positive outcome.</p>',
 	'<p>We will continue to post regular updates until the situation is fully resolved. Thank you for being part of this caring and responsive community. Your kindness and dedication to animal welfare means the world to us and to every dog we serve.</p>',
@@ -555,11 +555,39 @@ function _padToSize(html, targetChars) {
 	return result;
 }
 
+function resolveLocationContext(locationContext = {}) {
+	const source = typeof locationContext === 'string'
+		? { label: locationContext }
+		: (locationContext || {});
+	const city = String(source.city || '').trim();
+	const state = String(source.state || '').trim();
+	const country = String(source.country || '').trim();
+	const formattedAddress = String(source.formattedAddress || source.address || '').trim();
+	const label = [city, state, country].filter(Boolean).join(', ')
+		|| formattedAddress
+		|| String(source.label || '').trim()
+		|| 'selected location';
+	const area = [city, state].filter(Boolean).join(', ') || country || label;
+	const community = city || state || country || label;
+	const placeName = city || state || country || 'Local';
+	return { city, state, country, formattedAddress, label, area, community, placeName };
+}
+
+function localizePlaceName(name, location) {
+	const source = String(name || '').trim();
+	if (!source) return source;
+	const place = String(location?.placeName || location?.community || location?.area || 'Local').trim() || 'Local';
+	return source
+		.replace(/Maurtius|Mauritius|Colorado|Front Range|Mile High|Rocky Mountain/gi, place)
+		.replace(/Colorado's/gi, `${place}'s`);
+}
+
 /**
  * Generate realistic dog post HTML content driven by the primary tag.
  * Returns { title, description, html } with html padded to ~20 000 chars.
  */
-export function generateRealDogPostContent(primaryTag, tags, uuid, imageUrls = []) {
+export function generateRealDogPostContent(primaryTag, tags, uuid, imageUrls = [], locationContext = {}) {
+	const location = resolveLocationContext(locationContext);
 	const name    = _seeded(_DOG_NAMES,    uuid, 0);
 	const breed   = _seeded(_DOG_BREEDS,   uuid, 1);
 	const color   = _seeded(_DOG_COLORS,   uuid, 2);
@@ -620,7 +648,7 @@ ${imgs}
 <p>If this is your dog, please use the contact form and provide identifying details: vet records, prior photos, unique markings. We'll verify and reunite you as quickly as possible. If no owner is found within 30 days, we will work with our rescue network to find ${name} a permanent home.</p>`;
 	} else if (tag === 'offered') {
 		title = `"${name}" Needs a Forever Home — ${breed}, ${age} Yrs, Loves Everyone`;
-		description = `Meet ${name}, a ${age}-year-old ${color} ${breed} ready for adoption. Good with kids and dogs, fully vetted, house-trained. Currently fostered in Maurtius. Adoption fee: $150.`;
+		description = `Meet ${name}, a ${age}-year-old ${color} ${breed} ready for adoption. Good with kids and dogs, fully vetted, house-trained. Currently fostered in ${location.area}. Adoption fee: $150.`;
 		body = `<h2>Meet ${name} — Adoptable ${breed}</h2>
 <p>We are so excited to introduce ${name}, a ${age}-year-old ${color} ${breed} looking for their forever home. ${name} came to us through ${shelter} after their previous owner had to move into a situation that could not accommodate a pet. Despite the change, ${name} has adjusted beautifully and shown remarkable resilience and love.</p>
 ${imgs}
@@ -656,7 +684,7 @@ ${imgs}
   <li>Desensitization to departure cues — partial success, very slow progress</li>
 </ul>
 <h3>What We're Looking For</h3>
-<p>We are specifically seeking: (1) a CSAT-certified separation anxiety trainer in the Maurtius Front Range area, (2) personal experience with medication-assisted behavior modification (our vet mentioned Clomicalm or fluoxetine as options), and (3) any success stories from ${breed} owners who have worked through a severe case. We are committed — this is not a situation we will give up on. ${name} is family.</p>`;
+<p>We are specifically seeking: (1) a CSAT-certified separation anxiety trainer in the ${location.area} area, (2) personal experience with medication-assisted behavior modification (our vet mentioned Clomicalm or fluoxetine as options), and (3) any success stories from ${breed} owners who have worked through a severe case. We are committed — this is not a situation we will give up on. ${name} is family.</p>`;
 	} else if (tag === 'rescue') {
 		title = `Rescue Story: ${name} Saved From High-Kill Shelter — Now Thriving`;
 		description = `${name}, a ${age}-year-old ${color} ${breed}, was pulled from ${shelter} with 24 hours to spare. After three months in foster care, ${name} found their forever home. Read the full story.`;
@@ -669,7 +697,7 @@ ${imgs}
 <h3>The Foster Journey</h3>
 <p>For the first two weeks, ${name} barely left the dog bed in the corner of the living room. Our foster family gave space, gentle encouragement, and three consistent meals a day. By week three, ${name} was joining short walks. By week six, ${name} was sleeping on the sofa with the family cat. By month two, ${name} was doing zoomies in the backyard and greeting every visitor with a wagging tail. The transformation never gets old.</p>
 <h3>${name} Today</h3>
-<p>${name} was adopted by ${owner} and their family in ${month}. They send us weekly updates. ${name} hikes the Front Range trails, goes to the dog park every morning, and recently completed a beginner agility course. This is why we do what we do.</p>`;
+<p>${name} was adopted by ${owner} and their family in ${month}. They send us weekly updates. ${name} hikes the trails around ${location.area}, goes to the dog park every morning, and recently completed a beginner agility course. This is why we do what we do.</p>`;
 	} else if (tag === 'medical') {
 		const cost = 3200 + (Math.abs((uuid.charCodeAt(0) || 1) * 17) % 1800);
 		title = `Help Needed: ${name} Needs Emergency Surgery — Fundraiser Open`;
@@ -686,7 +714,7 @@ ${imgs}
 <p>Every donation, no matter the size, brings us closer to getting ${name} into surgery. If you cannot donate, please share this post — visibility is everything. We'll post daily updates. All funds beyond the immediate cost will go toward follow-up care and physical therapy during recovery. Thank you for being part of our community.</p>`;
 	} else if (tag === 'training') {
 		title = `Training Help: ${name} the ${breed} Is Reactive on Leash — ${age} Years Old`;
-		description = `Looking for Front Range trainer recommendations for leash reactivity in our ${age}-year-old ${breed}, ${name}. We've done basics and counter-conditioning — ready to invest in specialized professional help.`;
+		description = `Looking for trainer recommendations in ${location.area} for leash reactivity in our ${age}-year-old ${breed}, ${name}. We've done basics and counter-conditioning — ready to invest in specialized professional help.`;
 		body = `<h2>Leash Reactivity Help for ${name} — Our ${age}-Year-Old ${breed}</h2>
 <p>Hello everyone! I'm ${owner} and I'm reaching out about our ${age}-year-old ${color} ${breed}, ${name}, who has been struggling with leash reactivity toward other dogs for the past year. We adopted ${name} as a puppy, did puppy classes and an adult obedience course, but reactivity emerged around 18 months and has become a significant challenge.</p>
 ${imgs}
@@ -701,7 +729,7 @@ ${imgs}
   <li>Management: avoiding trigger-heavy times, crossing streets proactively</li>
 </ul>
 <h3>What We're Looking For</h3>
-<p>We want a CPDT-KA or CSAT specialist with proven reactive-dog experience. We're open to board-and-train only with a force-free program and robust transition support. Happy to travel within an hour of Maurtius for the right trainer. Budget is flexible — we'd rather invest now than deal with an escalating situation. Any personal experience with a reactive ${breed} would be deeply appreciated.</p>`;
+<p>We want a CPDT-KA or CSAT specialist with proven reactive-dog experience. We're open to board-and-train only with a force-free program and robust transition support. Happy to travel within an hour of ${location.area} for the right trainer. Budget is flexible — we'd rather invest now than deal with an escalating situation. Any personal experience with a reactive ${breed} would be deeply appreciated.</p>`;
 	} else if (tag === 'volunteer') {
 		title = `Volunteers Needed: Dog Walkers &amp; Fosters at ${shelter}`;
 		description = `${shelter} is at capacity and urgently needs volunteers to walk, socialize, and foster dogs. No experience required — just a love of dogs and a few hours a week. Training provided.`;
@@ -723,11 +751,11 @@ ${imgs}
 		title = `Paws in the Park: Dog Social at ${park} — ${month}`;
 		description = `Join our free monthly dog meetup at ${park}! All breeds and sizes welcome. Meet other local dog owners and let the pups play. Free to attend — donations to ${shelter} always welcome.`;
 		body = `<h2>You're Invited: Paws in the Park at ${park}</h2>
-<p>We're hosting our monthly Paws in the Park meetup at ${park} and would love for you and your dog to join us! This free, informal gathering welcomes dogs and dog lovers from across the Maurtius area — from social butterflies to shy pups still building confidence.</p>
+<p>We're hosting our monthly Paws in the Park meetup at ${park} and would love for you and your dog to join us! This free, informal gathering welcomes dogs and dog lovers from across ${location.area} — from social butterflies to shy pups still building confidence.</p>
 ${imgs}
 <h3>Event Details</h3>
 <ul>
-  <li><strong>Location:</strong> ${park}, Maurtius — east lawn, main entrance</li>
+	<li><strong>Location:</strong> ${park} in the selected location area — east lawn, main entrance</li>
   <li><strong>Month:</strong> Third Saturday of ${month}</li>
   <li><strong>Time:</strong> 8:00 AM – 10:30 AM</li>
   <li><strong>Cost:</strong> Free — donations to ${shelter} welcome but never required</li>
@@ -737,7 +765,7 @@ ${imgs}
 <h3>What to Expect</h3>
 <p>Our meetups typically draw 20–40 dogs and their owners. We have a designated off-leash play area for social dogs and a calmer on-leash zone for dogs who prefer a gentler pace. Coffee for humans, community water station for the pups. Each month a local rescue brings 2–3 adoptable dogs — last month two found homes at the event. We also do a monthly trick demonstration where any dog can participate. Come see for yourself!</p>`;
 	} else if (tag === 'meetup') {
-		title = `Maurtius Dog Lovers Meetup — ${park}, Every Saturday at 8 AM`;
+		title = `${location.placeName} Dog Lovers Meetup — ${park}, Every Saturday at 8 AM`;
 		description = `Join our long-running weekly dog lovers group at ${park} every Saturday morning. Regulars welcome, first-timers celebrated. Bring your pup or come without — all dog enthusiasts are welcome.`;
 		body = `<h2>Weekly Dog Lovers Meetup at ${park}</h2>
 <p>We've been meeting at ${park} every Saturday morning for three years. What started as six people and eight dogs now regularly draws 30+ dogs and their owners — rain or shine. Everyone is welcome: bring your dog, come solo, or spend the morning with one of ours.</p>
@@ -752,7 +780,7 @@ ${imgs}
 <p>We are force-free, judgment-free, and breed-blind. We ask only for basic management, honest self-assessment, and a genuine love of dogs. Our regulars have helped reunite lost dogs, arranged emergency fosters, facilitated dozens of adoptions, and raised thousands for ${shelter}. What started as a casual walk has become something genuinely beautiful. Come see.</p>`;
 	} else if (tag === 'supplies') {
 		title = `Free Dog Supplies — ${breed}-Size Crate, Beds, Toys, Food — Must Go Soon`;
-		description = `Relocating out of state and need to rehome ${name}'s gear. Large wire crate, orthopedic bed, harnesses, toys, opened food. Free to a good home — pickup in Maurtius metro.`;
+		description = `Relocating out of state and need to rehome ${name}'s gear. Large wire crate, orthopedic bed, harnesses, toys, opened food. Free to a good home — pickup in ${location.area}.`;
 		body = `<h2>Free Dog Supplies — Everything Must Go</h2>
 <p>We're moving across the country in three weeks and can't take all of ${name}'s supplies. Rather than donate to a general thrift store, we'd love these items to go directly to dogs and families in our community. Everything is gently used and has a lot of life left in it.</p>
 ${imgs}
@@ -769,20 +797,20 @@ ${imgs}
   <li><strong>Grooming tools:</strong> Slicker brush, nail grinder, ear cleaner kit.</li>
 </ul>
 <h3>Pickup Details</h3>
-<p>Free pickup in the Maurtius metro area. Prefer to give everything to one household (great for a new dog owner or rescue foster home) but happy to split if needed. Pickup only — we cannot deliver. We ask that items go to homes with dogs, not for resale. Contact us through the form on this page with your availability. Evenings and weekends work best.</p>`;
+<p>Free pickup in the ${location.area} area. Prefer to give everything to one household (great for a new dog owner or rescue foster home) but happy to split if needed. Pickup only — we cannot deliver. We ask that items go to homes with dogs, not for resale. Contact us through the form on this page with your availability. Evenings and weekends work best.</p>`;
 	} else if (tag === 'transportation') {
-		const origin = _seeded(['Pueblo', 'Colorado Springs', 'Grand Junction', 'Durango', 'Fort Collins'], uuid, 12);
-		title = `Transport Volunteer Needed: ${name} — ${origin} to Maurtius Foster Home`;
-		description = `${name}, a ${color} ${breed} rescued from a high-kill shelter in ${origin}, needs a volunteer driver to reach a Maurtius foster home this weekend. Mileage reimbursement available.`;
+		const origin = _seeded(['North End', 'River District', 'Old Town', 'Harbor View', 'West Side'], uuid, 12);
+		title = `Transport Volunteer Needed: ${name} — ${origin} to ${location.placeName} Foster Home`;
+		description = `${name}, a ${color} ${breed} rescued from a high-kill shelter in ${origin}, needs a volunteer driver to reach a ${location.placeName} foster home this weekend. Mileage reimbursement available.`;
 		body = `<h2>Transport Volunteer Needed for ${name} the ${breed}</h2>
-<p>We need a volunteer driver to transport ${name}, a ${age}-year-old ${color} ${breed}, from ${origin} to a waiting foster home in Maurtius. This is urgent — ${name} has been pulled from a high-kill shelter and has a confirmed foster placement ready. All we need is a driver willing to make the trip this weekend.</p>
+<p>We need a volunteer driver to transport ${name}, a ${age}-year-old ${color} ${breed}, from ${origin} to a waiting foster home in ${location.area}. This is urgent — ${name} has been pulled from a high-kill shelter and has a confirmed foster placement ready. All we need is a driver willing to make the trip this weekend.</p>
 ${imgs}
 <h3>About ${name}</h3>
 <p>${name} is a gentle ${weight}-lb ${breed} surrendered to ${shelter} when their owner could no longer provide care. ${name} has been assessed as calm in vehicles, non-reactive to other dogs, and friendly with all people. ${name} is crate-trained and will travel in a secure carrier provided by the rescue.</p>
 <h3>Transport Details</h3>
 <ul>
   <li><strong>Pickup:</strong> ${origin}, CO (exact address shared with confirmed driver)</li>
-  <li><strong>Drop-off:</strong> East Maurtius (address shared on confirmation)</li>
+	<li><strong>Drop-off:</strong> ${location.placeName} area (address shared on confirmation)</li>
   <li><strong>Preferred date:</strong> This Saturday or Sunday</li>
   <li><strong>Preferred time:</strong> Morning pickup (8–11 AM)</li>
   <li><strong>Mileage reimbursement:</strong> Available — contact us for details</li>
@@ -820,7 +848,8 @@ ${imgs}
  * Generate realistic profile content (rescue org, individual, vet clinic, etc.).
  * Returns { name, description, html } with html padded to ~22 000 chars.
  */
-export function generateRealProfileContent(primaryTag, tags, uuid, imageUrls = []) {
+export function generateRealProfileContent(primaryTag, tags, uuid, imageUrls = [], locationContext = {}) {
+	const location = resolveLocationContext(locationContext);
 	const profileType = _seeded(_PROFILE_TYPES, uuid, 13);
 	const orgName     = _seeded(_ORG_NAMES,      uuid, 14);
 	const vetName     = _seeded(_VET_CLINICS,    uuid, 15);
@@ -837,10 +866,10 @@ export function generateRealProfileContent(primaryTag, tags, uuid, imageUrls = [
 	let name, description, body;
 
 	if (profileType === 'rescue_org') {
-		name = orgName;
-		description = `${orgName} is a Colorado 501(c)(3) rescue dedicated to saving dogs from high-kill shelters across the Front Range. We rely entirely on volunteers and community support. Every dog saved is a life transformed.`;
-		body = `<h2>About ${orgName}</h2>
-<p>${orgName} was founded in ${month} by a small group of passionate animal advocates who believed that every healthy, treatable dog deserves a second chance at life. What began as a handful of volunteers pulling dogs from overcrowded shelters has grown into one of Colorado's most active rescue networks, with foster homes across the Maurtius metro area and partnerships with shelters from Pueblo to Fort Collins.</p>
+		name = localizePlaceName(orgName, location);
+		description = `${name} is a community rescue dedicated to saving dogs from high-kill shelters across ${location.area}. We rely entirely on volunteers and community support. Every dog saved is a life transformed.`;
+		body = `<h2>About ${name}</h2>
+<p>${name} was founded in ${month} by a small group of passionate animal advocates who believed that every healthy, treatable dog deserves a second chance at life. What began as a handful of volunteers pulling dogs from overcrowded shelters has grown into one of the most active rescue networks in ${location.area}, with foster homes throughout the area and partnerships with shelters nearby.</p>
 ${imgs}
 <h3>Our Mission</h3>
 <p>We exist to bridge the gap between dogs in crisis and the loving homes waiting for them. We focus primarily on dogs facing euthanasia due to overcrowding. Every dog we pull receives a full veterinary workup, all necessary vaccinations, spay/neuter surgery, microchip registration, and placement in a screened foster home before being made available for adoption.</p>
@@ -857,12 +886,12 @@ ${imgs}
 <h3>How to Get Involved</h3>
 <p>The best way to support ${orgName} is to become a foster family. All we ask is your time, your patience, and your home. If you cannot foster, consider volunteering at events, transporting dogs to vet appointments, or donating to our veterinary fund. Every contribution directly supports the dogs in our care. Contact us using the form on this page to learn more.</p>
 <h3>Success Stories</h3>
-<p>We are proud to share that since our founding we have placed over 800 dogs into permanent homes across Colorado. Each placement represents a dog who was hours from death and a family who gained a loyal companion. We receive photos and updates from adopters every single week. From ${dogName} the ${breed} who now competes in agility with the ${firstName} family, to the eight-year-old senior who spends her days on a sunny back porch near ${park} — these stories fuel everything we do.</p>`;
+<p>We are proud to share that since our founding we have placed over 800 dogs into permanent homes across ${location.area}. Each placement represents a dog who was hours from death and a family who gained a loyal companion. We receive photos and updates from adopters every single week. From ${dogName} the ${breed} who now competes in agility with the ${firstName} family, to the eight-year-old senior who spends her days on a sunny back porch near ${park} — these stories fuel everything we do.</p>`;
 	} else if (profileType === 'vet_clinic') {
-		name = vetName;
-		description = `${vetName} provides compassionate, evidence-based care for dogs and their families across the Maurtius metro area. From routine wellness visits to complex surgery, we treat every patient like family.`;
-		body = `<h2>Welcome to ${vetName}</h2>
-<p>${vetName} has served the Maurtius Front Range community for over twelve years. Founded by Dr. ${firstName} ${lastName}, our practice was built on a single belief: that veterinary care should be compassionate, transparent, and accessible. We have grown from a three-person team to a full-service facility with specialists in surgery, dentistry, internal medicine, and rehabilitation — but our culture has never changed.</p>
+		name = localizePlaceName(vetName, location);
+		description = `${name} provides compassionate, evidence-based care for dogs and their families across ${location.area}. From routine wellness visits to complex surgery, we treat every patient like family.`;
+		body = `<h2>Welcome to ${name}</h2>
+<p>${name} has served the ${location.area} community for over twelve years. Founded by Dr. ${firstName} ${lastName}, our practice was built on a single belief: that veterinary care should be compassionate, transparent, and accessible. We have grown from a three-person team to a full-service facility with specialists in surgery, dentistry, internal medicine, and rehabilitation — but our culture has never changed.</p>
 ${imgs}
 <h3>Our Services</h3>
 <ul>
@@ -880,10 +909,10 @@ ${imgs}
 <h3>Meet Our Team</h3>
 <p>Our team of eight veterinarians and twelve technicians brings decades of combined experience and an unwavering passion for animal health. Many of our staff members are foster families for local rescues, and several have adopted their current pets directly from ${shelter}. We don't just work with dogs — we live with them, love them, and advocate for them in everything we do.</p>`;
 	} else if (profileType === 'trainer') {
-		name = trainerOrg;
-		description = `${trainerOrg} offers force-free, science-based training for dogs of all breeds, ages, and backgrounds. From puppy basics to competition obedience, reactive-dog rehab to service dog foundations — we train the whole team.`;
-		body = `<h2>Welcome to ${trainerOrg}</h2>
-<p>${trainerOrg} was founded by ${firstName} ${lastName}, a Certified Professional Dog Trainer (CPDT-KA) and Certified Separation Anxiety Trainer (CSAT) with over fifteen years of experience. Our program is built entirely on positive reinforcement and the latest behavioral science — no shock, no prong, no force, ever.</p>
+		name = localizePlaceName(trainerOrg, location);
+		description = `${name} offers force-free, science-based training for dogs of all breeds, ages, and backgrounds. From puppy basics to competition obedience, reactive-dog rehab to service dog foundations — we train the whole team.`;
+		body = `<h2>Welcome to ${name}</h2>
+<p>${name} was founded by ${firstName} ${lastName}, a Certified Professional Dog Trainer (CPDT-KA) and Certified Separation Anxiety Trainer (CSAT) with over fifteen years of experience. Our program is built entirely on positive reinforcement and the latest behavioral science — no shock, no prong, no force, ever.</p>
 ${imgs}
 <h3>Our Training Programs</h3>
 <ul>
@@ -897,12 +926,12 @@ ${imgs}
 <h3>Our Approach</h3>
 <p>Every dog is an individual. Our assessment process evaluates learning style, arousal threshold, social preferences, and owner lifestyle before recommending a training track. We are transparent about timelines and realistic about expectations. We do not promise miracles — we promise commitment, consistency, and a method that builds trust rather than compliance through fear.</p>
 <h3>Facilities and Locations</h3>
-<p>We offer training at our indoor facility near ${park}, at outdoor locations across the Maurtius metro area, and virtually for remote clients and maintenance sessions. We make the training environment match the real world as much as possible — because a dog who only works in a quiet studio is not prepared for real life.</p>
+<p>We offer training at our indoor facility near ${park}, at outdoor locations across ${location.area}, and virtually for remote clients and maintenance sessions. We make the training environment match the real world as much as possible — because a dog who only works in a quiet studio is not prepared for real life.</p>
 <h3>Community Involvement</h3>
 <p>We regularly donate training scholarships to adopters from ${shelter} and partner with local rescues to provide complimentary behavior consultations for newly placed dogs. We believe that a well-trained dog is less likely to be returned or surrendered, and we put that belief into practice every day by supporting the full continuum of dog welfare in our community.</p>`;
 	} else if (profileType === 'foster') {
 		name = `${firstName} ${lastName} — Foster Family`;
-		description = `${firstName} ${lastName} has fostered over 30 dogs in the Maurtius area through ${shelter} and partner rescues over the past four years. Currently hosting: ${dogName} the ${breed}. Always room for one more.`;
+		description = `${firstName} ${lastName} has fostered over 30 dogs in ${location.area} through ${shelter} and partner rescues over the past four years. Currently hosting: ${dogName} the ${breed}. Always room for one more.`;
 		body = `<h2>Meet ${firstName} ${lastName} — Experienced Foster Family</h2>
 <p>Four years ago, ${firstName} said yes to fostering "just one dog" to help out during a shelter overflow. That first dog — a terrified Beagle mix named Oliver — stayed for three months and was adopted into a wonderful family. ${firstName} has not stopped fostering since. To date, ${firstName} has fostered 32 dogs through ${shelter} and two partner rescues, including bottle-baby neonates, senior dogs with medical needs, severely undersocialized dogs, and everything in between.</p>
 ${imgs}
@@ -912,25 +941,25 @@ ${imgs}
 <p>People often ask if fostering is hard. The honest answer is yes — and worth every minute of it. The hardest part is not the "foster fails" (when you adopt your own foster dog). The hardest part is the first 48 hours, when a new dog arrives scared and shut down, and you have to resist the urge to rush their healing. The most rewarding part is the moment they realize they are safe — which looks different for every dog, but is never anything less than extraordinary.</p>
 <p>${firstName} currently has a dog-friendly home with a securely fenced yard and works from home, which allows for the supervision and consistency foster dogs need during the critical first weeks. The rescue team handles all vet care, supplies, and medical decisions. Foster families just need to show up with patience and love. If you are thinking about fostering, reach out through the contact form — ${firstName} is happy to answer any questions.</p>
 <h3>How You Can Help</h3>
-<p>The shelter system cannot function without foster homes. Right now in the Maurtius metro area, dozens of dogs are waiting for a foster placement so they can be pulled from high-kill shelters. If you have space in your home — even temporarily, even for just one dog — please consider reaching out to ${shelter} or any of the local rescues to learn about their foster programs. You don't need experience. You just need willingness. The rescue team handles the rest.</p>`;
+<p>The shelter system cannot function without foster homes. Right now in ${location.area}, dozens of dogs are waiting for a foster placement so they can be pulled from high-kill shelters. If you have space in your home — even temporarily, even for just one dog — please consider reaching out to ${shelter} or any of the local rescues to learn about their foster programs. You don't need experience. You just need willingness. The rescue team handles the rest.</p>`;
 	} else {
 		// individual
 		name = `${firstName} ${lastName} & ${dogName}`;
-		description = `${firstName} is a lifelong dog lover based in Maurtius. ${dogName} is a ${breed} rescue and the best decision ${firstName} ever made. Together they hike, volunteer, and advocate for dog welfare across the Front Range.`;
+		description = `${firstName} is a lifelong dog lover based in ${location.area}. ${dogName} is a ${breed} rescue and the best decision ${firstName} ever made. Together they hike, volunteer, and advocate for dog welfare across the area.`;
 		body = `<h2>About ${firstName} ${lastName} & ${dogName}</h2>
-<p>Hi! I'm ${firstName} ${lastName}, a Maurtius-based dog lover, amateur photographer, and passionate advocate for shelter dogs. ${dogName}, my ${breed} rescue companion, has been with me for three years and has changed my life in ways I never expected. Together we hike the Front Range trails, volunteer at ${shelter} on weekends, and try to do our small part to make Maurtius a better place for dogs and their families.</p>
+<p>Hi! I'm ${firstName} ${lastName}, a ${location.area}-based dog lover, amateur photographer, and passionate advocate for shelter dogs. ${dogName}, my ${breed} rescue companion, has been with me for three years and has changed my life in ways I never expected. Together we hike local trails, volunteer at ${shelter} on weekends, and try to do our small part to make ${location.area} a better place for dogs and their families.</p>
 ${imgs}
 <h3>${dogName}'s Story</h3>
 <p>${dogName} came to me through ${shelter} after being surrendered by a family who was moving out of state. From the first meeting, there was something special about ${dogName} — a combination of quiet dignity and barely-suppressed enthusiasm that made the adoption decision easy. The first month was an adjustment: learning each other's rhythms, building trust, establishing routines. By month three, I could not imagine my home, my hikes, or my mornings without ${dogName}.</p>
 <h3>What We Do Together</h3>
 <ul>
-  <li><strong>Hiking:</strong> We've completed 14 Front Range trail systems — ${dogName} wears a pack and carries their own water like a pro.</li>
+	<li><strong>Hiking:</strong> We've completed 14 local trail systems — ${dogName} wears a pack and carries their own water like a pro.</li>
   <li><strong>Volunteering:</strong> Weekend dog walks and socialization sessions at ${shelter}. ${dogName} has an unofficial role as "confidence model" for shy shelter dogs.</li>
   <li><strong>Training:</strong> We're currently working through an advanced nose-work course at ${trainerOrg}. ${dogName} is genuinely gifted at scent detection.</li>
   <li><strong>Community meetups:</strong> We attend the weekly dog social at ${park} and have made some of our best friendships — human and canine — through that group.</li>
 </ul>
 <h3>Why I'm Here</h3>
-<p>I created this profile to connect with other dog owners in Colorado, share what I'm learning about canine health and behavior, and occasionally help amplify the voices of local rescues and shelters when they need support. I am not a trainer or a vet — just someone who loves dogs deeply and wants to contribute to a community that does too. If you're a fellow Front Range dog person, I'd love to connect.</p>`;
+<p>I created this profile to connect with other dog owners in ${location.area}, share what I'm learning about canine health and behavior, and occasionally help amplify the voices of local rescues and shelters when they need support. I am not a trainer or a vet — just someone who loves dogs deeply and wants to contribute to a community that does too. If you're a fellow dog person in the area, I'd love to connect.</p>`;
 	}
 
 	const fullHtml = _padToSize(body, 22000);
