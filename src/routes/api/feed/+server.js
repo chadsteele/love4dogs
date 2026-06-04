@@ -1,4 +1,5 @@
 import { env } from '$env/dynamic/private';
+import { parseTimestampMs } from '$lib/dateTime.js';
 
 const BSKY_PUBLIC_XRPC_HOSTS = [
 	'https://public.api.bsky.app/xrpc',
@@ -402,7 +403,7 @@ async function fetchComments(uri) {
 				text: r.post.record.text,
 				createdAt: r.post.record.createdAt || ''
 			}))
-			.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+			.sort((a, b) => parseTimestampMs(b.createdAt) - parseTimestampMs(a.createdAt))
 			.slice(0, 3);
 	} catch {
 		return [];

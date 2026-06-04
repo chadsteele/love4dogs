@@ -11,6 +11,7 @@
 	import {siBluesky} from "simple-icons"
 	import TagPills from "$lib/TagPills.svelte"
 	import AuthorRow from "$lib/AuthorRow.svelte"
+	import DateTime from "$lib/DateTime.svelte"
 	import {writeSearchTerm, readSearchTerm} from "$lib/searchStore"
 
 	let {post, onclick = () => {}, onTagClick = () => {}} = $props()
@@ -57,15 +58,6 @@
 	function bskyUrl(uri = "") {
 		const rkey = uri.split("/").pop()
 		return `https://bsky.app/profile/${BSKY_HANDLE}/post/${rkey}`
-	}
-
-	function formatDate(iso = "") {
-		if (!iso) return ""
-		const d = new Date(iso)
-		return d.toLocaleDateString("en-US", {
-			month: "short",
-			day: "numeric",
-		})
 	}
 
 	function extractUuidFromBundleAlt(alt = "") {
@@ -566,7 +558,6 @@
 					post?.author?.displayName || post?.author?.handle || "",
 				).trim(),
 	)
-	const formattedDate = $derived(formatDate(post?.createdAt || ""))
 	const comments = $derived(post?.comments || [])
 	const locationFields = $derived(extractLocationFields(post))
 	const locationLine = $derived(
@@ -601,7 +592,7 @@
 	<AuthorRow
 		avatar={profilePic}
 		name={authorName || "Anonymous"}
-		date={formattedDate}
+		dateValue={post?.createdAt || ""}
 		location={locationLine}
 		locationHref={locationMapsHref}
 		// compact
@@ -640,8 +631,9 @@
 			<span class="stat"
 				><MessageCircle size={13} />{post.replyCount ?? 0}</span
 			>
-			{#if post.createdAt}<span class="stat-date">{formattedDate}</span
-				>{/if}
+			{#if post.createdAt}
+				<span class="stat-date"><DateTime tag="span" value={post.createdAt} /></span>
+			{/if}
 		</div>
 		{#if post.replyCount > 0 && comments.length > 0}
 			<ul class="comments-list">
@@ -764,16 +756,6 @@
 		font-weight: 600;
 	}
 
-	.location-fields {
-		display: block;
-		padding: 0.5rem 0.65rem;
-		border-radius: 8px;
-		background: #faf7f3;
-		border: 1px solid #ede5d8;
-		margin: 0 1rem;
-	}
-
-	.location-link,
 	.card-link,
 	.post-footer,
 	.one-card a {
@@ -782,8 +764,6 @@
 		cursor: pointer;
 	}
 
-	.location-link:hover,
-	.location-link:focus-visible,
 	.card-link:hover,
 	.card-link:focus-visible,
 	.post-footer:hover,
@@ -791,14 +771,6 @@
 	.one-card a:hover,
 	.one-card a:focus-visible {
 		text-decoration: none !important;
-	}
-
-	.location-row {
-		margin: 0;
-		font-size: 0.8rem;
-		line-height: 1.35;
-		color: #4b5563;
-		word-break: break-word;
 	}
 
 	/* Author row styles moved to AuthorRow component */

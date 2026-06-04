@@ -37,6 +37,11 @@
 		replacePostUriViaApi,
 	} from "$lib/bskyChunkStore"
 	import {
+		buildCompressedTimestamp,
+		formatLocalTime,
+		resolvePostTimestampMs,
+	} from "$lib/dateTime"
+	import {
 		BlueskySchemaRecord,
 		getOrCreateSharedAuthorId,
 		PROFILE_TAG,
@@ -110,7 +115,7 @@
 	let clearUndoTimer = null
 	let suppressAutosave = false
 	let lastAutosaveSnapshot = ""
-	let profileRecordStamp = $state(buildCompressedStamp())
+	let profileRecordStamp = $state(buildCompressedTimestamp())
 
 	let minifiedChunkEntries = $state([])
 	let chunkBuildVersion = 0
@@ -130,10 +135,6 @@
 		return Math.random().toString(36).slice(2, 10)
 	}
 
-	function buildCompressedStamp(now = Date.now()) {
-		return Math.max(0, Math.floor(Number(now) || 0)).toString(36)
-	}
-
 	function resolveRootAtUriFromPost(post = {}) {
 		const root = String(
 			post?.reply?.root?.uri ||
@@ -142,20 +143,6 @@
 				"",
 		).trim()
 		return /^at:\/\//i.test(root) ? root : ""
-	}
-
-	function resolvePostTimestampMs(post = {}) {
-		const candidates = [
-			post?.indexedAt,
-			post?.record?.createdAt,
-			post?.value?.createdAt,
-			post?.createdAt,
-		]
-		for (const candidate of candidates) {
-			const ms = Date.parse(String(candidate || ""))
-			if (Number.isFinite(ms) && ms > 0) return ms
-		}
-		return 0
 	}
 
 	function extractRootAtUriFromBundle(bundle = null, expectedUuid = "") {
@@ -2008,7 +1995,7 @@
 				.map((segment) => encodeURIComponent(segment))
 				.join("/")
 			const publishedViewUrl = `/profile/view/${encodeURIComponent(uuid)}/${publishedSlugPath || "profile"}`
-			profileRecordStamp = buildCompressedStamp()
+			profileRecordStamp = buildCompressedTimestamp()
 
 			const subsequentPayloadForBundle = mapSubsequentPayloadForBundle(
 				subsequentPostsPayload,
@@ -2153,7 +2140,7 @@
 				})
 			}
 
-			publishMessage = `Published profile + ${publishResult.totalChunkPosts} chunk${publishResult.totalChunkPosts === 1 ? "" : "s"} at ${new Date().toLocaleTimeString()}`
+			publishMessage = `Published profile + ${publishResult.totalChunkPosts} chunk${publishResult.totalChunkPosts === 1 ? "" : "s"} at ${formatLocalTime(Date.now())}`
 			debugProfile("[profile] publishToBluesky:success", {
 				message: publishMessage,
 				viewUrl: publishedViewUrl,
@@ -2205,7 +2192,7 @@
 			})
 		}
 		if (showMessage) {
-			saveMessage = `Saved at ${new Date().toLocaleTimeString()}`
+			saveMessage = `Saved at ${formatLocalTime(Date.now())}`
 		}
 	}
 

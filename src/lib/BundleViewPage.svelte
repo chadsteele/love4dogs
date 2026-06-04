@@ -6,6 +6,7 @@
 	import Linkify from "$lib/Linkify.svelte"
 	import ProfilePostHeader from "$lib/ProfilePostHeader.svelte"
 	import AuthorRow from "$lib/AuthorRow.svelte"
+	import {deriveBundleCreatedAtMs} from "$lib/dateTime"
 	import {CircleAlert as NoticeIcon, User} from "lucide-svelte"
 	import {readSearchTerm, writeSearchTerm} from "$lib/searchStore"
 
@@ -122,92 +123,6 @@
 		}
 		searchTerm = next.join(" ")
 		// Note: This intentionally only updates searchTerm; it does NOT trigger a search
-	}
-
-	// ── timestamp helpers ──────────────────────────────────────────────────────
-	function formatCompressedStamp(value = "") {
-		const raw = String(value || "").trim()
-		if (!raw) return ""
-		const asBase10 = Number(raw)
-		const stampMs = Number.isFinite(asBase10)
-			? asBase10
-			: Number.parseInt(raw, 36)
-		if (!Number.isFinite(stampMs) || stampMs <= 0) return raw
-		try {
-			const stampDate = new Date(stampMs)
-			const now = new Date()
-			const rtf = new Intl.RelativeTimeFormat(undefined, {
-				numeric: "auto",
-			})
-			const timeLabel = stampDate.toLocaleTimeString([], {
-				hour: "numeric",
-				minute: "2-digit",
-			})
-			const diffMs = now.getTime() - stampMs
-			if (diffMs >= 0 && diffMs < 45 * 1000) return "just now"
-			if (diffMs >= 0 && diffMs < 60 * 60 * 1000) {
-				return rtf.format(
-					-Math.max(1, Math.floor(diffMs / 60000)),
-					"minute",
-				)
-			}
-			if (diffMs >= 0 && diffMs < 24 * 60 * 60 * 1000) {
-				return rtf.format(
-					-Math.max(1, Math.floor(diffMs / 3600000)),
-					"hour",
-				)
-			}
-			const startOfToday = new Date(
-				now.getFullYear(),
-				now.getMonth(),
-				now.getDate(),
-			)
-			const startOfStampDay = new Date(
-				stampDate.getFullYear(),
-				stampDate.getMonth(),
-				stampDate.getDate(),
-			)
-			const dayDiff = Math.round(
-				(startOfToday.getTime() - startOfStampDay.getTime()) / 86400000,
-			)
-			if (dayDiff === 0) return `today at ${timeLabel}`
-			if (dayDiff === 1) return `yesterday at ${timeLabel}`
-			const includeYear = stampDate.getFullYear() !== now.getFullYear()
-			const dateLabel = stampDate.toLocaleDateString(
-				[],
-				includeYear
-					? {year: "numeric", month: "short", day: "numeric"}
-					: {month: "short", day: "numeric"},
-			)
-			return `${dateLabel} at ${timeLabel}`
-		} catch {
-			return raw
-		}
-	}
-
-	function parseBskyPostTimestampMs(post = {}) {
-		const candidates = [
-			post?.indexedAt,
-			post?.record?.createdAt,
-			post?.value?.createdAt,
-			post?.createdAt,
-		]
-		for (const candidate of candidates) {
-			const ms = Date.parse(String(candidate || ""))
-			if (Number.isFinite(ms) && ms > 0) return ms
-		}
-		return 0
-	}
-
-	function deriveCreatedAtMsFromBundle(bundle = {}) {
-		const posts = Array.isArray(bundle?.posts) ? bundle.posts : []
-		let earliest = 0
-		for (const post of posts) {
-			const ms = parseBskyPostTimestampMs(post)
-			if (!ms) continue
-			earliest = earliest === 0 ? ms : Math.min(earliest, ms)
-		}
-		return earliest
 	}
 
 	// ── media helpers ──────────────────────────────────────────────────────────
@@ -429,12 +344,6 @@
 			? `/search/${encodeURIComponent("uuid")}/${encodeURIComponent(authorId)}`
 			: "",
 	)
-	const formattedStamp = $derived(
-		formatCompressedStamp(
-			jsonData?.stamp ||
-				(derivedCreatedAtMs > 0 ? String(derivedCreatedAtMs) : ""),
-		),
-	)
 	const locationLines = $derived(buildLocationLines(jsonData))
 	const mapHref = $derived(buildMapHref(jsonData))
 	const displayTags = $derived(collectDisplayTags(jsonData || {}))
@@ -513,7 +422,7 @@
 				: ""
 
 			if (isProfile) {
-				derivedCreatedAtMs = deriveCreatedAtMsFromBundle(bundle)
+				derivedCreatedAtMs = deriveBundleCreatedAtMs(bundle)
 				let stampValue = ""
 				if (
 					typeof primary?.stamp === "string" &&
@@ -547,7 +456,7 @@
 			} else {
 				const media = collectBundleMedia(bundle)
 				const author = extractAuthorFromBundle(bundle)
-				derivedCreatedAtMs = deriveCreatedAtMsFromBundle(bundle)
+				derivedCreatedAtMs = deriveBundleCreatedAtMs(bundle)
 				jsonData = {
 					...(primary || {}),
 					html: htmlChunks,
@@ -681,7 +590,11 @@
 							jsonData?.title ||
 							jsonData?.authorName
 						: jsonData?.authorName) || "Anonymous"}
-					date={formattedStamp}
+					dateValue={jsonData?.stamp ||
+						(derivedCreatedAtMs > 0
+							? String(derivedCreatedAtMs)
+							: "")}
+					dateAllowBase36={true}
 					href={isProfile
 						? asUrl(jsonData?.canonicalurl) || undefined
 						: authorSearchHref || undefined}

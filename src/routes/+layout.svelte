@@ -1,6 +1,8 @@
 <script>
 	import {fullPageEditor} from "$lib/fullPageEditor.js"
+	import {getCalendarYear} from "$lib/dateTime"
 	let {children} = $props()
+	const currentYear = getCalendarYear()
 </script>
 
 <div class="bg-kenburns" aria-hidden="true"></div>
@@ -15,7 +17,7 @@
 {#if !$fullPageEditor}
 	<div class="footer">
 		<p class="meta">
-			<span>&copy; {new Date().getFullYear()} Love4Dogs.club</span>
+			<span>&copy; {currentYear} Love4Dogs.club</span>
 			<span class="sep" aria-hidden="true">•</span>
 			<span
 				>All content is community-driven and belongs to its owners.</span

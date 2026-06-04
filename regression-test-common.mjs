@@ -335,7 +335,38 @@ function hasUsableAddress(location = {}) {
 			String(location.neighbourhood || '').trim() ||
 			String(location.zip || '').trim()
 	);
+	const formattedAddress = String(location.formattedAddress || '').trim();
+	if (!formattedAddress) return false;
 	return Boolean(line1 || hasLocality);
+}
+
+function isLikelyWaterAddress(location = {}) {
+	const source = [
+		location.formattedAddress,
+		location.road,
+		location.city,
+		location.suburb,
+		location.neighbourhood,
+	]
+		.map((value) => String(value || '').toLowerCase())
+		.join(' ');
+	if (!source) return true;
+
+	const waterHints = [
+		'ocean',
+		'sea',
+		'gulf',
+		'bay',
+		'channel',
+		'offshore',
+		'lagoon',
+		'reef',
+		'harbor',
+		'harbour',
+		'marina',
+	];
+
+	return waterHints.some((token) => source.includes(token));
 }
 
 async function geocodeBaseLocation({baseUrl, query, fetchImpl = fetch}) {
@@ -422,8 +453,13 @@ export async function createRandomTestLocation({
 		const {lat, lon} = offsetCoordinatesByMiles(baseLat, baseLon, maxOffsetMiles);
 		const reverse = await reverseGeocodeLocation({baseUrl: apiBase, lat, lon, fetchImpl});
 		if (!reverse) continue;
+		if (isLikelyWaterAddress(reverse)) continue;
 
-		const hashes = buildMapHashes(lat, lon);
+		const resolvedLat = Number(reverse.lat);
+		const resolvedLon = Number(reverse.lon);
+		if (!Number.isFinite(resolvedLat) || !Number.isFinite(resolvedLon)) continue;
+
+		const hashes = buildMapHashes(resolvedLat, resolvedLon);
 		const addressLine = [reverse.houseNumber, reverse.road]
 			.map((value) => String(value || '').trim())
 			.filter(Boolean)
@@ -435,8 +471,8 @@ export async function createRandomTestLocation({
 			state: reverse.state,
 			zip: reverse.zip,
 			country: reverse.country,
-			lat,
-			lon,
+			lat: resolvedLat,
+			lon: resolvedLon,
 			approximate: hashes.approximate,
 			exact: hashes.exact,
 			hashPath: hashes.path,
@@ -462,24 +498,95 @@ const _DOG_NAMES = [
 	'Rocky', 'Lola', 'Bear', 'Sadie', 'Duke', 'Zoe', 'Zeus', 'Penny',
 	'Milo', 'Roxy', 'Jack', 'Maggie', 'Atlas', 'Nala', 'Leo', 'Stella', 'Koda',
 ];
-const _DOG_BREEDS = [
-	'Labrador Retriever', 'Golden Retriever', 'German Shepherd', 'French Bulldog',
-	'Beagle', 'Poodle', 'Border Collie', 'Australian Shepherd', 'Siberian Husky',
-	'Boxer', 'Bernese Mountain Dog', 'Dachshund', 'Shih Tzu', 'Pit Bull Mix',
-	'Corgi', 'Mutt / Mixed Breed', 'Great Dane Mix', 'Rottweiler Mix',
+const _DOG_PERSONALITIES = [
+	'playful and endlessly curious personality',
+	'calm and deeply affectionate temperament',
+	'bright and eager-to-please nature',
+	'goofy and people-loving spirit',
+	'gentle and patient disposition',
+	'confident and adventurous personality',
+	'loyal and emotionally intuitive nature',
+	'social and joyfully energetic vibe',
+	'sweet and snuggly temperament',
+	'brave and resilient spirit',
+	'focused and highly trainable mindset',
+	'mellow and easygoing personality',
+	'curious and clever temperament',
+	'warm and family-oriented nature',
+	'friendly and trust-building presence',
+	'optimistic and tail-wagging energy',
+	'charming and expressive personality',
+	'kind and cooperative disposition',
+	'gentle-souled and comforting demeanor',
+	'confident yet tender-hearted nature',
 ];
 const _DOG_COLORS = [
 	'chocolate brown', 'golden', 'black and white', 'tan and black',
 	'silver grey', 'brindle', 'cream', 'red merle', 'pure white', 'jet black', 'liver and white',
 ];
-const _PERSON_FIRST = [
-	'Jennifer', 'Marcus', 'Sarah', 'David', 'Ashley', 'Carlos', 'Emily',
-	'James', 'Natalie', 'Tyler', 'Amanda', 'Kevin', 'Diane', 'Luis', 'Rachel',
+const _PERSON = [
+	{
+		country: 'american',
+		first: ['James', 'Mary', 'Robert', 'Patricia', 'John', 'Jennifer', 'Michael', 'Linda', 'William', 'Elizabeth', 'David', 'Barbara', 'Richard', 'Susan', 'Joseph', 'Jessica', 'Thomas', 'Sarah', 'Charles', 'Karen'],
+		last: ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis', 'Rodriguez', 'Martinez', 'Hernandez', 'Lopez', 'Gonzalez', 'Wilson', 'Anderson', 'Thomas', 'Taylor', 'Moore', 'Jackson', 'Martin'],
+	},
+	{
+		country: 'french',
+		first: ['Jean', 'Marie', 'Pierre', 'Sophie', 'Louis', 'Camille', 'Nicolas', 'Claire', 'Antoine', 'Juliette', 'Hugo', 'Lucie', 'Julien', 'Chloe', 'Thomas', 'Manon', 'Alexandre', 'Emma', 'Lucas', 'Lea'],
+		last: ['Martin', 'Bernard', 'Dubois', 'Thomas', 'Robert', 'Richard', 'Petit', 'Durand', 'Leroy', 'Moreau', 'Simon', 'Laurent', 'Lefebvre', 'Michel', 'Garcia', 'David', 'Bertrand', 'Roux', 'Vincent', 'Fournier'],
+	},
+	{
+		country: 'indian',
+		first: ['Aarav', 'Aanya', 'Arjun', 'Ananya', 'Vikram', 'Priya', 'Rahul', 'Sneha', 'Karan', 'Neha', 'Rohan', 'Pooja', 'Aditya', 'Kavya', 'Manish', 'Isha', 'Siddharth', 'Meera', 'Nikhil', 'Riya'],
+		last: ['Sharma', 'Patel', 'Singh', 'Kumar', 'Gupta', 'Mehta', 'Jain', 'Verma', 'Reddy', 'Nair', 'Rao', 'Iyer', 'Kapoor', 'Malhotra', 'Bose', 'Das', 'Chopra', 'Khanna', 'Bhat', 'Mishra'],
+	},
+	{
+		country: 'english',
+		first: ['Oliver', 'Amelia', 'George', 'Olivia', 'Arthur', 'Isla', 'Harry', 'Ava', 'Jack', 'Emily', 'Charlie', 'Grace', 'Noah', 'Lily', 'Alfie', 'Freya', 'Oscar', 'Poppy', 'Henry', 'Sophie'],
+		last: ['Smith', 'Jones', 'Taylor', 'Brown', 'Williams', 'Wilson', 'Johnson', 'Davies', 'Robinson', 'Wright', 'Thompson', 'Evans', 'Walker', 'White', 'Roberts', 'Green', 'Hall', 'Wood', 'Jackson', 'Clark'],
+	},
+	{
+		country: 'german',
+		first: ['Lukas', 'Anna', 'Leon', 'Emma', 'Paul', 'Mia', 'Finn', 'Hannah', 'Jonas', 'Lea', 'Noah', 'Lina', 'Elias', 'Laura', 'Felix', 'Sarah', 'Max', 'Sophie', 'Tim', 'Julia'],
+		last: ['Mueller', 'Schmidt', 'Schneider', 'Fischer', 'Weber', 'Meyer', 'Wagner', 'Becker', 'Schulz', 'Hoffmann', 'Schaefer', 'Koch', 'Bauer', 'Richter', 'Klein', 'Wolf', 'Schroeder', 'Neumann', 'Schwarz', 'Zimmermann'],
+	},
+	{
+		country: 'chinese',
+		first: ['Wei', 'Li', 'Jie', 'Fang', 'Ming', 'Hua', 'Lei', 'Xin', 'Tao', 'Ying', 'Jun', 'Yan', 'Qiang', 'Ling', 'Peng', 'Na', 'Bo', 'Mei', 'Chao', 'Rui'],
+		last: ['Wang', 'Li', 'Zhang', 'Liu', 'Chen', 'Yang', 'Huang', 'Zhao', 'Wu', 'Zhou', 'Xu', 'Sun', 'Ma', 'Zhu', 'Hu', 'Guo', 'He', 'Gao', 'Lin', 'Luo'],
+	},
+	{
+		country: 'japanese',
+		first: ['Haruto', 'Yui', 'Sota', 'Aoi', 'Yuto', 'Akari', 'Kaito', 'Hina', 'Ren', 'Sakura', 'Daiki', 'Rin', 'Shota', 'Yuna', 'Takumi', 'Mio', 'Kenta', 'Nanami', 'Riku', 'Ayaka'],
+		last: ['Sato', 'Suzuki', 'Takahashi', 'Tanaka', 'Watanabe', 'Ito', 'Yamamoto', 'Nakamura', 'Kobayashi', 'Kato', 'Yoshida', 'Yamada', 'Sasaki', 'Yamaguchi', 'Matsumoto', 'Inoue', 'Kimura', 'Hayashi', 'Shimizu', 'Yamazaki'],
+	},
+	{
+		country: 'australian',
+		first: ['Jack', 'Charlotte', 'Noah', 'Olivia', 'William', 'Amelia', 'Thomas', 'Mia', 'James', 'Isla', 'Lucas', 'Grace', 'Henry', 'Ruby', 'Ethan', 'Sophie', 'Liam', 'Ella', 'Oscar', 'Chloe'],
+		last: ['Smith', 'Jones', 'Williams', 'Brown', 'Wilson', 'Taylor', 'Nguyen', 'Martin', 'White', 'Anderson', 'Thompson', 'Thomas', 'Walker', 'Harris', 'Ryan', 'Robinson', 'Lee', 'King', 'Wright', 'Scott'],
+	},
+	{
+		country: 'south african',
+		first: ['Sipho', 'Thandi', 'Lerato', 'Mandla', 'Ayanda', 'Sibusiso', 'Nomsa', 'Bongani', 'Nandi', 'Themba', 'Zanele', 'Kagiso', 'Palesa', 'Jabu', 'Lindiwe', 'Neo', 'Kopano', 'Naledi', 'Mpho', 'Tumi'],
+		last: ['Nkosi', 'Ndlovu', 'Khumalo', 'Mokoena', 'Dlamini', 'Naidoo', 'Pillay', 'Van Wyk', 'Botha', 'Pretorius', 'Meyer', 'Smit', 'Molefe', 'Zulu', 'Mabaso', 'Govender', 'Sibanda', 'Mthembu', 'Radebe', 'Mahlangu'],
+	},
+	{
+		country: 'kenyan',
+		first: ['Brian', 'Wanjiku', 'Otieno', 'Akinyi', 'Kamau', 'Njeri', 'Kiptoo', 'Chebet', 'Mwangi', 'Atieno', 'Mutua', 'Wambui', 'Barasa', 'Achieng', 'Kariuki', 'Nyambura', 'Omondi', 'Naliaka', 'Kibet', 'Makena'],
+		last: ['Mwangi', 'Wanjiru', 'Otieno', 'Omondi', 'Kamau', 'Njoroge', 'Kiptoo', 'Cheruiyot', 'Mutua', 'Musyoka', 'Maina', 'Kariuki', 'Kimani', 'Koech', 'Barasa', 'Achieng', 'Mumo', 'Wekesa', 'Odhiambo', 'Muthoni'],
+	},
+	{
+		country: 'arabic',
+		first: ['Omar', 'Layla', 'Ahmed', 'Fatima', 'Youssef', 'Aisha', 'Khalid', 'Nour', 'Hassan', 'Mariam', 'Tariq', 'Salma', 'Karim', 'Dina', 'Rami', 'Huda', 'Zayd', 'Yasmin', 'Samir', 'Rana'],
+		last: ['Al Farsi', 'Al Mansoori', 'Haddad', 'Nasser', 'Khalil', 'Farah', 'Saeed', 'Hamdan', 'Rahman', 'Abbasi', 'Qasim', 'Jabari', 'Masri', 'Salem', 'Bakri', 'Khoury', 'Najjar', 'Darwish', 'Amiri', 'Shami'],
+	},
+	{
+		country: 'mauritian',
+		first: ['Kevin', 'Anisha', 'Vikash', 'Nadia', 'Darren', 'Asha', 'Kersley', 'Shalini', 'Ravin', 'Priya', 'Jean', 'Mireille', 'Yash', 'Nisha', 'Sanjay', 'Leena', 'Avinash', 'Divya', 'Kunal', 'Reshma'],
+		last: ['Ramsamy', 'Bissoondoyal', 'Bhoobun', 'Rungassamy', 'Seebaluck', 'Gooriah', 'Appadoo', 'Virahsawmy', 'Meetoo', 'Gunness', 'Moonsamy', 'Ramdass', 'Mungroo', 'Bundhun', 'Coomar', 'Lallmahomed', 'Dookhee', 'Beegun', 'Gungadin', 'Nundlall'],
+	},
 ];
-const _PERSON_LAST = [
-	'Marsh', 'Delgado', 'Kim', 'Thornton', 'Rivera', 'Mendoza', 'Chen',
-	'Whitfield', 'Okafor', 'Brooks', 'Cruz', 'Patton', 'Garcia', 'Sullivan', 'Park',
-];
+const _PERSON_COUNTRIES = _PERSON.map((entry) => entry.country);
 const _PARKS = [
 	'Central Park', 'Riverside Park', 'Community Green', 'Lakeside Park',
 	'Hillside Park', 'Canal Dog Park', 'Oak Grove Dog Park', 'Harbor Green Park',
@@ -516,6 +623,16 @@ function _seeded(arr, seed, offset = 0) {
 	let h = 5381;
 	for (const c of seed) h = (Math.imul(h, 31) + c.charCodeAt(0)) | 0;
 	return arr[Math.abs(h + offset) % arr.length];
+}
+
+function _seededPerson(seed, countryOffset, firstOffset, lastOffset) {
+	const country = _seeded(_PERSON_COUNTRIES, seed, countryOffset);
+	const profile = _PERSON.find((entry) => entry.country === country) || _PERSON[0];
+	return {
+		country,
+		first: _seeded(profile.first, seed, firstOffset),
+		last: _seeded(profile.last, seed, lastOffset),
+	};
 }
 
 function _imgFigures(imageUrls = []) {
@@ -589,12 +706,13 @@ function localizePlaceName(name, location) {
 export function generateRealDogPostContent(primaryTag, tags, uuid, imageUrls = [], locationContext = {}) {
 	const location = resolveLocationContext(locationContext);
 	const name    = _seeded(_DOG_NAMES,    uuid, 0);
-	const breed   = _seeded(_DOG_BREEDS,   uuid, 1);
+	const personality = _seeded(_DOG_PERSONALITIES, uuid, 1);
 	const color   = _seeded(_DOG_COLORS,   uuid, 2);
 	const age     = _seeded(_AGES,         uuid, 3);
 	const weight  = _seeded(_WEIGHTS,      uuid, 4);
-	const ownerFn = _seeded(_PERSON_FIRST, uuid, 5);
-	const ownerLn = _seeded(_PERSON_LAST,  uuid, 6);
+	const ownerPerson = _seededPerson(uuid, 105, 5, 6);
+	const ownerFn = ownerPerson.first;
+	const ownerLn = ownerPerson.last;
 	const owner   = `${ownerFn} ${ownerLn}`;
 	const park    = _seeded(_PARKS,        uuid, 7);
 	const shelter = _seeded(_SHELTERS,     uuid, 8);
@@ -606,15 +724,15 @@ export function generateRealDogPostContent(primaryTag, tags, uuid, imageUrls = [
 	let title, description, body;
 
 	if (tag === 'lost') {
-		title = `LOST: ${breed} Named "${name}" — Missing Since ${day}`;
-		description = `Help us find ${name}! Our beloved ${age}-year-old ${color} ${breed} went missing near ${park}. Approx. ${weight} lbs, microchipped. Please share. Contact ${owner}.`;
+		title = `LOST: ${name} — ${personality} — Missing Since ${day}`;
+		description = `Help us find ${name}! Our beloved ${age}-year-old ${color} dog with a ${personality} went missing near ${park}. Approx. ${weight} lbs, microchipped. Please share. Contact ${owner}.`;
 		body = `<h2>Help Us Find ${name}!</h2>
-<p>Our family is heartbroken. ${name}, our ${age}-year-old ${color} ${breed}, disappeared from near ${park} on ${day} evening around 6:30 PM. We were finishing our walk when a loud noise startled ${name} and the leash slipped. By the time we recovered, ${name} had vanished into the trees along the trail.</p>
+<p>Our family is heartbroken. ${name}, our ${age}-year-old ${color} dog with a ${personality}, disappeared from near ${park} on ${day} evening around 6:30 PM. We were finishing our walk when a loud noise startled ${name} and the leash slipped. By the time we recovered, ${name} had vanished into the trees along the trail.</p>
 ${imgs}
 <h3>Description</h3>
 <ul>
   <li><strong>Name:</strong> ${name}</li>
-  <li><strong>Breed:</strong> ${breed}</li>
+  <li><strong>Personality:</strong> ${personality}</li>
   <li><strong>Color:</strong> ${color}</li>
   <li><strong>Age:</strong> ${age} years</li>
   <li><strong>Weight:</strong> approx. ${weight} lbs</li>
@@ -628,14 +746,14 @@ ${imgs}
 <h3>Please Help</h3>
 <p>Shares are the single most effective thing you can do right now. The more eyes on this post, the faster ${name} comes home. We are offering a reward and are overwhelmed with gratitude for the support of this community. ${name} is deeply loved and very missed — especially by our kids, who ask about ${name} every morning.</p>`;
 	} else if (tag === 'found') {
-		title = `FOUND: ${color} ${breed} Wandering Near ${park}`;
-		description = `We found a stray ${breed} near ${park} — no collar, appears healthy and friendly. Scanned for microchip at ${shelter}. Holding safely. Is this your dog?`;
+		title = `FOUND: ${color} dog with a ${personality} wandering near ${park}`;
+		description = `We found a stray dog with a ${personality} near ${park} — no collar, appears healthy and friendly. Scanned for microchip at ${shelter}. Holding safely. Is this your dog?`;
 		body = `<h2>Found Dog — Searching for Owner</h2>
-<p>We found a ${color} ${breed} wandering alone near ${park} on ${day} afternoon. The dog appeared to have been on their own for some time — slightly dehydrated but otherwise in good health. No collar or ID tags were present. We've taken the dog in temporarily while we search for their family.</p>
+<p>We found a ${color} dog with a ${personality} wandering alone near ${park} on ${day} afternoon. The dog appeared to have been on their own for some time — slightly dehydrated but otherwise in good health. No collar or ID tags were present. We've taken the dog in temporarily while we search for their family.</p>
 ${imgs}
 <h3>Description of Found Dog</h3>
 <ul>
-  <li><strong>Breed:</strong> ${breed} (approximate)</li>
+  <li><strong>Personality:</strong> ${personality}</li>
   <li><strong>Color:</strong> ${color}</li>
   <li><strong>Estimated Age:</strong> ${age}–${Number(age) + 1} years</li>
   <li><strong>Estimated Weight:</strong> ${weight} lbs</li>
@@ -647,16 +765,16 @@ ${imgs}
 <p>We brought the dog to ${shelter} for a microchip scan and vet check. The chip was registered but the contact number was disconnected. We filed a found-animal report with city animal control and are temporarily fostering the dog — we've named them ${name} — while the search continues. ${name} is house-trained, knows sit and stay, and gets along well with our resident dog, which suggests they had a loving home before.</p>
 <p>If this is your dog, please use the contact form and provide identifying details: vet records, prior photos, unique markings. We'll verify and reunite you as quickly as possible. If no owner is found within 30 days, we will work with our rescue network to find ${name} a permanent home.</p>`;
 	} else if (tag === 'offered') {
-		title = `"${name}" Needs a Forever Home — ${breed}, ${age} Yrs, Loves Everyone`;
-		description = `Meet ${name}, a ${age}-year-old ${color} ${breed} ready for adoption. Good with kids and dogs, fully vetted, house-trained. Currently fostered in ${location.area}. Adoption fee: $150.`;
-		body = `<h2>Meet ${name} — Adoptable ${breed}</h2>
-<p>We are so excited to introduce ${name}, a ${age}-year-old ${color} ${breed} looking for their forever home. ${name} came to us through ${shelter} after their previous owner had to move into a situation that could not accommodate a pet. Despite the change, ${name} has adjusted beautifully and shown remarkable resilience and love.</p>
+		title = `"${name}" Needs a Forever Home — ${personality}, ${age} Yrs, Loves Everyone`;
+		description = `Meet ${name}, a ${age}-year-old ${color} dog with a ${personality} ready for adoption. Good with kids and dogs, fully vetted, house-trained. Currently fostered in ${location.area}. Adoption fee: $150.`;
+		body = `<h2>Meet ${name} — Adoptable Dog with a ${personality}</h2>
+<p>We are so excited to introduce ${name}, a ${age}-year-old ${color} dog with a ${personality} looking for their forever home. ${name} came to us through ${shelter} after their previous owner had to move into a situation that could not accommodate a pet. Despite the change, ${name} has adjusted beautifully and shown remarkable resilience and love.</p>
 ${imgs}
 <h3>About ${name}</h3>
 <p>${name} loves morning walks, belly rubs, and chasing tennis balls. Weighing approximately ${weight} lbs, ${name} is in excellent health — fully vaccinated, heartworm-negative, and recently given a clean bill of health by our vet. ${name} knows sit, stay, come, down, and leave-it reliably, and is working on loose-leash walking (improving every week!).</p>
 <ul>
   <li><strong>Age:</strong> ${age} years</li>
-  <li><strong>Breed:</strong> ${breed}</li>
+  <li><strong>Personality:</strong> ${personality}</li>
   <li><strong>Weight:</strong> ${weight} lbs</li>
   <li><strong>Good with kids:</strong> Yes — best with children 8+</li>
   <li><strong>Good with dogs:</strong> Yes, after proper intro</li>
@@ -666,10 +784,10 @@ ${imgs}
 <h3>Adoption Requirements</h3>
 <p>We're looking for a home where ${name} will be an indoor family member. A fenced yard is preferred but not required. The adoption fee is $150 and includes spay/neuter, current vaccines, microchip, and a starter kit. All applicants complete an interview and home check. We match dogs to families carefully — this is not first-come, first-served. Apply using the contact form on this page.</p>`;
 	} else if (tag === 'wanted') {
-		title = `Advice Wanted: ${name} the ${breed} Struggles With Separation Anxiety`;
-		description = `Has anyone worked through severe separation anxiety in a ${breed}? Our ${age}-year-old ${name} is struggling badly when left alone. Looking for trainer recs and community experience.`;
-		body = `<h2>Seeking Advice: Separation Anxiety in Our ${breed}, ${name}</h2>
-<p>Hi community — I'm ${owner} and I'm posting because we're at our wit's end with a behavior issue in our ${age}-year-old ${color} ${breed}, ${name}. We adopted ${name} from ${shelter} eight months ago and love ${name} completely, but the separation anxiety has become a serious challenge we can't resolve on our own.</p>
+		title = `Advice Wanted: ${name} Struggles With Separation Anxiety`;
+		description = `Has anyone worked through severe separation anxiety in a dog with a ${personality}? Our ${age}-year-old ${name} is struggling badly when left alone. Looking for trainer recs and community experience.`;
+		body = `<h2>Seeking Advice: Separation Anxiety in ${name}</h2>
+<p>Hi community — I'm ${owner} and I'm posting because we're at our wit's end with a behavior issue in our ${age}-year-old ${color} dog with a ${personality}, ${name}. We adopted ${name} from ${shelter} eight months ago and love ${name} completely, but the separation anxiety has become a serious challenge we can't resolve on our own.</p>
 ${imgs}
 <h3>The Problem</h3>
 <p>Every time we leave — even for 10 minutes — ${name} becomes extremely distressed: continuous howling (confirmed by neighbors and a recording app), destructive chewing near exits, attempted window escapes, and excessive paw licking. We return to chaos and a trembling, exhausted dog. The anxiety begins the moment ${name} reads our departure cues: putting on shoes, picking up keys.</p>
@@ -684,12 +802,12 @@ ${imgs}
   <li>Desensitization to departure cues — partial success, very slow progress</li>
 </ul>
 <h3>What We're Looking For</h3>
-<p>We are specifically seeking: (1) a CSAT-certified separation anxiety trainer in the ${location.area} area, (2) personal experience with medication-assisted behavior modification (our vet mentioned Clomicalm or fluoxetine as options), and (3) any success stories from ${breed} owners who have worked through a severe case. We are committed — this is not a situation we will give up on. ${name} is family.</p>`;
+<p>We are specifically seeking: (1) a CSAT-certified separation anxiety trainer in the ${location.area} area, (2) personal experience with medication-assisted behavior modification (our vet mentioned Clomicalm or fluoxetine as options), and (3) any success stories from owners of dogs with a ${personality} who have worked through a severe case. We are committed — this is not a situation we will give up on. ${name} is family.</p>`;
 	} else if (tag === 'rescue') {
 		title = `Rescue Story: ${name} Saved From High-Kill Shelter — Now Thriving`;
-		description = `${name}, a ${age}-year-old ${color} ${breed}, was pulled from ${shelter} with 24 hours to spare. After three months in foster care, ${name} found their forever home. Read the full story.`;
+		description = `${name}, a ${age}-year-old ${color} dog with a ${personality}, was pulled from ${shelter} with 24 hours to spare. After three months in foster care, ${name} found their forever home. Read the full story.`;
 		body = `<h2>${name}'s Rescue Story — From Kennel 14 to the Sofa</h2>
-<p>Sometimes you get the call that changes everything. Ours came on a Tuesday morning: a ${age}-year-old ${color} ${breed} was on the euthanasia list at ${shelter}. They had been in Kennel 14 for 63 days — well past the typical hold period — and time had run out. We had 24 hours to pull ${name} or it would be too late.</p>
+<p>Sometimes you get the call that changes everything. Ours came on a Tuesday morning: a ${age}-year-old ${color} dog with a ${personality} was on the euthanasia list at ${shelter}. They had been in Kennel 14 for 63 days — well past the typical hold period — and time had run out. We had 24 hours to pull ${name} or it would be too late.</p>
 ${imgs}
 <h3>The Pull</h3>
 <p>We made the drive at 7 AM. What we found in that kennel broke our hearts and inspired us in equal measure. ${name} was curled in the far corner, facing the wall — a classic stress response in shelter dogs who have stopped expecting good things. But when our foster coordinator crouched down and held out her hand, ${name} slowly turned, crept forward, and pressed a cold nose against her palm. That was the moment we knew ${name} would be okay.</p>
@@ -701,9 +819,9 @@ ${imgs}
 	} else if (tag === 'medical') {
 		const cost = 3200 + (Math.abs((uuid.charCodeAt(0) || 1) * 17) % 1800);
 		title = `Help Needed: ${name} Needs Emergency Surgery — Fundraiser Open`;
-		description = `Our ${age}-year-old ${breed}, ${name}, needs emergency surgery estimated at $${cost.toLocaleString()}. We've exhausted savings and CareCredit. Any contribution or share helps bring ${name} home.`;
+		description = `Our ${age}-year-old dog with a ${personality}, ${name}, needs emergency surgery estimated at $${cost.toLocaleString()}. We've exhausted savings and CareCredit. Any contribution or share helps bring ${name} home.`;
 		body = `<h2>Please Help ${name} — Emergency Surgery Fundraiser</h2>
-<p>We never expected to post something like this, but we have nowhere else to turn. Our ${age}-year-old ${color} ${breed}, ${name}, collapsed last week during an evening walk. The emergency vet diagnosed ${name} with a serious internal condition requiring immediate surgical intervention. Without surgery within 48–72 hours, the prognosis is very poor.</p>
+<p>We never expected to post something like this, but we have nowhere else to turn. Our ${age}-year-old ${color} dog with a ${personality}, ${name}, collapsed last week during an evening walk. The emergency vet diagnosed ${name} with a serious internal condition requiring immediate surgical intervention. Without surgery within 48–72 hours, the prognosis is very poor.</p>
 ${imgs}
 <h3>The Diagnosis</h3>
 <p>After X-rays, ultrasounds, and blood panels, the team at ${_seeded(_VET_CLINICS, uuid, 11)} gave us the news no pet owner wants to hear. The condition is 100% treatable — but only with surgery that must happen soon. Estimated cost: $${cost.toLocaleString()}, including surgery, anesthesia, a 3-night hospital stay, medications, and follow-up visits.</p>
@@ -713,10 +831,10 @@ ${imgs}
 <h3>How to Help</h3>
 <p>Every donation, no matter the size, brings us closer to getting ${name} into surgery. If you cannot donate, please share this post — visibility is everything. We'll post daily updates. All funds beyond the immediate cost will go toward follow-up care and physical therapy during recovery. Thank you for being part of our community.</p>`;
 	} else if (tag === 'training') {
-		title = `Training Help: ${name} the ${breed} Is Reactive on Leash — ${age} Years Old`;
-		description = `Looking for trainer recommendations in ${location.area} for leash reactivity in our ${age}-year-old ${breed}, ${name}. We've done basics and counter-conditioning — ready to invest in specialized professional help.`;
-		body = `<h2>Leash Reactivity Help for ${name} — Our ${age}-Year-Old ${breed}</h2>
-<p>Hello everyone! I'm ${owner} and I'm reaching out about our ${age}-year-old ${color} ${breed}, ${name}, who has been struggling with leash reactivity toward other dogs for the past year. We adopted ${name} as a puppy, did puppy classes and an adult obedience course, but reactivity emerged around 18 months and has become a significant challenge.</p>
+		title = `Training Help: ${name} Is Reactive on Leash — ${age} Years Old`;
+		description = `Looking for trainer recommendations in ${location.area} for leash reactivity in our ${age}-year-old dog with a ${personality}, ${name}. We've done basics and counter-conditioning — ready to invest in specialized professional help.`;
+		body = `<h2>Leash Reactivity Help for ${name} — Our ${age}-Year-Old Dog</h2>
+<p>Hello everyone! I'm ${owner} and I'm reaching out about our ${age}-year-old ${color} dog with a ${personality}, ${name}, who has been struggling with leash reactivity toward other dogs for the past year. We adopted ${name} as a puppy, did puppy classes and an adult obedience course, but reactivity emerged around 18 months and has become a significant challenge.</p>
 ${imgs}
 <h3>What the Reactivity Looks Like</h3>
 <p>${name} has a threshold of roughly 30–40 feet for unfamiliar dogs. Inside that threshold: lunging, full-bark alarm, hackles raised, pulling hard enough to knock me off balance. Off-leash in enclosed spaces, ${name} is almost always social and playful — classic barrier frustration mixed with anxiety. We live near ${park}, which makes training sessions unpredictable.</p>
@@ -729,7 +847,7 @@ ${imgs}
   <li>Management: avoiding trigger-heavy times, crossing streets proactively</li>
 </ul>
 <h3>What We're Looking For</h3>
-<p>We want a CPDT-KA or CSAT specialist with proven reactive-dog experience. We're open to board-and-train only with a force-free program and robust transition support. Happy to travel within an hour of ${location.area} for the right trainer. Budget is flexible — we'd rather invest now than deal with an escalating situation. Any personal experience with a reactive ${breed} would be deeply appreciated.</p>`;
+<p>We want a CPDT-KA or CSAT specialist with proven reactive-dog experience. We're open to board-and-train only with a force-free program and robust transition support. Happy to travel within an hour of ${location.area} for the right trainer. Budget is flexible — we'd rather invest now than deal with an escalating situation. Any personal experience with a reactive dog that has a ${personality} would be deeply appreciated.</p>`;
 	} else if (tag === 'volunteer') {
 		title = `Volunteers Needed: Dog Walkers &amp; Fosters at ${shelter}`;
 		description = `${shelter} is at capacity and urgently needs volunteers to walk, socialize, and foster dogs. No experience required — just a love of dogs and a few hours a week. Training provided.`;
@@ -749,7 +867,7 @@ ${imgs}
 <p>We welcome everyone — from lifelong dog owners to first-timers who simply want to help. The only requirements are a genuine love for dogs and reliability. Our dogs bond with their regular volunteers; that consistency matters enormously. Fill out the volunteer form on this page and join us at our next Saturday orientation at 9 AM. We cannot wait to meet you — and neither can the dogs.</p>`;
 	} else if (tag === 'event') {
 		title = `Paws in the Park: Dog Social at ${park} — ${month}`;
-		description = `Join our free monthly dog meetup at ${park}! All breeds and sizes welcome. Meet other local dog owners and let the pups play. Free to attend — donations to ${shelter} always welcome.`;
+		description = `Join our free monthly dog meetup at ${park}! All personalities and sizes welcome. Meet other local dog owners and let the pups play. Free to attend — donations to ${shelter} always welcome.`;
 		body = `<h2>You're Invited: Paws in the Park at ${park}</h2>
 <p>We're hosting our monthly Paws in the Park meetup at ${park} and would love for you and your dog to join us! This free, informal gathering welcomes dogs and dog lovers from across ${location.area} — from social butterflies to shy pups still building confidence.</p>
 ${imgs}
@@ -759,7 +877,7 @@ ${imgs}
   <li><strong>Month:</strong> Third Saturday of ${month}</li>
   <li><strong>Time:</strong> 8:00 AM – 10:30 AM</li>
   <li><strong>Cost:</strong> Free — donations to ${shelter} welcome but never required</li>
-  <li><strong>Dogs welcome:</strong> All breeds, all sizes, all ages</li>
+	<li><strong>Dogs welcome:</strong> All personalities, all sizes, all ages</li>
   <li><strong>Requirements:</strong> Up-to-date vaccines, on-leash until off-leash zone, friendly temperament</li>
 </ul>
 <h3>What to Expect</h3>
@@ -777,9 +895,9 @@ ${imgs}
 <p><strong>9:30 AM:</strong> Community circle — lost/found updates, adoption spotlights, training wins. Typically 10–15 minutes.</p>
 <p><strong>10:00 AM:</strong> Informal socializing until people head home. Some of us grab breakfast after.</p>
 <h3>Our Community Values</h3>
-<p>We are force-free, judgment-free, and breed-blind. We ask only for basic management, honest self-assessment, and a genuine love of dogs. Our regulars have helped reunite lost dogs, arranged emergency fosters, facilitated dozens of adoptions, and raised thousands for ${shelter}. What started as a casual walk has become something genuinely beautiful. Come see.</p>`;
+<p>We are force-free, judgment-free, and personality-inclusive. We ask only for basic management, honest self-assessment, and a genuine love of dogs. Our regulars have helped reunite lost dogs, arranged emergency fosters, facilitated dozens of adoptions, and raised thousands for ${shelter}. What started as a casual walk has become something genuinely beautiful. Come see.</p>`;
 	} else if (tag === 'supplies') {
-		title = `Free Dog Supplies — ${breed}-Size Crate, Beds, Toys, Food — Must Go Soon`;
+		title = `Free Dog Supplies — ${weight}-lb Size Crate, Beds, Toys, Food — Must Go Soon`;
 		description = `Relocating out of state and need to rehome ${name}'s gear. Large wire crate, orthopedic bed, harnesses, toys, opened food. Free to a good home — pickup in ${location.area}.`;
 		body = `<h2>Free Dog Supplies — Everything Must Go</h2>
 <p>We're moving across the country in three weeks and can't take all of ${name}'s supplies. Rather than donate to a general thrift store, we'd love these items to go directly to dogs and families in our community. Everything is gently used and has a lot of life left in it.</p>
@@ -801,12 +919,12 @@ ${imgs}
 	} else if (tag === 'transportation') {
 		const origin = _seeded(['North End', 'River District', 'Old Town', 'Harbor View', 'West Side'], uuid, 12);
 		title = `Transport Volunteer Needed: ${name} — ${origin} to ${location.placeName} Foster Home`;
-		description = `${name}, a ${color} ${breed} rescued from a high-kill shelter in ${origin}, needs a volunteer driver to reach a ${location.placeName} foster home this weekend. Mileage reimbursement available.`;
-		body = `<h2>Transport Volunteer Needed for ${name} the ${breed}</h2>
-<p>We need a volunteer driver to transport ${name}, a ${age}-year-old ${color} ${breed}, from ${origin} to a waiting foster home in ${location.area}. This is urgent — ${name} has been pulled from a high-kill shelter and has a confirmed foster placement ready. All we need is a driver willing to make the trip this weekend.</p>
+		description = `${name}, a ${color} dog with a ${personality} rescued from a high-kill shelter in ${origin}, needs a volunteer driver to reach a ${location.placeName} foster home this weekend. Mileage reimbursement available.`;
+		body = `<h2>Transport Volunteer Needed for ${name}</h2>
+<p>We need a volunteer driver to transport ${name}, a ${age}-year-old ${color} dog with a ${personality}, from ${origin} to a waiting foster home in ${location.area}. This is urgent — ${name} has been pulled from a high-kill shelter and has a confirmed foster placement ready. All we need is a driver willing to make the trip this weekend.</p>
 ${imgs}
 <h3>About ${name}</h3>
-<p>${name} is a gentle ${weight}-lb ${breed} surrendered to ${shelter} when their owner could no longer provide care. ${name} has been assessed as calm in vehicles, non-reactive to other dogs, and friendly with all people. ${name} is crate-trained and will travel in a secure carrier provided by the rescue.</p>
+<p>${name} is a gentle ${weight}-lb dog with a ${personality} surrendered to ${shelter} when their owner could no longer provide care. ${name} has been assessed as calm in vehicles, non-reactive to other dogs, and friendly with all people. ${name} is crate-trained and will travel in a secure carrier provided by the rescue.</p>
 <h3>Transport Details</h3>
 <ul>
   <li><strong>Pickup:</strong> ${origin}, CO (exact address shared with confirmed driver)</li>
@@ -817,10 +935,10 @@ ${imgs}
 </ul>
 <p>If you can help — even for a single trip — please contact us immediately through the form on this page. You will be met at both ends by rescue representatives. Time is of the essence. Thank you so much for considering this.</p>`;
 	} else if (tag === 'urgent') {
-		title = `URGENT: Senior ${breed} Named "${name}" Needs Placement in 48 Hours`;
-		description = `${name}, a ${age}-year-old ${color} ${breed}, had their foster fall through due to a family emergency. Without a new placement by ${day}, ${name} returns to the shelter. Please help.`;
+		title = `URGENT: Senior Dog Named "${name}" Needs Placement in 48 Hours`;
+		description = `${name}, a ${age}-year-old ${color} dog with a ${personality}, had their foster fall through due to a family emergency. Without a new placement by ${day}, ${name} returns to the shelter. Please help.`;
 		body = `<h2>URGENT: ${name} Needs a Home in 48 Hours</h2>
-<p>Please read and share immediately. ${name}, a sweet ${age}-year-old ${color} ${breed}, is in a critical situation. We pulled ${name} from ${shelter} last week with a confirmed foster — and that foster had to cancel due to a family emergency. Without a new placement by end of day ${day}, ${name} must return to the shelter where the prognosis is not good.</p>
+<p>Please read and share immediately. ${name}, a sweet ${age}-year-old ${color} dog with a ${personality}, is in a critical situation. We pulled ${name} from ${shelter} last week with a confirmed foster — and that foster had to cancel due to a family emergency. Without a new placement by end of day ${day}, ${name} must return to the shelter where the prognosis is not good.</p>
 ${imgs}
 <h3>About ${name}</h3>
 <p>${name} is a senior dog — calm, house-trained, deeply affectionate, and a complete homebody. Arthritis is managed with a daily joint supplement, heartworm-negative, fully vaccinated. ${name} moves at a gentle pace and needs two short walks per day. ${name} is ideal for a quieter household or an experienced dog family who understands the unique joy of giving a senior dog their best remaining years.</p>
@@ -828,16 +946,16 @@ ${imgs}
 <p>We need either a <strong>foster home</strong> (temporary, all supplies and vet care provided by our rescue) or a <strong>forever adopter</strong> willing to fast-track the process. We will waive the typical waiting period for the right applicant given the urgency. Please, if you can help — even for one week — or if you know someone who could — reach out now. Senior dogs deserve a chance too. Don't scroll past ${name}.</p>`;
 	} else {
 		// help / default
-		title = `Need Advice: ${name} Our ${breed} Has Been Acting Strange This Week`;
-		description = `Our ${age}-year-old ${breed}, ${name}, has been eating less, sleeping differently, and slightly favoring one leg. Vet visit scheduled — looking for community experience with similar symptoms.`;
+		title = `Need Advice: ${name} Has Been Acting Strange This Week`;
+		description = `Our ${age}-year-old dog with a ${personality}, ${name}, has been eating less, sleeping differently, and slightly favoring one leg. Vet visit scheduled — looking for community experience with similar symptoms.`;
 		body = `<h2>Community Advice Needed About ${name}</h2>
-<p>Hi everyone! I'm ${owner} and I value the experience in this community. Our ${age}-year-old ${color} ${breed}, ${name}, has been showing unusual behaviors for the past week. We have a vet appointment scheduled, but I'd love to hear if anyone has experienced something similar.</p>
+<p>Hi everyone! I'm ${owner} and I value the experience in this community. Our ${age}-year-old ${color} dog with a ${personality}, ${name}, has been showing unusual behaviors for the past week. We have a vet appointment scheduled, but I'd love to hear if anyone has experienced something similar.</p>
 ${imgs}
 <h3>What We've Noticed</h3>
 <p>${name} has been eating less than usual — usually finishes their bowl in minutes, now leaving almost half. Sleep patterns have shifted: used to sleep through the night, now waking 2–3 times and pacing. We've also noticed intermittent favoring of the left rear leg — not consistent, but enough that my partner and I both mentioned it independently within 24 hours. Energy is mildly reduced but ${name} still wants to walk and gets excited for play — just tires a little faster.</p>
 <p>No vomiting, no diarrhea, normal water intake. No recent changes to food, routine, or environment. No construction, visitors, or obvious stressors. We checked ${name} over at home: no visible wounds or swelling, ears clean, eyes clear, gums pink and moist.</p>
 <h3>What We're Looking For</h3>
-<p>We know we're not getting a diagnosis here — community experience helps us ask the right questions at the vet. Has anyone seen this combination of symptoms in a ${breed} of this age? Any tests we should specifically request? Any questions we should bring to the appointment that a general vet might not think to ask? Thank you so much for any insight you're willing to share.</p>`;
+<p>We know we're not getting a diagnosis here — community experience helps us ask the right questions at the vet. Has anyone seen this combination of symptoms in a dog with a ${personality} at this age? Any tests we should specifically request? Any questions we should bring to the appointment that a general vet might not think to ask? Thank you so much for any insight you're willing to share.</p>`;
 	}
 
 	const fullHtml = _padToSize(body, 20000);
@@ -854,10 +972,11 @@ export function generateRealProfileContent(primaryTag, tags, uuid, imageUrls = [
 	const orgName     = _seeded(_ORG_NAMES,      uuid, 14);
 	const vetName     = _seeded(_VET_CLINICS,    uuid, 15);
 	const trainerOrg  = _seeded(_TRAINER_ORGS,   uuid, 16);
-	const firstName   = _seeded(_PERSON_FIRST,   uuid, 17);
-	const lastName    = _seeded(_PERSON_LAST,    uuid, 18);
+	const profilePerson = _seededPerson(uuid, 117, 17, 18);
+	const firstName   = profilePerson.first;
+	const lastName    = profilePerson.last;
 	const dogName     = _seeded(_DOG_NAMES,      uuid, 19);
-	const breed       = _seeded(_DOG_BREEDS,     uuid, 20);
+	const personality = _seeded(_DOG_PERSONALITIES, uuid, 20);
 	const park        = _seeded(_PARKS,          uuid, 21);
 	const shelter     = _seeded(_SHELTERS,       uuid, 22);
 	const month       = _seeded(_MONTHS,         uuid, 23);
@@ -882,11 +1001,11 @@ ${imgs}
   <li><strong>Emergency Response:</strong> When natural disasters, hoarding situations, or sudden owner deaths leave dogs without homes, we mobilize our network to help.</li>
 </ul>
 <h3>Our Dogs</h3>
-<p>We have welcomed dogs of all breeds, ages, and backgrounds. We do not discriminate by breed. We have placed pit bulls, Chihuahuas, senior dogs, three-legged dogs, deaf dogs, and dogs with complex medical needs — because every life has value, and the right family is out there for every dog. Some of our most enthusiastic foster updates come from adopters who initially said they weren't sure about a particular dog.</p>
+<p>We have welcomed dogs of all personalities, ages, and backgrounds. We do not discriminate based on looks or history. We have placed seniors, three-legged dogs, deaf dogs, and dogs with complex medical needs — because every life has value, and the right family is out there for every dog. Some of our most enthusiastic foster updates come from adopters who initially said they weren't sure about a particular dog.</p>
 <h3>How to Get Involved</h3>
 <p>The best way to support ${orgName} is to become a foster family. All we ask is your time, your patience, and your home. If you cannot foster, consider volunteering at events, transporting dogs to vet appointments, or donating to our veterinary fund. Every contribution directly supports the dogs in our care. Contact us using the form on this page to learn more.</p>
 <h3>Success Stories</h3>
-<p>We are proud to share that since our founding we have placed over 800 dogs into permanent homes across ${location.area}. Each placement represents a dog who was hours from death and a family who gained a loyal companion. We receive photos and updates from adopters every single week. From ${dogName} the ${breed} who now competes in agility with the ${firstName} family, to the eight-year-old senior who spends her days on a sunny back porch near ${park} — these stories fuel everything we do.</p>`;
+<p>We are proud to share that since our founding we have placed over 800 dogs into permanent homes across ${location.area}. Each placement represents a dog who was hours from death and a family who gained a loyal companion. We receive photos and updates from adopters every single week. From ${dogName} with a ${personality} who now competes in agility with the ${firstName} family, to the eight-year-old senior who spends her days on a sunny back porch near ${park} — these stories fuel everything we do.</p>`;
 	} else if (profileType === 'vet_clinic') {
 		name = localizePlaceName(vetName, location);
 		description = `${name} provides compassionate, evidence-based care for dogs and their families across ${location.area}. From routine wellness visits to complex surgery, we treat every patient like family.`;
@@ -910,7 +1029,7 @@ ${imgs}
 <p>Our team of eight veterinarians and twelve technicians brings decades of combined experience and an unwavering passion for animal health. Many of our staff members are foster families for local rescues, and several have adopted their current pets directly from ${shelter}. We don't just work with dogs — we live with them, love them, and advocate for them in everything we do.</p>`;
 	} else if (profileType === 'trainer') {
 		name = localizePlaceName(trainerOrg, location);
-		description = `${name} offers force-free, science-based training for dogs of all breeds, ages, and backgrounds. From puppy basics to competition obedience, reactive-dog rehab to service dog foundations — we train the whole team.`;
+		description = `${name} offers force-free, science-based training for dogs of all personalities, ages, and backgrounds. From puppy basics to competition obedience, reactive-dog rehab to service dog foundations — we train the whole team.`;
 		body = `<h2>Welcome to ${name}</h2>
 <p>${name} was founded by ${firstName} ${lastName}, a Certified Professional Dog Trainer (CPDT-KA) and Certified Separation Anxiety Trainer (CSAT) with over fifteen years of experience. Our program is built entirely on positive reinforcement and the latest behavioral science — no shock, no prong, no force, ever.</p>
 ${imgs}
@@ -931,12 +1050,12 @@ ${imgs}
 <p>We regularly donate training scholarships to adopters from ${shelter} and partner with local rescues to provide complimentary behavior consultations for newly placed dogs. We believe that a well-trained dog is less likely to be returned or surrendered, and we put that belief into practice every day by supporting the full continuum of dog welfare in our community.</p>`;
 	} else if (profileType === 'foster') {
 		name = `${firstName} ${lastName} — Foster Family`;
-		description = `${firstName} ${lastName} has fostered over 30 dogs in ${location.area} through ${shelter} and partner rescues over the past four years. Currently hosting: ${dogName} the ${breed}. Always room for one more.`;
+		description = `${firstName} ${lastName} has fostered over 30 dogs in ${location.area} through ${shelter} and partner rescues over the past four years. Currently hosting: ${dogName}, a dog with a ${personality}. Always room for one more.`;
 		body = `<h2>Meet ${firstName} ${lastName} — Experienced Foster Family</h2>
 <p>Four years ago, ${firstName} said yes to fostering "just one dog" to help out during a shelter overflow. That first dog — a terrified Beagle mix named Oliver — stayed for three months and was adopted into a wonderful family. ${firstName} has not stopped fostering since. To date, ${firstName} has fostered 32 dogs through ${shelter} and two partner rescues, including bottle-baby neonates, senior dogs with medical needs, severely undersocialized dogs, and everything in between.</p>
 ${imgs}
 <h3>Current Foster: ${dogName}</h3>
-<p>${dogName} is a ${breed} who arrived two weeks ago from an overcrowded situation. On arrival: underweight, flea-infested, and shut down. Today: clean, fed, learning to trust, and beginning to show a personality that can only be described as goofy and wonderful. ${dogName} is available for adoption through our partner rescue once the behavior assessment and vet clearances are complete.</p>
+<p>${dogName} is a dog with a ${personality} who arrived two weeks ago from an overcrowded situation. On arrival: underweight, flea-infested, and shut down. Today: clean, fed, learning to trust, and beginning to show a personality that can only be described as goofy and wonderful. ${dogName} is available for adoption through our partner rescue once the behavior assessment and vet clearances are complete.</p>
 <h3>What Fostering Actually Looks Like</h3>
 <p>People often ask if fostering is hard. The honest answer is yes — and worth every minute of it. The hardest part is not the "foster fails" (when you adopt your own foster dog). The hardest part is the first 48 hours, when a new dog arrives scared and shut down, and you have to resist the urge to rush their healing. The most rewarding part is the moment they realize they are safe — which looks different for every dog, but is never anything less than extraordinary.</p>
 <p>${firstName} currently has a dog-friendly home with a securely fenced yard and works from home, which allows for the supervision and consistency foster dogs need during the critical first weeks. The rescue team handles all vet care, supplies, and medical decisions. Foster families just need to show up with patience and love. If you are thinking about fostering, reach out through the contact form — ${firstName} is happy to answer any questions.</p>
@@ -945,9 +1064,9 @@ ${imgs}
 	} else {
 		// individual
 		name = `${firstName} ${lastName} & ${dogName}`;
-		description = `${firstName} is a lifelong dog lover based in ${location.area}. ${dogName} is a ${breed} rescue and the best decision ${firstName} ever made. Together they hike, volunteer, and advocate for dog welfare across the area.`;
+		description = `${firstName} is a lifelong dog lover based in ${location.area}. ${dogName} is a rescue dog with a ${personality} and the best decision ${firstName} ever made. Together they hike, volunteer, and advocate for dog welfare across the area.`;
 		body = `<h2>About ${firstName} ${lastName} & ${dogName}</h2>
-<p>Hi! I'm ${firstName} ${lastName}, a ${location.area}-based dog lover, amateur photographer, and passionate advocate for shelter dogs. ${dogName}, my ${breed} rescue companion, has been with me for three years and has changed my life in ways I never expected. Together we hike local trails, volunteer at ${shelter} on weekends, and try to do our small part to make ${location.area} a better place for dogs and their families.</p>
+<p>Hi! I'm ${firstName} ${lastName}, a ${location.area}-based dog lover, amateur photographer, and passionate advocate for shelter dogs. ${dogName}, my rescue companion with a ${personality}, has been with me for three years and has changed my life in ways I never expected. Together we hike local trails, volunteer at ${shelter} on weekends, and try to do our small part to make ${location.area} a better place for dogs and their families.</p>
 ${imgs}
 <h3>${dogName}'s Story</h3>
 <p>${dogName} came to me through ${shelter} after being surrendered by a family who was moving out of state. From the first meeting, there was something special about ${dogName} — a combination of quiet dignity and barely-suppressed enthusiasm that made the adoption decision easy. The first month was an adjustment: learning each other's rhythms, building trust, establishing routines. By month three, I could not imagine my home, my hikes, or my mornings without ${dogName}.</p>

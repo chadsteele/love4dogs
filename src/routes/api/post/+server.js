@@ -1,4 +1,5 @@
 import { env } from '$env/dynamic/private';
+import { createIsoTimestamp } from '$lib/dateTime.js';
 import { MEDIA_TOKEN_PREFIX } from '$lib/utils.js';
 import { normalizePostType, upsertTypeTag } from '$lib/postTypeTags.js';
 import { createHash } from 'node:crypto';
@@ -760,7 +761,7 @@ export async function POST({ request }) {
 			const record = {
 				$type: 'app.bsky.feed.post',
 				text: cachePostText,
-				createdAt: new Date().toISOString(),
+				createdAt: createIsoTimestamp(),
 				embed: {
 					$type: 'app.bsky.embed.images',
 					images: [
@@ -1168,7 +1169,7 @@ export async function POST({ request }) {
 		const record = {
 			$type: 'app.bsky.feed.post',
 			text: textWithTags,
-			createdAt: new Date().toISOString(),
+			createdAt: createIsoTimestamp(),
 			tags: finalTags
 		};
 		if (facets.length) record.facets = facets;

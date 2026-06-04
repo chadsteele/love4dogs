@@ -1,10 +1,14 @@
 <script>
 	import {User} from "lucide-svelte"
+	import DateTime from "$lib/DateTime.svelte"
 
 	let {
 		avatar = null,
 		name = "Anonymous",
 		date = null,
+		dateValue = "",
+		dateMode = "relative",
+		dateAllowBase36 = false,
 		href = null,
 		location = null,
 		locationHref = null,
@@ -43,7 +47,18 @@
 			</div>
 		{/if}
 
-		{#if date}
+		{#if dateValue}
+			<div class="date-time">
+				<DateTime
+					tag="span"
+					value={dateValue}
+					mode={dateMode}
+					allowBase36={dateAllowBase36}
+					fallback={date || ""}
+					fallbackToInput={dateAllowBase36}
+				/>
+			</div>
+		{:else if date}
 			<div class="date-time">{date}</div>
 		{/if}
 

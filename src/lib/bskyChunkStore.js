@@ -1,3 +1,5 @@
+import { resolvePostTimestampMs } from '$lib/dateTime.js';
+
 const DEFAULT_CHUNK_ALT_PAYLOAD_TARGET_CHARS = 2000
 const DEFAULT_CONTENT_CHUNK_SIZE = 1800
 const STATIC_HTML_DICT_VERSION = 1
@@ -1027,19 +1029,6 @@ function resolvePostThreadRootUri(post = {}) {
 	).trim()
 	if (explicitRoot) return explicitRoot
 	return String(post?.uri || "").trim()
-}
-
-function resolvePostTimestampMs(post = {}) {
-	const candidates = [
-		post?.indexedAt,
-		post?.record?.createdAt,
-		post?.value?.createdAt,
-	]
-	for (const candidate of candidates) {
-		const ms = Date.parse(String(candidate || ""))
-		if (Number.isFinite(ms) && ms > 0) return ms
-	}
-	return 0
 }
 
 export async function loadMostRecentProfileBundleFromPublicBsky({

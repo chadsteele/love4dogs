@@ -1,4 +1,6 @@
 <script>
+	import DateTime from "$lib/DateTime.svelte"
+
 	let {
 		profiles = [],
 		currentUuid = "",
@@ -7,12 +9,6 @@
 		onEdit = () => {},
 		onDelete = () => {},
 	} = $props()
-
-	function formatCreatedAt(value) {
-		const timestamp = Number(value || 0)
-		if (!Number.isFinite(timestamp) || timestamp <= 0) return "unknown"
-		return new Date(timestamp).toLocaleString()
-	}
 </script>
 
 <ul class="profile-list">
@@ -36,7 +32,7 @@
 						<strong>{profile.name || "Untitled profile"}</strong>
 
 						<small class="created-at"
-							>created {formatCreatedAt(profile.savedAt)}</small
+							>created <DateTime value={profile.savedAt} mode="datetime" fallback="unknown" /></small
 						>
 					</div>
 					{#if profile.uuid === currentUuid}
@@ -57,7 +53,7 @@
 						<strong>{profile.name || "Untitled profile"}</strong>
 
 						<small class="created-at"
-							>created {formatCreatedAt(profile.savedAt)}</small
+							>created <DateTime value={profile.savedAt} mode="datetime" fallback="unknown" /></small
 						>
 					</div>
 				</div>
