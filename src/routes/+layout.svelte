@@ -17,6 +17,13 @@
 					console.error("ServiceWorker registration failed:", err)
 				})
 		}
+		if (browser) {
+			import("$lib/utils").then((m) => {
+				m.cleanWaterPostsFromCaches().catch((err) => {
+					console.error("Failed to run cache clean-up:", err)
+				})
+			})
+		}
 	})
 </script>
 

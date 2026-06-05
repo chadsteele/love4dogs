@@ -1,3 +1,4 @@
+process.env.NODE_ENV = 'test';
 import {createAssertions} from './regression-test-common.mjs';
 import {
 	BlueskySchemaRecord,
@@ -10,7 +11,7 @@ import {
 	extractPostTypeFromTags,
 	upsertTypeTag,
 } from './src/lib/postTypeTags.js';
-import { setPost, getPost } from './src/lib/db.js';
+import { setPost, getPost, getAllPosts, deletePost, getSetting, setSetting } from './src/lib/db.js';
 import { formatDisplayAddress } from './src/lib/addressFormat.js';
 
 const {assert, assertEqual, counts} = createAssertions();
@@ -175,6 +176,125 @@ function runAddressFormattingTests() {
 	assert(longAddress.includes("\nDenver City Center"), "Long address inserts newline before city");
 }
 
+async function runDatabaseCacheTests() {
+	console.log('Running Database Caching regression tests...');
+	
+	// Start with a clean slate
+	const initialPosts = await getAllPosts();
+	for (const post of initialPosts) {
+		await deletePost(post.uri);
+	}
+
+	// 1. Verify that setPost adds a cachedAt timestamp
+	const uri1 = 'at://test-post-1';
+	const postData1 = { uri: uri1, title: 'Post 1' };
+	await setPost(uri1, postData1);
+
+	const stored1 = await getPost(uri1);
+	assert(stored1 !== null, 'Stored post is not null');
+	assert(typeof stored1.cachedAt === 'number', 'Stored post has cachedAt timestamp');
+
+	// 2. Verify 100-post limit capacity pruning
+	console.log('  Testing 100-post capacity limit...');
+	// We insert 105 posts (since uri1 is already there, we insert 104 more).
+	// Let's insert posts with a tiny delay so they have different cachedAt values
+	for (let i = 2; i <= 105; i++) {
+		const uri = `at://test-post-${i}`;
+		await setPost(uri, { uri, title: `Post ${i}` });
+		await new Promise(resolve => setTimeout(resolve, 1));
+	}
+
+	const allPosts = await getAllPosts();
+	assertEqual(allPosts.length, 100, 'Posts cache prunes to max 100 posts');
+
+	// Verify that the oldest post (test-post-1) is pruned, and the newest one (test-post-105) is retained
+	const post1 = await getPost(uri1);
+	assertEqual(post1, null, 'Oldest post (post 1) was pruned');
+
+	const post105 = await getPost('at://test-post-105');
+	assert(post105 !== null, 'Newest post (post 105) is retained');
+
+	// 3. Verify TTL expiration
+	console.log('  Testing 7-day TTL expiration...');
+	const uriExpired = 'at://test-post-expired';
+	const eightDaysAgo = Date.now() - (8 * 24 * 60 * 60 * 1000);
+	await setPost(uriExpired, { uri: uriExpired, title: 'Expired Post', _testCachedAt: eightDaysAgo });
+
+	// The post should be immediately filtered out/deleted on getPost
+	const retrievedExpired = await getPost(uriExpired);
+	assertEqual(retrievedExpired, null, 'Expired post is filtered out and deleted on getPost');
+
+	// And it should not show up in getAllPosts
+	await setPost(uriExpired, { uri: uriExpired, title: 'Expired Post', _testCachedAt: eightDaysAgo });
+	const postsWithExpired = await getAllPosts();
+	const foundExpired = postsWithExpired.find(p => p.uri === uriExpired);
+	assertEqual(foundExpired, undefined, 'Expired post is filtered out from getAllPosts');
+	
+	// Check that it was actually deleted from database as well
+	const retrievedExpiredAgain = await getPost(uriExpired);
+	assertEqual(retrievedExpiredAgain, null, 'Expired post was deleted from database');
+}
+
+import { cleanWaterPostsFromCaches } from './src/lib/utils.js';
+
+async function runCacheWaterCleanupTests() {
+	console.log('Testing cleanWaterPostsFromCaches()...');
+
+	// Seed the map-approx-posts-cache
+	const cacheKey = 'love4dogs.map-approx-posts-cache.v2';
+	const testCacheData = {
+		'abcde': {
+			savedAt: Date.now(),
+			posts: [
+				{ uri: 'at://land-post', lat: 40.7127281, lon: -74.0060152 },
+				{ uri: 'at://water-post', lat: 0.0, lon: 0.0 }
+			]
+		}
+	};
+	await setSetting(cacheKey, testCacheData);
+
+	// Seed the posts database store
+	await setPost('at://land-post', { uri: 'at://land-post', lat: 40.7127281, lon: -74.0060152 });
+	await setPost('at://water-post', { uri: 'at://water-post', lat: 0.0, lon: 0.0 });
+
+	// Mock globalThis.fetch
+	const originalFetch = globalThis.fetch;
+	globalThis.fetch = async (url, options) => {
+		const body = JSON.parse(options.body || '{}');
+		if (body.lat === 0.0 && body.lon === 0.0) {
+			return {
+				status: 400,
+				json: async () => ({ error: 'Location cannot be in the ocean or water.' }),
+				ok: false
+			};
+		}
+		return {
+			status: 200,
+			json: async () => ({ ok: true }),
+			ok: true
+		};
+	};
+
+	try {
+		// Run cleanup
+		await cleanWaterPostsFromCaches();
+
+		// Check map-approx-posts-cache
+		const updatedCache = await getSetting(cacheKey);
+		const postsInCache = updatedCache['abcde'].posts;
+		assertEqual(postsInCache.length, 1, 'Water post was removed from map-approx-posts-cache');
+		assertEqual(postsInCache[0].uri, 'at://land-post', 'Land post was preserved in map-approx-posts-cache');
+
+		// Check posts database store
+		const landPost = await getPost('at://land-post');
+		const waterPost = await getPost('at://water-post');
+		assert(landPost !== null, 'Land post was preserved in database store');
+		assertEqual(waterPost, null, 'Water post was deleted from database store');
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+}
+
 async function main() {
 	console.log('============================================================');
 	console.log('Schema Regression Test - love4dogs');
@@ -185,6 +305,8 @@ async function main() {
 	runSharedAuthorIdTests();
 	runAddressFormattingTests();
 	await runDatabaseProxyTests();
+	await runDatabaseCacheTests();
+	await runCacheWaterCleanupTests();
 
 	const summary = counts();
 	console.log('------------------------------------------------------------');

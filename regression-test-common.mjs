@@ -366,7 +366,7 @@ function isLikelyWaterAddress(location = {}) {
 		'marina',
 	];
 
-	return waterHints.some((token) => source.includes(token));
+	return waterHints.some((token) => new RegExp('\\b' + token + '\\b').test(source));
 }
 
 async function geocodeBaseLocation({baseUrl, query, fetchImpl = fetch}) {
@@ -684,9 +684,9 @@ function resolveLocationContext(locationContext = {}) {
 		|| formattedAddress
 		|| String(source.label || '').trim()
 		|| 'selected location';
-	const area = [city, state].filter(Boolean).join(', ') || country || label;
-	const community = city || state || country || label;
-	const placeName = city || state || country || 'Local';
+	const area = 'local area';
+	const community = 'local community';
+	const placeName = 'Local';
 	return { city, state, country, formattedAddress, label, area, community, placeName };
 }
 

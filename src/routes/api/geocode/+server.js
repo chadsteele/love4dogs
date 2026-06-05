@@ -1,3 +1,31 @@
+function isLikelyWaterAddress(result = {}) {
+	const address = result?.address || {};
+	const formattedAddress = String(result?.display_name || '').toLowerCase();
+	const road = String(address.road || '').toLowerCase();
+	const city = String(address.city || address.town || address.village || address.hamlet || '').toLowerCase();
+	const suburb = String(address.suburb || '').toLowerCase();
+	const neighbourhood = String(address.neighbourhood || '').toLowerCase();
+	
+	const source = [formattedAddress, road, city, suburb, neighbourhood].join(' ');
+	const waterHints = [
+		'ocean',
+		'sea',
+		'gulf',
+		'bay',
+		'channel',
+		'offshore',
+		'lagoon',
+		'reef',
+		'harbor',
+		'harbour',
+		'marina',
+	];
+
+	if (!address.country && !formattedAddress) return true;
+
+	return waterHints.some((token) => new RegExp('\\b' + token + '\\b').test(source));
+}
+
 export async function POST({request}) {
 	try {
 		const body = await request.json()
@@ -51,6 +79,13 @@ export async function POST({request}) {
 				return new Response(
 					JSON.stringify({error: 'Reverse geocoding service error. Please try again.'}),
 					{status: 503, headers: {'Content-Type': 'application/json'}},
+				)
+			}
+
+			if (isLikelyWaterAddress(data)) {
+				return new Response(
+					JSON.stringify({error: 'Location cannot be in the ocean or water.'}),
+					{status: 400, headers: {'Content-Type': 'application/json'}},
 				)
 			}
 
@@ -148,6 +183,12 @@ export async function POST({request}) {
 		}
 
 		const result = data[0]
+		if (isLikelyWaterAddress(result)) {
+			return new Response(
+				JSON.stringify({error: 'Location cannot be in the ocean or water.'}),
+				{status: 400, headers: {'Content-Type': 'application/json'}},
+			)
+		}
 		const lat = parseFloat(result.lat)
 		const lon = parseFloat(result.lon)
 		const city =

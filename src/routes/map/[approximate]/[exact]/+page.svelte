@@ -574,7 +574,11 @@
 						continue
 					}
 					const posts = Array.isArray(json.posts) ? json.posts : []
-					approxPostsCache.set(approximate, posts)
+					approxPostsCache.set(approximate, {
+						posts,
+						savedAt: Date.now(),
+						hasLocalPost: posts.some(p => p.isUserPost)
+					})
 					approxErrorCache.delete(approximate)
 					results[index] = {
 						status: "fulfilled",
@@ -640,18 +644,15 @@
 			const cachedPosts = []
 			const missingApproximates = []
 			for (const approximate of cleanApproximates) {
-				if (approxPostsCache.has(approximate)) {
-					const inMemory = approxPostsCache.get(approximate) || []
-					for (const p of inMemory) {
-						if (!cachedPosts.some(cp => cp.uri === p.uri)) {
-							cachedPosts.push(p)
-						}
+				let entry = approxPostsCache.get(approximate)
+				if (!entry) {
+					entry = await getApproxCacheEntry(approximate)
+					if (entry && Array.isArray(entry.posts)) {
+						approxPostsCache.set(approximate, entry)
 					}
 				}
 
-				const entry = await getApproxCacheEntry(approximate)
 				if (entry && Array.isArray(entry.posts)) {
-					approxPostsCache.set(approximate, entry.posts)
 					for (const p of entry.posts) {
 						if (!cachedPosts.some(cp => cp.uri === p.uri)) {
 							cachedPosts.push(p)

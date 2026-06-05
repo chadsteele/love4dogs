@@ -23,6 +23,7 @@
 	let hasMorePosts = $state(true)
 	let favoriteSearchTerms = $state([])
 	let currentView = $state("feed")
+	let automateFailed = $state(false)
 
 	let searchDebounceTimer = null
 	let lastFeedRequestId = 0
@@ -144,6 +145,7 @@
 		feedCursor = null
 		feedCursorHost = null
 		hasMorePosts = true
+		automateFailed = false
 
 		try {
 			const query = buildFeedQuery(searchTerm)
@@ -289,6 +291,26 @@
 	$effect(() => {
 		writeSearchTerm(searchTerm)
 	})
+
+	// Automate loading more if there are less than 12 visible posts
+	$effect(() => {
+		const visibleCount = visiblePosts().length
+		if (
+			visibleCount > 0 &&
+			visibleCount < 12 &&
+			hasMorePosts &&
+			!loadingPosts &&
+			!loadingMore &&
+			!automateFailed
+		) {
+			const prevLength = posts.length
+			loadMorePosts().then(() => {
+				if (posts.length <= prevLength) {
+					automateFailed = true
+				}
+			})
+		}
+	})
 </script>
 
 <svelte:head>
@@ -407,16 +429,21 @@
 				</div>
 			{/if}
 
-			{#if loadingMore}
-				<p class="muted load-more-indicator">Loading more...</p>
-			{:else if hasMorePosts && !loadingPosts && visiblePosts().length > 0}
+			{#if !loadingPosts && visiblePosts().length > 0}
 				<div class="load-more-actions">
 					<button
 						type="button"
 						class="load-more-btn"
 						onclick={loadMorePosts}
+						disabled={loadingMore || !hasMorePosts}
 					>
-						More
+						{#if loadingMore}
+							Loading more...
+						{:else if !hasMorePosts}
+							Done
+						{:else}
+							More
+						{/if}
 					</button>
 				</div>
 			{/if}
@@ -643,6 +670,14 @@
 
 	.load-more-btn:hover {
 		background: #305741;
+	}
+
+	.load-more-btn:disabled {
+		background: rgba(129, 129, 129, 0.36);
+		color: #5f665f;
+		border-color: rgba(129, 129, 129, 0.2);
+		cursor: default;
+		box-shadow: none;
 	}
 
 	.empty-search-state {

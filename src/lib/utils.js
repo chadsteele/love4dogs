@@ -1,8 +1,18 @@
-import {
-	PUBLIC_CONTACT_ALPHABET,
-	PUBLIC_CONTACT_OUTPUT_ALPHABET
-} from '$env/static/public';
-import { getSetting, setSetting } from './db.js';
+let PUBLIC_CONTACT_ALPHABET = "thx.irn65qa_@s-4l8+2ofdzbe3 kwu07j9pmvyg1c";
+let PUBLIC_CONTACT_OUTPUT_ALPHABET = "ZO~BuNLqz9oEpwtTsDlQI8aJifHmh7Pn06dcFe4jW-YbvM3K2G.ry5RSg1AxkVXUC_";
+
+try {
+	const env = await import('$env/static/public');
+	if (env.PUBLIC_CONTACT_ALPHABET) PUBLIC_CONTACT_ALPHABET = env.PUBLIC_CONTACT_ALPHABET;
+	if (env.PUBLIC_CONTACT_OUTPUT_ALPHABET) PUBLIC_CONTACT_OUTPUT_ALPHABET = env.PUBLIC_CONTACT_OUTPUT_ALPHABET;
+} catch {
+	if (typeof process !== 'undefined' && process.env) {
+		if (process.env.PUBLIC_CONTACT_ALPHABET) PUBLIC_CONTACT_ALPHABET = process.env.PUBLIC_CONTACT_ALPHABET;
+		if (process.env.PUBLIC_CONTACT_OUTPUT_ALPHABET) PUBLIC_CONTACT_OUTPUT_ALPHABET = process.env.PUBLIC_CONTACT_OUTPUT_ALPHABET;
+	}
+}
+
+import { getSetting, setSetting, getAllPosts, deletePost } from './db.js';
 
 export const MEDIA_TOKEN_PREFIX = '🎞️';
 export const MEDIA_TOKEN_HEX_LENGTH = 12;
@@ -471,19 +481,41 @@ function pruneMapApproxCacheData(raw, { ttlMs, maxEntries }) {
 	return Object.fromEntries(entries.slice(0, maxEntries));
 }
 
+let cachedApproxMapData = null;
+let dbWritePromise = null;
+let pendingDbWriteTimeout = null;
+
 async function readMapApproxCache(options = {}) {
 	const { cacheKey, ttlMs, maxEntries } = mapApproxCacheOptions(options);
+	if (cachedApproxMapData) {
+		return cachedApproxMapData;
+	}
 	const parsed = await getLocalStorageJson(cacheKey);
-	const pruned = pruneMapApproxCacheData(parsed, { ttlMs, maxEntries });
-	await setLocalStorageJson(cacheKey, pruned);
-	return pruned;
+	cachedApproxMapData = pruneMapApproxCacheData(parsed || {}, { ttlMs, maxEntries });
+	return cachedApproxMapData;
 }
 
 async function writeMapApproxCache(data, options = {}) {
 	const { cacheKey, ttlMs, maxEntries } = mapApproxCacheOptions(options);
 	const pruned = pruneMapApproxCacheData(data, { ttlMs, maxEntries });
-	await setLocalStorageJson(cacheKey, pruned);
-	return pruned;
+	cachedApproxMapData = pruned;
+
+	if (pendingDbWriteTimeout) {
+		clearTimeout(pendingDbWriteTimeout);
+	}
+
+	dbWritePromise = new Promise((resolve) => {
+		pendingDbWriteTimeout = setTimeout(async () => {
+			try {
+				await setLocalStorageJson(cacheKey, pruned);
+			} catch (err) {
+				console.error('Error writing map approx cache to DB:', err);
+			}
+			resolve(pruned);
+		}, 250);
+	});
+
+	return dbWritePromise;
 }
 
 export async function getApproxCacheEntry(approximate = '', options = {}) {
@@ -675,4 +707,87 @@ export function expandMinifiedHtmlTags(html = '') {
 	result = result.replace(/<d\s/g, '<div ');
 	result = result.replace(/<\/d>/g, '</div>');
 	return result;
+}
+
+export async function cleanWaterPostsFromCaches() {
+	if (typeof window === 'undefined' && (typeof process === 'undefined' || !process.env || process.env.NODE_ENV !== 'test')) return;
+
+	// 1. Clean map-approx-posts-cache
+	const cacheKey = DEFAULT_MAP_APPROX_POSTS_CACHE_KEY;
+	const cache = await readMapApproxCache();
+	let cacheChanged = false;
+
+	// Collect all unique coordinates in the cache
+	const coords = new Map();
+	for (const [approx, entry] of Object.entries(cache)) {
+		if (!entry || !Array.isArray(entry.posts)) continue;
+		for (const post of entry.posts) {
+			if (Number.isFinite(post.lat) && Number.isFinite(post.lon)) {
+				coords.set(`${post.lat},${post.lon}`, { lat: post.lat, lon: post.lon });
+			}
+		}
+	}
+
+	// 2. Clean posts store in IndexedDB
+	const dbPosts = await getAllPosts();
+	for (const post of dbPosts) {
+		if (Number.isFinite(post.lat) && Number.isFinite(post.lon)) {
+			coords.set(`${post.lat},${post.lon}`, { lat: post.lat, lon: post.lon });
+		}
+	}
+
+	if (coords.size === 0) return;
+
+	// Verify coordinates against geocode endpoint (with a small delay between requests)
+	const waterCoords = new Set();
+	for (const [coordKey, { lat, lon }] of coords.entries()) {
+		try {
+			const res = await fetch('/api/geocode', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ lat, lon, reverse: true })
+			});
+			if (res.status === 400) {
+				const json = await res.json().catch(() => ({}));
+				if (json.error === 'Location cannot be in the ocean or water.') {
+					waterCoords.add(coordKey);
+				}
+			}
+		} catch (err) {
+			console.error('Error checking coordinate for water:', lat, lon, err);
+		}
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	}
+
+	if (waterCoords.size === 0) return;
+
+	// Filter out water posts from map-approx-posts-cache
+	for (const [approx, entry] of Object.entries(cache)) {
+		if (!entry || !Array.isArray(entry.posts)) continue;
+		const filtered = entry.posts.filter((post) => {
+			const key = `${post.lat},${post.lon}`;
+			return !waterCoords.has(key);
+		});
+		if (filtered.length !== entry.posts.length) {
+			cache[approx] = {
+				...entry,
+				posts: filtered
+			};
+			cacheChanged = true;
+		}
+	}
+
+	if (cacheChanged) {
+		await writeMapApproxCache(cache);
+		console.log('[Cache Cleanup] Cleaned water posts from map-approx-posts-cache');
+	}
+
+	// Filter out water posts from posts store in IndexedDB
+	for (const post of dbPosts) {
+		const key = `${post.lat},${post.lon}`;
+		if (waterCoords.has(key) && post.uri) {
+			await deletePost(post.uri);
+			console.log('[Cache Cleanup] Deleted water post from posts database:', post.uri);
+		}
+	}
 }
