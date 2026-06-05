@@ -13,6 +13,29 @@ const memoryStores = {
 };
 let nextSyncId = 1;
 
+function unwrap(val) {
+	if (val === null || typeof val !== 'object') {
+		return val;
+	}
+	if (Array.isArray(val)) {
+		return val.map(unwrap);
+	}
+	if (typeof Blob !== 'undefined' && val instanceof Blob) {
+		return val;
+	}
+	if (typeof File !== 'undefined' && val instanceof File) {
+		return val;
+	}
+	if (typeof ArrayBuffer !== 'undefined' && val instanceof ArrayBuffer) {
+		return val;
+	}
+	const copy = {};
+	for (const key of Object.keys(val)) {
+		copy[key] = unwrap(val[key]);
+	}
+	return copy;
+}
+
 export function getDB() {
 	if (typeof window === 'undefined' || typeof indexedDB === 'undefined') {
 		return null;
@@ -66,14 +89,15 @@ export async function getSetting(key, fallback = null) {
 
 export async function setSetting(key, value) {
 	const db = await getDB();
+	const unwrapped = unwrap(value);
 	if (!db) {
-		memoryStores.settings.set(key, value);
+		memoryStores.settings.set(key, unwrapped);
 		return;
 	}
 	return new Promise((resolve, reject) => {
 		const tx = db.transaction('settings', 'readwrite');
 		const store = tx.objectStore('settings');
-		const req = store.put(value, key);
+		const req = store.put(unwrapped, key);
 		req.onsuccess = () => resolve();
 		req.onerror = () => reject(req.error);
 	});
@@ -111,14 +135,15 @@ export async function getProfile(uuid) {
 
 export async function setProfile(uuid, data) {
 	const db = await getDB();
+	const unwrapped = unwrap(data);
 	if (!db) {
-		memoryStores.profiles.set(uuid, data);
+		memoryStores.profiles.set(uuid, unwrapped);
 		return;
 	}
 	return new Promise((resolve, reject) => {
 		const tx = db.transaction('profiles', 'readwrite');
 		const store = tx.objectStore('profiles');
-		const req = store.put(data, uuid);
+		const req = store.put(unwrapped, uuid);
 		req.onsuccess = () => resolve();
 		req.onerror = () => reject(req.error);
 	});
@@ -170,14 +195,15 @@ export async function getPost(uri) {
 
 export async function setPost(uri, data) {
 	const db = await getDB();
+	const unwrapped = unwrap(data);
 	if (!db) {
-		memoryStores.posts.set(uri, data);
+		memoryStores.posts.set(uri, unwrapped);
 		return;
 	}
 	return new Promise((resolve, reject) => {
 		const tx = db.transaction('posts', 'readwrite');
 		const store = tx.objectStore('posts');
-		const req = store.put(data, uri);
+		const req = store.put(unwrapped, uri);
 		req.onsuccess = () => resolve();
 		req.onerror = () => reject(req.error);
 	});
@@ -215,15 +241,16 @@ export async function getAllPosts() {
 // ── Sync Queue helpers ──────────────────────────────────────────────────────
 export async function enqueueSync(item) {
 	const db = await getDB();
+	const unwrapped = unwrap(item);
 	if (!db) {
 		const id = nextSyncId++;
-		memoryStores.syncQueue.set(id, item);
+		memoryStores.syncQueue.set(id, unwrapped);
 		return id;
 	}
 	return new Promise((resolve, reject) => {
 		const tx = db.transaction('syncQueue', 'readwrite');
 		const store = tx.objectStore('syncQueue');
-		const req = store.add(item);
+		const req = store.add(unwrapped);
 		req.onsuccess = () => resolve(req.result);
 		req.onerror = () => reject(req.error);
 	});
@@ -282,14 +309,15 @@ export async function getOfflineImage(uuid) {
 
 export async function setOfflineImage(uuid, blob) {
 	const db = await getDB();
+	const unwrapped = unwrap(blob);
 	if (!db) {
-		memoryStores.offlineImages.set(uuid, blob);
+		memoryStores.offlineImages.set(uuid, unwrapped);
 		return;
 	}
 	return new Promise((resolve, reject) => {
 		const tx = db.transaction('offlineImages', 'readwrite');
 		const store = tx.objectStore('offlineImages');
-		const req = store.put(blob, uuid);
+		const req = store.put(unwrapped, uuid);
 		req.onsuccess = () => resolve();
 		req.onerror = () => reject(req.error);
 	});

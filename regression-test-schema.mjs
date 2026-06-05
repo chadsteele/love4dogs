@@ -10,6 +10,7 @@ import {
 	extractPostTypeFromTags,
 	upsertTypeTag,
 } from './src/lib/postTypeTags.js';
+import { setPost, getPost } from './src/lib/db.js';
 
 const {assert, assertEqual, counts} = createAssertions();
 
@@ -82,7 +83,55 @@ function runSharedAuthorIdTests() {
 	}
 }
 
-function main() {
+async function runDatabaseProxyTests() {
+	// Create a nested target object
+	const target = {
+		uuid: 'test-uuid-proxy',
+		title: 'Proxy Post',
+		tags: ['test', 'proxy'],
+		nested: {
+			value: 'deep-value',
+			arr: [1, 2, 3]
+		}
+	};
+
+	// Create a Proxy wrapping the target, tracking if proxy getters are used
+	const handler = {
+		get(t, prop) {
+			if (prop === '__isProxy') return true;
+			if (typeof t[prop] === 'object' && t[prop] !== null) {
+				return new Proxy(t[prop], handler);
+			}
+			return t[prop];
+		}
+	};
+	const proxy = new Proxy(target, handler);
+
+	// Verify that the proxy identifies itself
+	assert(proxy.__isProxy, 'Proxy helper identifies as proxy');
+
+	// Store it using the db module
+	await setPost('at://test-proxy-post', proxy);
+
+	// Retrieve it
+	const stored = await getPost('at://test-proxy-post');
+
+	// Assert it is stored correctly and is no longer a proxy
+	assert(stored !== null, 'Stored object is not null');
+	assertEqual(stored.uuid, 'test-uuid-proxy', 'Stored object preserves uuid');
+	assertEqual(stored.title, 'Proxy Post', 'Stored object preserves title');
+	assert(Array.isArray(stored.tags), 'Stored object preserves tags array');
+	assertEqual(stored.tags[0], 'test', 'Stored object preserves tag value');
+	assertEqual(stored.nested.value, 'deep-value', 'Stored object preserves nested value');
+	assert(Array.isArray(stored.nested.arr), 'Stored object preserves nested array');
+	assertEqual(stored.nested.arr[1], 2, 'Stored object preserves nested array value');
+
+	// Crucially, assert that the retrieved object is a plain object and NOT a Proxy
+	assert(!stored.__isProxy, 'Stored object retrieved is a plain object, not a Proxy');
+	assert(!stored.nested.__isProxy, 'Nested retrieved object is a plain object, not a Proxy');
+}
+
+async function main() {
 	console.log('============================================================');
 	console.log('Schema Regression Test - love4dogs');
 	console.log('============================================================');
@@ -90,6 +139,7 @@ function main() {
 	runSchemaTests();
 	runPostTypeTagCompatibilityTests();
 	runSharedAuthorIdTests();
+	await runDatabaseProxyTests();
 
 	const summary = counts();
 	console.log('------------------------------------------------------------');
