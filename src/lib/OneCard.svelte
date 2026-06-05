@@ -12,6 +12,7 @@
 	import TagPills from "$lib/TagPills.svelte"
 	import AuthorRow from "$lib/AuthorRow.svelte"
 	import DateTime from "$lib/DateTime.svelte"
+	import {formatDisplayAddress} from "$lib/addressFormat"
 	import {writeSearchTerm, readSearchTerm} from "$lib/searchStore"
 
 	let {post, onclick = () => {}, onTagClick = () => {}} = $props()
@@ -561,15 +562,13 @@
 	const comments = $derived(post?.comments || [])
 	const locationFields = $derived(extractLocationFields(post))
 	const locationLine = $derived(
-		[
-			locationFields.address,
-			locationFields.city,
-			locationFields.state,
-			locationFields.zip,
-			locationFields.country,
-		]
-			.filter(Boolean)
-			.join(", "),
+		formatDisplayAddress({
+			address: locationFields.address,
+			city: locationFields.city,
+			state: locationFields.state,
+			zip: locationFields.zip,
+			country: locationFields.country,
+		})
 	)
 	const locationMapsHref = $derived(
 		locationLine

@@ -11,6 +11,7 @@ import {
 	upsertTypeTag,
 } from './src/lib/postTypeTags.js';
 import { setPost, getPost } from './src/lib/db.js';
+import { formatDisplayAddress } from './src/lib/addressFormat.js';
 
 const {assert, assertEqual, counts} = createAssertions();
 
@@ -131,6 +132,49 @@ async function runDatabaseProxyTests() {
 	assert(!stored.nested.__isProxy, 'Nested retrieved object is a plain object, not a Proxy');
 }
 
+function runAddressFormattingTests() {
+	// Test case 1: Normal short address with duplicate parts (should deduplicate)
+	const deduplicated = formatDisplayAddress({
+		address: "Bambous, Bambous VCA, Black River, 91005, Mauritius",
+		city: "Bambous VCA",
+		state: "Black River",
+		zip: "91005",
+		country: "Mauritius"
+	});
+	assertEqual(
+		deduplicated,
+		"Bambous, Bambous VCA, Black River, 91005, Mauritius",
+		"Short address deduplicates city, state, zip, and country"
+	);
+
+	// Test case 2: Normal short address without duplicate parts
+	const nonDuplicate = formatDisplayAddress({
+		address: "123 Aspen St",
+		city: "Denver",
+		state: "CO",
+		zip: "80202",
+		country: "USA"
+	});
+	assertEqual(
+		nonDuplicate,
+		"123 Aspen St, Denver, CO, 80202, USA",
+		"Short address formats correctly by appending parts"
+	);
+
+	// Test case 3: Legitimate address over 100 characters (should add line break before zip code)
+	const longAddress = formatDisplayAddress({
+		address: "123 Aspen Ridge Summit Way, Apartment 405B, South Hillside Neighborhood",
+		city: "Denver City Center",
+		state: "Colorado State Region",
+		zip: "80202-1234",
+		country: "United States of America"
+	});
+	assert(longAddress.includes("\n80202-1234"), "Long address inserts newline before zip code");
+
+	// Test case 4: Legitimate address still over 100 characters after inserting break before zip (should add break before city)
+	assert(longAddress.includes("\nDenver City Center"), "Long address inserts newline before city");
+}
+
 async function main() {
 	console.log('============================================================');
 	console.log('Schema Regression Test - love4dogs');
@@ -139,6 +183,7 @@ async function main() {
 	runSchemaTests();
 	runPostTypeTagCompatibilityTests();
 	runSharedAuthorIdTests();
+	runAddressFormattingTests();
 	await runDatabaseProxyTests();
 
 	const summary = counts();

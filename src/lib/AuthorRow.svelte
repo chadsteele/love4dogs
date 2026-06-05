@@ -243,7 +243,7 @@
 		text-decoration: none;
 		overflow: hidden;
 		text-overflow: ellipsis;
-		white-space: nowrap;
+		white-space: pre-line;
 	}
 
 	.map-link:hover {
@@ -256,7 +256,7 @@
 		color: #3a5b41;
 		overflow: hidden;
 		text-overflow: ellipsis;
-		white-space: nowrap;
+		white-space: pre-line;
 	}
 
 	.author-row.compact .map-link,

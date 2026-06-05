@@ -10,6 +10,7 @@
 	import {CircleAlert as NoticeIcon, User} from "lucide-svelte"
 	import {readSearchTerm, writeSearchTerm} from "$lib/searchStore"
 	import { getProfile, setProfile, getAllPosts, setPost } from "$lib/db"
+	import {formatDisplayAddress} from "$lib/addressFormat"
 
 	// ── props ──────────────────────────────────────────────────────────────────
 	let {type = "post"} = $props()
@@ -191,27 +192,21 @@
 		return /<(img|video|iframe)\b/i.test(String(html || ""))
 	}
 
-	function buildLocationLines(data = {}) {
-		const address = String(data?.address || "").trim()
-		const city = String(data?.city || data?.location?.city || "").trim()
-		const state = String(data?.state || data?.location?.state || "").trim()
-		const zip = String(data?.zip || data?.location?.zip || "").trim()
-		const country = String(
-			data?.country || data?.location?.country || "",
-		).trim()
-		const locality = [city, state, zip].filter(Boolean).join(", ")
-		return [address, locality, country].filter(Boolean)
-	}
-
 	function buildMapHref(data = {}) {
 		const lat = Number(data?.location?.lat)
 		const lon = Number(data?.location?.lon)
 		if (Number.isFinite(lat) && Number.isFinite(lon)) {
 			return `https://maps.google.com/maps?q=${encodeURIComponent(`${lat},${lon}`)}&z=15`
 		}
-		const lines = buildLocationLines(data)
-		if (lines.length === 0) return ""
-		return `https://maps.google.com/maps?q=${encodeURIComponent(lines.join(", "))}&z=15`
+		const fullAddress = formatDisplayAddress({
+			address: data?.address,
+			city: data?.city || data?.location?.city,
+			state: data?.state || data?.location?.state,
+			zip: data?.zip || data?.location?.zip,
+			country: data?.country || data?.location?.country,
+		})
+		if (!fullAddress) return ""
+		return `https://maps.google.com/maps?q=${encodeURIComponent(fullAddress)}&z=15`
 	}
 
 	// ── profile-only: chunk URI helpers ───────────────────────────────────────
@@ -336,7 +331,6 @@
 			? `/search/${encodeURIComponent("uuid")}/${encodeURIComponent(authorId)}`
 			: "",
 	)
-	const locationLines = $derived(buildLocationLines(jsonData))
 	const mapHref = $derived(buildMapHref(jsonData))
 	const displayTags = $derived(collectDisplayTags(jsonData || {}))
 	const hasTestTag = $derived(displayTags.includes("test"))
@@ -617,8 +611,14 @@
 					href={isProfile
 						? asUrl(jsonData?.canonicalurl) || undefined
 						: authorSearchHref || undefined}
-					location={mapHref && locationLines.length > 0
-						? locationLines.join(", ")
+					location={mapHref && jsonData
+						? formatDisplayAddress({
+								address: jsonData.address,
+								city: jsonData.city || jsonData.location?.city,
+								state: jsonData.state || jsonData.location?.state,
+								zip: jsonData.zip || jsonData.location?.zip,
+								country: jsonData.country || jsonData.location?.country,
+							})
 						: null}
 					locationHref={mapHref || null}
 					hideAvatar={isProfile}
