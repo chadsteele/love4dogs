@@ -341,6 +341,9 @@ function hasUsableAddress(location = {}) {
 }
 
 function isLikelyWaterAddress(location = {}) {
+	// Require a street address/road to be considered on land
+	if (!String(location.road || '').trim()) return true;
+
 	const source = [
 		location.formattedAddress,
 		location.road,

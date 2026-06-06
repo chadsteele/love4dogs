@@ -1,6 +1,24 @@
 function isLikelyWaterAddress(result = {}) {
 	const address = result?.address || {};
 	const formattedAddress = String(result?.display_name || '').toLowerCase();
+	
+	// Street address detection: must have a road, street, path, track, etc.
+	const streetKeys = [
+		'road',
+		'pedestrian',
+		'footway',
+		'cycleway',
+		'path',
+		'track',
+		'street',
+		'square',
+		'highway',
+		'residential',
+		'service'
+	];
+	const hasStreet = streetKeys.some(key => Boolean(address[key]));
+	if (!hasStreet) return true;
+
 	const road = String(address.road || '').toLowerCase();
 	const city = String(address.city || address.town || address.village || address.hamlet || '').toLowerCase();
 	const suburb = String(address.suburb || '').toLowerCase();
@@ -20,8 +38,6 @@ function isLikelyWaterAddress(result = {}) {
 		'harbour',
 		'marina',
 	];
-
-	if (!address.country && !formattedAddress) return true;
 
 	return waterHints.some((token) => new RegExp('\\b' + token + '\\b').test(source));
 }
