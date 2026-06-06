@@ -135,106 +135,12 @@ function getRecordUuid(record) {
 	return '';
 }
 
-async function isLikelyWaterAddress(lat, lon) {
-	if (isSea(lat, lon)) {
+function isLikelyWaterAddress(lat, lon) {
+	const water = isSea(lat, lon);
+	if (water) {
 		console.log(`[is-sea] Detected water coordinates: ${lat}, ${lon}`);
-		return true;
 	}
-
-	const maxRetries = 5;
-	let attempt = 0;
-	let delay = 2000;
-
-	while (attempt < maxRetries) {
-		try {
-			console.log(`Querying Nominatim for coordinates: ${lat}, ${lon}...`);
-			const res = await fetch(
-				`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&addressdetails=1`,
-				{
-					headers: {
-						'Accept-Language': 'en',
-						'User-Agent': 'Love4Dogs-Cleanup/1.0 (contact: admin@love4dogs.club)',
-					}
-				}
-			);
-			
-			if (res.status === 429) {
-				attempt++;
-				console.log(`Nominatim request rate limited (429). Waiting ${delay / 1000}s to retry (Attempt ${attempt}/${maxRetries})...`);
-				await sleep(delay);
-				delay *= 2; // Exponential backoff
-				continue;
-			}
-
-			if (!res.ok) {
-				console.log(`Nominatim request returned status ${res.status}`);
-				return false; // Safely skip if API is down
-			}
-
-			const data = await res.json();
-			if (!data || typeof data !== 'object') return false;
-			
-			const address = data.address || {};
-			
-			// Street address detection: must have a road, street, path, track, etc.
-			const streetKeys = [
-				'road',
-				'pedestrian',
-				'footway',
-				'cycleway',
-				'path',
-				'track',
-				'street',
-				'square',
-				'highway',
-				'residential',
-				'service'
-			];
-			const hasStreet = streetKeys.some(key => Boolean(address[key]));
-			if (!hasStreet) {
-				console.log(`Location has no street address: ${data.display_name}`);
-				return true;
-			}
-
-			const formattedAddress = String(data.display_name || '').toLowerCase();
-			const road = String(address.road || '').toLowerCase();
-			const city = String(address.city || address.town || address.village || address.hamlet || '').toLowerCase();
-			const suburb = String(address.suburb || '').toLowerCase();
-			const neighbourhood = String(address.neighbourhood || '').toLowerCase();
-			
-			const source = [formattedAddress, road, city, suburb, neighbourhood].join(' ');
-			const waterHints = [
-				'ocean',
-				'sea',
-				'gulf',
-				'bay',
-				'channel',
-				'offshore',
-				'lagoon',
-				'reef',
-				'harbor',
-				'harbour',
-				'marina',
-			];
-			
-			const isWater = waterHints.some((token) => new RegExp('\\b' + token + '\\b').test(source));
-			if (isWater) {
-				console.log(`Detected water address: ${data.display_name}`);
-			}
-			return isWater;
-		} catch (err) {
-			console.log(`Error querying Nominatim: ${err.message}`);
-			attempt++;
-			if (attempt < maxRetries) {
-				console.log(`Waiting ${delay / 1000}s to retry after error (Attempt ${attempt}/${maxRetries})...`);
-				await sleep(delay);
-				delay *= 2;
-			} else {
-				return false;
-			}
-		}
-	}
-	return false;
+	return water;
 }
 
 async function deleteRecord({ agent, repo, record }) {
@@ -300,9 +206,7 @@ async function main() {
 		if (exactHash) {
 			const gps = hashToGps(exactHash);
 			if (gps) {
-				// Sleep to respect Nominatim policy
-				await sleep(1500);
-				const isWater = await isLikelyWaterAddress(gps.lat, gps.lon);
+				const isWater = isLikelyWaterAddress(gps.lat, gps.lon);
 				if (isWater) {
 					console.log(`Bundle ${uuid} is located in water/ocean.`);
 					uuidsToDelete.add(uuid);
@@ -318,8 +222,7 @@ async function main() {
 		if (exactHash) {
 			const gps = hashToGps(exactHash);
 			if (gps) {
-				await sleep(1500);
-				const isWater = await isLikelyWaterAddress(gps.lat, gps.lon);
+				const isWater = isLikelyWaterAddress(gps.lat, gps.lon);
 				if (isWater) {
 					console.log(`Ungrouped post ${record.uri} is located in water/ocean.`);
 					singleUrisToDelete.push(record.uri);

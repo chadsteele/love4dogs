@@ -3,6 +3,7 @@
 	import { goto } from "$app/navigation"
 	import NavBar from "$lib/NavBar.svelte"
 	import MapView from "$lib/MapView.svelte"
+	import FeedHeaderActions from "$lib/FeedHeaderActions.svelte"
 
 	const urlTerms = $derived(
 		String(page.params?.terms || "")
@@ -13,6 +14,8 @@
 	)
 
 	let searchTerm = $state("")
+	let refreshTrigger = $state(0)
+	let mapCenter = $state(null)
 
 	$effect(() => {
 		searchTerm = urlTerms
@@ -22,6 +25,10 @@
 		if (!searchTerm.trim()) {
 			goto("/map")
 		}
+	}
+
+	function handleRefresh() {
+		refreshTrigger += 1
 	}
 </script>
 
@@ -38,7 +45,25 @@
 	/>
 
 	<section class="map-container-panel">
-		<MapView searchTerm={urlTerms} />
+		<div class="feed-header">
+			<div class="feed-header-left">
+				<h2>
+					{#if urlTerms}
+						Map Results
+					{:else}
+						Map View
+					{/if}
+				</h2>
+			</div>
+			<FeedHeaderActions
+				currentView="map"
+				searchTerm={urlTerms}
+				onRefresh={handleRefresh}
+				{mapCenter}
+			/>
+		</div>
+
+		<MapView searchTerm={urlTerms} refreshTrigger={refreshTrigger} bind:mapCenter={mapCenter} />
 	</section>
 </main>
 
@@ -57,4 +82,34 @@
 		box-shadow: 0 10px 26px rgba(65, 42, 20, 0.12);
 		margin-bottom: 2rem;
 	}
+
+	.feed-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		margin-bottom: 0.75rem;
+	}
+
+	.feed-header-left {
+		display: flex;
+		align-items: center;
+		gap: 0.55rem;
+		flex-wrap: wrap;
+	}
+
+	h2 {
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+		margin: 0;
+		font-size: 1rem;
+	}
+
+	@media (max-width: 640px) {
+		.feed-header {
+			flex-wrap: wrap;
+		}
+	}
 </style>
+

@@ -2,9 +2,10 @@
 	import {onMount} from "svelte"
 	import {page} from "$app/state"
 	import {goto} from "$app/navigation"
-	import {CircleAlert, Map as MapIcon, RefreshCw} from "lucide-svelte"
+	import {CircleAlert} from "lucide-svelte"
 	import OneCard from "$lib/OneCard.svelte"
 	import NavBar from "$lib/NavBar.svelte"
+	import FeedHeaderActions from "$lib/FeedHeaderActions.svelte"
 	import {readSearchTerm, writeSearchTerm} from "$lib/searchStore"
 	import { getSetting, getAllPosts, setPost } from "$lib/db"
 
@@ -38,11 +39,7 @@
 			.join(" "),
 	)
 
-	const mapHref = $derived(
-		searchTerm.trim()
-			? "/map/" + searchTerm.replace(/,/g, " ").trim().split(/\s+/).map(encodeURIComponent).join("/")
-			: "/map"
-	)
+
 
 	function normalizeSearchTerm(value = "") {
 		return String(value || "")
@@ -419,21 +416,12 @@
 						<span class="sort-label">Most popular</span>
 					</label>
 				</div>
-				<div class="feed-header-actions">
-					<button
-						type="button"
-						class="refresh-feed-btn"
-						onclick={() => loadFeed({forceFresh: true})}
-						disabled={loadingPosts}
-						aria-label="Refresh search results from Bluesky"
-						title="Refresh from Bluesky"
-					>
-						<RefreshCw size={14} />
-					</button>
-					<a href={mapHref} class="map-view-btn">
-						<MapIcon size={14} /> Map View
-					</a>
-				</div>
+				<FeedHeaderActions
+					currentView="search"
+					searchTerm={searchTerm}
+					onRefresh={() => loadFeed({forceFresh: true})}
+					refreshDisabled={loadingPosts}
+				/>
 			</div>
 
 			{#if showNoResultsInfo}
@@ -598,11 +586,7 @@
 		margin-bottom: 0.75rem;
 	}
 
-	.feed-header-actions {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.45rem;
-	}
+
 
 	.feed-header-left {
 		display: flex;
@@ -661,48 +645,7 @@
 		white-space: nowrap;
 	}
 
-	.map-view-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.3em;
-		font-size: 0.8rem;
-		font-weight: 600;
-		color: #305741;
-		background: rgba(59, 110, 79, 0.1);
-		border: 1px solid rgba(59, 110, 79, 0.3);
-		border-radius: 999px;
-		padding: 0.2rem 0.65rem;
-		text-decoration: none;
-		white-space: nowrap;
-	}
 
-	.map-view-btn:hover {
-		background: rgba(59, 110, 79, 0.2);
-		border-color: #305741;
-	}
-
-	.refresh-feed-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 30px;
-		height: 30px;
-		border-radius: 999px;
-		border: 1px solid rgba(59, 110, 79, 0.3);
-		background: rgba(59, 110, 79, 0.1);
-		color: #305741;
-		cursor: pointer;
-	}
-
-	.refresh-feed-btn:hover {
-		background: rgba(59, 110, 79, 0.2);
-		border-color: #305741;
-	}
-
-	.refresh-feed-btn:disabled {
-		opacity: 0.5;
-		cursor: default;
-	}
 
 	.results-empty-pill {
 		margin-left: 0.35rem;

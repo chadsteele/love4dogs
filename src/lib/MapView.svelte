@@ -12,7 +12,7 @@
 	import { listStoredProfiles } from "$lib/profileRegistry"
 	import { readSearchTerm, writeSearchTerm } from "$lib/searchStore.js"
 
-	let { searchTerm = "" } = $props()
+	let { searchTerm = "", refreshTrigger = 0, mapCenter = $bindable(null) } = $props()
 
 	let mapEl = $state(null)
 	let mapPosts = $state([])
@@ -198,6 +198,24 @@
 			lastProcessedSearchTerm = current
 			writeSearchTerm(current).catch(() => {})
 			processSearch(current)
+		}
+	})
+
+	$effect(() => {
+		const trigger = refreshTrigger
+		if (trigger > 0) {
+			approxPostsCache.clear()
+			approxErrorCache.clear()
+			setSetting('love4dogs.map-approx-posts-cache.v2', {}).then(() => {
+				lastLoadedViewportKey = ""
+				requestedViewportKey = ""
+				refreshViewportPosts()
+			}).catch((err) => {
+				console.error("Failed to clear DB cache:", err)
+				lastLoadedViewportKey = ""
+				requestedViewportKey = ""
+				refreshViewportPosts()
+			})
 		}
 	})
 
@@ -1180,14 +1198,29 @@
 			mapInstance.on("move", () => {
 				scheduleViewportRefresh()
 				saveCurrentMapState()
+				const center = mapInstance.getCenter()
+				mapCenter = {
+					lat: Number(center.lat.toFixed(5)),
+					lon: Number(center.lng.toFixed(5))
+				}
 			})
 			mapInstance.on("zoom", () => {
 				scheduleViewportRefresh()
 				saveCurrentMapState()
+				const center = mapInstance.getCenter()
+				mapCenter = {
+					lat: Number(center.lat.toFixed(5)),
+					lon: Number(center.lng.toFixed(5))
+				}
 			})
 
 			await refreshViewportPosts()
 			renderMarkers()
+			const center = mapInstance.getCenter()
+			mapCenter = {
+				lat: Number(center.lat.toFixed(5)),
+				lon: Number(center.lng.toFixed(5))
+			}
 			setTimeout(() => mapInstance?.invalidateSize({pan: false}), 0)
 		}
 

@@ -81,6 +81,19 @@ async function fetchWithRetry(url, headers, maxRetries = 3) {
 
 export async function POST({request}) {
 	try {
+		const mockHeader = request.headers.get('x-mock-geocode-response');
+		if (mockHeader) {
+			try {
+				const mockResult = JSON.parse(mockHeader);
+				return new Response(JSON.stringify(mockResult), {
+					status: 200,
+					headers: {'Content-Type': 'application/json'}
+				});
+			} catch (e) {
+				console.error('Failed to parse x-mock-geocode-response header:', e);
+			}
+		}
+
 		const body = await request.json()
 		const query = body?.query?.trim()
 		const reverse = body?.reverse === true
@@ -98,29 +111,6 @@ export async function POST({request}) {
 					JSON.stringify({error: 'Valid lat/lon are required for reverse geocoding.'}),
 					{status: 400, headers: {'Content-Type': 'application/json'}},
 				)
-			}
-
-			// Mock reverse geocoding in Mauritius bounding box for hermetic testing
-			if (reverseLat >= -21.0 && reverseLat <= -19.8 && reverseLon >= 57.0 && reverseLon <= 58.0) {
-				const mockResult = {
-					ok: true,
-					lat: reverseLat,
-					lon: reverseLon,
-					houseNumber: "12",
-					road: "Royal Road",
-					neighbourhood: "Port Louis District",
-					suburb: "Port Louis",
-					city: "Port Louis",
-					state: "Port Louis Region",
-					country: "Mauritius",
-					zip: "74211",
-					formattedAddress: `12 Royal Road, Port Louis, Mauritius`
-				};
-				console.log(`[Geocode API] Mocked reverse lookup for Mauritius coordinates: ${reverseLat}, ${reverseLon}`);
-				return new Response(JSON.stringify(mockResult), {
-					status: 200,
-					headers: {'Content-Type': 'application/json'}
-				});
 			}
 
 			if (isSea(reverseLat, reverseLon)) {
@@ -239,23 +229,6 @@ export async function POST({request}) {
 				JSON.stringify({error: 'Location query is required.'}),
 				{status: 400, headers: {'Content-Type': 'application/json'}},
 			)
-		}
-
-		// Mock geocoding of 'Mauritius' for hermetic testing
-		if (query.toLowerCase() === 'mauritius') {
-			const mockResult = {
-				ok: true,
-				lat: -20.2,
-				lon: 57.5,
-				city: "Port Louis",
-				country: "Mauritius",
-				zip: "74211"
-			};
-			console.log(`[Geocode API] Mocked search query lookup for 'Mauritius'`);
-			return new Response(JSON.stringify(mockResult), {
-				status: 200,
-				headers: {'Content-Type': 'application/json'}
-			});
 		}
 
 		const cacheKey = query.toLowerCase();
