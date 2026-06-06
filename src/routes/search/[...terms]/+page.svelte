@@ -258,28 +258,64 @@
 
 		loadingMore = true
 		const requestId = lastFeedRequestId
+		const targetCount = 8
+		let newlyAddedCount = 0
+		let attempts = 0
+		const maxAttempts = 5
 
 		try {
-			const query = buildFeedQuery(searchTerm)
-			const params = new URLSearchParams({
-				query,
-				sort: searchSort,
-				limit: 20,
-				cursor: feedCursor,
-			})
-			if (feedCursorHost) {
-				params.set("cursorHost", String(feedCursorHost))
+			while (newlyAddedCount < targetCount && feedCursor && hasMorePosts && attempts < maxAttempts) {
+				attempts++
+				const query = buildFeedQuery(searchTerm)
+				const params = new URLSearchParams({
+					query,
+					sort: searchSort,
+					limit: 20,
+					cursor: feedCursor,
+				})
+				if (feedCursorHost) {
+					params.set("cursorHost", String(feedCursorHost))
+				}
+				const res = await fetch(`/api/feed?${params.toString()}`)
+				const json = await res.json()
+
+				if (!res.ok) throw new Error(json.error || "Could not load more.")
+				if (requestId !== lastFeedRequestId) return
+
+				const newPosts = json.posts || []
+				
+				// Calculate how many of these posts are actually new unique visible posts
+				const existingKeys = new Set(visiblePosts().map(p => String(p.displayKey || p.uri).trim()))
+				let batchNewCount = 0
+				for (const post of newPosts) {
+					if (post) {
+						const key = String(post.displayKey || post.uri).trim()
+						if (key && !existingKeys.has(key)) {
+							batchNewCount++
+							existingKeys.add(key)
+						}
+					}
+				}
+
+				posts = [...posts, ...newPosts]
+
+				// Cache fetched posts to IndexedDB
+				for (const post of newPosts) {
+					if (post && post.uri) {
+						await setPost(post.uri, post)
+					}
+				}
+
+				feedCursor = json.cursor || null
+				feedCursorHost = json.cursorHost || feedCursorHost || null
+				hasMorePosts = !!json.cursor
+
+				newlyAddedCount += batchNewCount
+
+				if (!feedCursor || !hasMorePosts) {
+					break
+				}
 			}
-			const res = await fetch(`/api/feed?${params.toString()}`)
-			const json = await res.json()
-
-			if (!res.ok) throw new Error(json.error || "Could not load more.")
-			if (requestId !== lastFeedRequestId) return
-
-			posts = [...posts, ...(json.posts || [])]
-			feedCursor = json.cursor || null
-			feedCursorHost = json.cursorHost || feedCursorHost || null
-			hasMorePosts = !!json.cursor
 		} catch {
 			// Silently fail on load more
 		} finally {
@@ -287,7 +323,6 @@
 			if (isManual) {
 				await tick()
 				if (loadMoreBtn) {
-					// loadMoreBtn.focus()
 					slowScrollIntoView(loadMoreBtn, 3000)
 				}
 			}

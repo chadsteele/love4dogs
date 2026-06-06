@@ -797,7 +797,7 @@ export async function cleanWaterPostsFromCaches() {
  * @param {HTMLElement} element
  * @param {number} duration - Duration in milliseconds (default 1200ms)
  */
-export function slowScrollIntoView(element, duration = 1200) {
+export function slowScrollIntoView(element, duration = 3000) {
 	if (!element || typeof window === 'undefined') return;
 
 	const rect = element.getBoundingClientRect();
@@ -820,8 +820,33 @@ export function slowScrollIntoView(element, duration = 1200) {
 	if (Math.abs(targetY - startY) < 1) return;
 
 	const startTime = performance.now();
+	let animationFrameId = null;
+	let userInterrupted = false;
+
+	const interactionEvents = ['wheel', 'touchmove', 'keydown', 'mousedown'];
+
+	function stopAnimation() {
+		userInterrupted = true;
+		if (animationFrameId) {
+			cancelAnimationFrame(animationFrameId);
+			animationFrameId = null;
+		}
+		removeListeners();
+	}
+
+	function removeListeners() {
+		for (const event of interactionEvents) {
+			window.removeEventListener(event, stopAnimation, { passive: true });
+		}
+	}
+
+	for (const event of interactionEvents) {
+		window.addEventListener(event, stopAnimation, { passive: true });
+	}
 
 	function step(currentTime) {
+		if (userInterrupted) return;
+
 		const elapsed = currentTime - startTime;
 		const progress = Math.min(elapsed / duration, 1);
 
@@ -833,10 +858,13 @@ export function slowScrollIntoView(element, duration = 1200) {
 		window.scrollTo(0, startY + (targetY - startY) * ease);
 
 		if (progress < 1) {
-			requestAnimationFrame(step);
+			animationFrameId = requestAnimationFrame(step);
+		} else {
+			removeListeners();
 		}
 	}
 
-	requestAnimationFrame(step);
+	animationFrameId = requestAnimationFrame(step);
 }
+
 

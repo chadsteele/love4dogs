@@ -1439,7 +1439,7 @@
 		if (!isPostEditRoute && profileImageError) {
 			debugProfile("[profile] focusing profile image section")
 			profileImageWrapEl?.focus()
-			slowScrollIntoView(profileImageWrapEl, 1200)
+			slowScrollIntoView(profileImageWrapEl, 3000)
 			return
 		}
 		if (nameError) {
