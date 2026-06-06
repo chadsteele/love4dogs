@@ -321,25 +321,28 @@ export async function lookupLocationDetails(lat, lon, options = {}) {
 		fromCache = true;
 	} else {
 		try {
-			const res = await fetch(
-				`https://nominatim.openstreetmap.org/reverse?lat=${nextLat}&lon=${nextLon}&format=json`,
-				{ headers: { 'Accept-Language': acceptLanguage } }
-			);
-			const data = await res.json();
-			houseNumber = data?.address?.house_number || '';
-			road = data?.address?.road || data?.address?.pedestrian || '';
-			neighbourhood = data?.address?.neighbourhood || '';
-			suburb = data?.address?.suburb || '';
-			city = data?.address?.city || data?.address?.town || data?.address?.village || data?.address?.hamlet || '';
-			state = data?.address?.state || data?.address?.province || data?.address?.region || data?.address?.state_district || '';
-			country = data?.address?.country || '';
-			zip = data?.address?.postcode || '';
-			const line1 = [houseNumber, road].filter(Boolean).join(' ').trim();
-			const line2 = [neighbourhood, suburb].filter(Boolean).join(', ').trim();
-			const fallbackFormatted = [line1, line2, city, state, country, zip]
-				.filter(Boolean)
-				.join(', ');
-			formattedAddress = String(data?.display_name || fallbackFormatted || '').trim();
+			const res = await fetch('/api/geocode', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ lat: nextLat, lon: nextLon, reverse: true })
+			});
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok) {
+				return {
+					location: null,
+					error: data.error || 'Location cannot be in the ocean or water.',
+					fromCache: false
+				};
+			}
+			houseNumber = data.houseNumber || '';
+			road = data.road || '';
+			neighbourhood = data.neighbourhood || '';
+			suburb = data.suburb || '';
+			city = data.city || '';
+			state = data.state || '';
+			country = data.country || '';
+			zip = data.zip || '';
+			formattedAddress = data.formattedAddress || '';
 			await setCachedReverseGeo(reverseGeoCacheKeyName, reverseGeoMaxEntries, nextLat, nextLon, {
 				houseNumber,
 				road,
@@ -351,8 +354,12 @@ export async function lookupLocationDetails(lat, lon, options = {}) {
 				zip,
 				formattedAddress
 			});
-		} catch {
-			// Keep coordinate updates working even if reverse geocoding fails.
+		} catch (err) {
+			return {
+				location: null,
+				error: err.message || 'Could not verify location.',
+				fromCache: false
+			};
 		}
 	}
 

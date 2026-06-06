@@ -17,6 +17,8 @@
 	let posts = $state([])
 	let searchTerm = $state("")
 	let loadingPosts = $state(false)
+	let blockedUuids = $state([])
+	let blockedAuthors = $state([])
 	let feedError = $state("")
 	let searchSort = $state("latest")
 	let loadingMore = $state(false)
@@ -100,12 +102,104 @@
 		searchTerm = next.join(" ")
 	}
 
+	const altCandidatesCache = new Map()
+
+	function getAltCandidates(alt = "") {
+		const source = String(alt || "").trim()
+		if (!source) return []
+		if (altCandidatesCache.has(source)) {
+			return altCandidatesCache.get(source)
+		}
+
+		let candidates = []
+		try {
+			const parsed = JSON.parse(source)
+			candidates = [parsed, parsed?.primary, parsed?.combined?.primary]
+
+			if (typeof parsed?.h === "string" && parsed.h.trim()) {
+				try {
+					const inner = JSON.parse(parsed.h)
+					candidates.push(
+						inner,
+						inner?.primary,
+						inner?.combined?.primary,
+					)
+				} catch {}
+			}
+		} catch {
+			candidates = []
+		}
+
+		const normalized = candidates.filter(
+			(candidate) => candidate && typeof candidate === "object",
+		)
+		altCandidatesCache.set(source, normalized)
+		return normalized
+	}
+
+	function extractUuidFromBundleAlt(alt = "") {
+		for (const candidate of getAltCandidates(alt)) {
+			const directUuid = String(
+				candidate?.u || candidate?.uuid || candidate?.id || "",
+			).trim()
+			if (directUuid) return directUuid
+		}
+		return ""
+	}
+
+	function resolvePostUuid(post = {}) {
+		const directUuid = String(post?.uuid || "").trim()
+		if (directUuid) return directUuid
+
+		for (const alt of post?.imageAlts || []) {
+			const fromAlt = extractUuidFromBundleAlt(alt)
+			if (fromAlt) return fromAlt
+		}
+
+		return extractUuidFromBundleAlt(post?.video?.alt || "")
+	}
+
+	function extractAuthorIdFromBundleAlt(alt = "") {
+		for (const candidate of getAltCandidates(alt)) {
+			const authorId = String(
+				candidate?.authorid || candidate?.authorId || "",
+			).trim()
+			if (authorId) return authorId
+		}
+		return ""
+	}
+
+	function resolvePostAuthorId(post = {}) {
+		const directAuthorId = String(post?.authorid || post?.authorId || "").trim()
+		if (directAuthorId) return directAuthorId
+
+		for (const alt of post?.imageAlts || []) {
+			const fromAlt = extractAuthorIdFromBundleAlt(alt)
+			if (fromAlt) return fromAlt
+		}
+
+		return extractAuthorIdFromBundleAlt(post?.video?.alt || "")
+	}
+
 	function visiblePosts() {
 		const seen = new Set()
 		const next = []
 		for (const post of posts) {
 			const key = String(post?.displayKey || post?.uri || "").trim()
 			if (!key || seen.has(key)) continue
+
+			// Filter out blocked posts
+			const postUuid = resolvePostUuid(post)
+			if (postUuid && blockedUuids.includes(postUuid)) {
+				continue
+			}
+
+			// Filter out blocked authors
+			const authorUuid = resolvePostAuthorId(post)
+			if (authorUuid && blockedAuthors.includes(authorUuid)) {
+				continue
+			}
+
 			seen.add(key)
 			next.push(post)
 		}
@@ -337,8 +431,26 @@
 		searchTerm.trim().length > 0 && visiblePosts().length === 0,
 	)
 
+	async function refreshBlockedLists() {
+		try {
+			blockedUuids = await getSetting("love4dogs.blocked-uuids", [])
+			blockedAuthors = await getSetting("love4dogs.blocked-authors", [])
+		} catch (e) {
+			console.error("Failed to load blocked lists:", e)
+		}
+	}
+
 	onMount(async () => {
 		favoriteSearchTerms = await readFavoriteSearchTerms()
+		await refreshBlockedLists()
+
+		const onFocusOrStorage = () => {
+			refreshBlockedLists()
+		}
+		if (typeof window !== "undefined") {
+			window.addEventListener("focus", onFocusOrStorage)
+			window.addEventListener("storage", onFocusOrStorage)
+		}
 
 		// Seed search from URL params, then ?q=, then localStorage, then default
 		const qParam = new URLSearchParams(window.location.search).get("q")
@@ -355,6 +467,10 @@
 
 		return () => {
 			if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+			if (typeof window !== "undefined") {
+				window.removeEventListener("focus", onFocusOrStorage)
+				window.removeEventListener("storage", onFocusOrStorage)
+			}
 		}
 	})
 

@@ -7,9 +7,10 @@
 	import ProfilePostHeader from "$lib/ProfilePostHeader.svelte"
 	import AuthorRow from "$lib/AuthorRow.svelte"
 	import {deriveBundleCreatedAtMs} from "$lib/dateTime"
-	import {CircleAlert as NoticeIcon, User} from "lucide-svelte"
+	import {CircleAlert as NoticeIcon, User, Settings as SettingsIcon} from "lucide-svelte"
 	import {readSearchTerm, writeSearchTerm} from "$lib/searchStore"
-	import { getProfile, setProfile, getAllPosts, setPost } from "$lib/db"
+	import { getProfile, setProfile, getAllPosts, setPost, getSetting, setSetting } from "$lib/db"
+	import {listStoredProfiles} from "$lib/profileRegistry"
 	import {formatDisplayAddress} from "$lib/addressFormat"
 
 	// ── props ──────────────────────────────────────────────────────────────────
@@ -28,6 +29,13 @@
 	let jsonData = $state(null)
 	let derivedCreatedAtMs = $state(0)
 	let editProfileUrl = $state("")
+	let localProfiles = $state([])
+	let blockedUuids = $state([])
+	let blockedAuthors = $state([])
+	let menuOpen = $state(false)
+	let menuEl = $state(null)
+	let toastMessage = $state("")
+	let toastType = $state("success")
 	let chunkUris = $state([])
 	let searchTerm = $state("")
 
@@ -326,6 +334,12 @@
 	const authorId = $derived(
 		String(jsonData?.authorid || jsonData?.authorId || "").trim(),
 	)
+	const targetAuthorId = $derived(
+		String(jsonData?.authorid || jsonData?.authorId || (isProfile ? uuid : "")).trim(),
+	)
+	const isAuthor = $derived(
+		localProfiles.some((p) => p.uuid === (isProfile ? uuid : targetAuthorId))
+	)
 	const authorSearchHref = $derived(
 		authorId
 			? `/search/${encodeURIComponent("uuid")}/${encodeURIComponent(authorId)}`
@@ -338,6 +352,14 @@
 
 	// ── data loading ───────────────────────────────────────────────────────────
 	onMount(async () => {
+		try {
+			localProfiles = await listStoredProfiles()
+			blockedUuids = await getSetting("love4dogs.blocked-uuids", [])
+			blockedAuthors = await getSetting("love4dogs.blocked-authors", [])
+		} catch (e) {
+			console.error("Failed to load moderation settings:", e)
+		}
+
 		try {
 			if (typeof window !== "undefined") {
 				const pathTerms = window.location.pathname.startsWith(
@@ -503,6 +525,103 @@
 	$effect(() => {
 		writeSearchTerm(searchTerm)
 	})
+
+	// Close moderation menu when clicking outside
+	$effect(() => {
+		if (!menuOpen) return
+
+		const onPointerDown = (event) => {
+			if (!menuEl?.contains(event.target)) {
+				menuOpen = false
+			}
+		}
+
+		document.addEventListener("pointerdown", onPointerDown)
+		return () => {
+			document.removeEventListener("pointerdown", onPointerDown)
+		}
+	})
+
+	async function toggleBlockUuid() {
+		try {
+			if (blockedUuids.includes(uuid)) {
+				blockedUuids = blockedUuids.filter((id) => id !== uuid)
+				await setSetting("love4dogs.blocked-uuids", blockedUuids)
+				showToast("Content unblocked.")
+			} else {
+				blockedUuids = [...blockedUuids, uuid]
+				await setSetting("love4dogs.blocked-uuids", blockedUuids)
+				showToast("Content blocked.")
+				
+				// Send DM to admin-love-4-dogs.bsky.social
+				await fetch("/api/send-dm", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({
+						message: `Block post/profile: ${uuid}`
+					})
+				})
+			}
+		} catch (err) {
+			showToast("Failed to update block list.", "error")
+		}
+	}
+
+	async function toggleBlockAuthor() {
+		if (!targetAuthorId) return
+		try {
+			if (blockedAuthors.includes(targetAuthorId)) {
+				blockedAuthors = blockedAuthors.filter((id) => id !== targetAuthorId)
+				await setSetting("love4dogs.blocked-authors", blockedAuthors)
+				showToast("Author unblocked.")
+			} else {
+				blockedAuthors = [...blockedAuthors, targetAuthorId]
+				await setSetting("love4dogs.blocked-authors", blockedAuthors)
+				showToast("Author blocked.")
+				
+				// Send DM to admin-love-4-dogs.bsky.social
+				await fetch("/api/send-dm", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({
+						message: `Block author: ${targetAuthorId}`
+					})
+				})
+			}
+		} catch (err) {
+			showToast("Failed to update blocked authors list.", "error")
+		}
+	}
+
+	async function claimOwnership() {
+		try {
+			showToast("Sending ownership claim...")
+			const res = await fetch("/api/send-dm", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					message: `Claim ownership of post/profile: ${uuid}`
+				})
+			})
+			if (res.ok) {
+				showToast("Ownership claim sent to administrator.")
+			} else {
+				throw new Error("Failed to send claim")
+			}
+		} catch (err) {
+			showToast("Failed to send ownership claim.", "error")
+		}
+	}
+
+	function showToast(message, type = "success") {
+		toastMessage = message
+		toastType = type
+		setTimeout(() => {
+			if (toastMessage === message) {
+				toastMessage = ""
+			}
+		}, 4000)
+	}
 </script>
 
 <svelte:head>
@@ -567,6 +686,75 @@
 		<p class="error">{error}</p>
 	{:else if jsonData}
 		<section class="panel hero">
+			<!-- Gear icon menu in the upper right corner -->
+			<div class="moderation-menu-wrap" bind:this={menuEl}>
+				<button
+					type="button"
+					class="gear-btn"
+					aria-label="Moderation menu"
+					onclick={() => menuOpen = !menuOpen}
+				>
+					<SettingsIcon size={20} />
+				</button>
+				{#if menuOpen}
+					<div class="moderation-dropdown">
+						{#if isAuthor}
+							<button
+								type="button"
+								onclick={() => {
+									menuOpen = false
+									if (isProfile) {
+										goto(`/profile/edit/${encodeURIComponent(uuid)}`)
+									} else {
+										goto(`/post/edit/${encodeURIComponent(uuid)}`)
+									}
+								}}
+							>
+								Edit
+							</button>
+						{/if}
+						<button
+							type="button"
+							onclick={async () => {
+								menuOpen = false
+								await toggleBlockUuid()
+							}}
+						>
+							{blockedUuids.includes(uuid) ? 'Unblock' : 'Block'}
+						</button>
+						{#if targetAuthorId}
+							<button
+								type="button"
+								onclick={async () => {
+									menuOpen = false
+									await toggleBlockAuthor()
+								}}
+							>
+								{blockedAuthors.includes(targetAuthorId) ? 'Unblock author' : 'Block author'}
+							</button>
+						{/if}
+						<button
+							type="button"
+							onclick={() => {
+								menuOpen = false
+								goto(`/report/${encodeURIComponent(uuid)}`)
+							}}
+						>
+							Report
+						</button>
+						<button
+							type="button"
+							onclick={async () => {
+								menuOpen = false
+								await claimOwnership()
+							}}
+						>
+							Claim ownership
+						</button>
+					</div>
+				{/if}
+			</div>
+
 			{#if isProfile}
 				<ProfilePostHeader
 					profilePic={asUrl(jsonData?.profilePic)}
@@ -680,6 +868,12 @@
 			</div>
 		</section>
 	{/if}
+
+	{#if toastMessage}
+		<div class="custom-toast {toastType}">
+			{toastMessage}
+		</div>
+	{/if}
 </main>
 
 <style>
@@ -706,6 +900,94 @@
 		border: 0;
 		border-radius: 16px;
 		box-shadow: 0 8px 20px rgba(65, 42, 20, 0.1);
+	}
+
+	.moderation-menu-wrap {
+		position: absolute;
+		top: 1rem;
+		right: 1rem;
+		z-index: 100;
+	}
+
+	.gear-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 38px;
+		height: 38px;
+		border-radius: 50%;
+		border: 1px solid rgba(48, 80, 54, 0.2);
+		background: rgba(255, 255, 255, 0.9);
+		color: #3b6e4f;
+		cursor: pointer;
+		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+		transition: all 0.2s ease;
+	}
+
+	.gear-btn:hover {
+		background: #fff;
+		transform: rotate(45deg);
+		color: #2b533a;
+	}
+
+	.moderation-dropdown {
+		position: absolute;
+		top: calc(100% + 0.5rem);
+		right: 0;
+		min-width: 180px;
+		background: #ffffff;
+		border: 1px solid #d7c8b6;
+		border-radius: 12px;
+		box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+		padding: 0.4rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.2rem;
+		z-index: 101;
+	}
+
+	.moderation-dropdown button {
+		width: 100%;
+		display: flex;
+		align-items: center;
+		padding: 0.55rem 0.75rem;
+		border: none;
+		border-radius: 8px;
+		background: transparent;
+		color: #4a3e3d;
+		font-size: 0.9rem;
+		font-weight: 500;
+		text-align: left;
+		cursor: pointer;
+		box-sizing: border-box;
+		transition: background 0.15s ease, color 0.15s ease;
+	}
+
+	.moderation-dropdown button:hover {
+		background: #f3ece1;
+		color: #1a1615;
+	}
+
+	/* Toast Notification */
+	.custom-toast {
+		position: fixed;
+		bottom: 2rem;
+		right: 2rem;
+		background: #3b6e4f;
+		color: #ffffff;
+		padding: 0.75rem 1.25rem;
+		border-radius: 10px;
+		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+		z-index: 2000;
+		font-weight: 600;
+		font-size: 0.95rem;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.custom-toast.error {
+		background: #8e2f21;
 	}
 
 	.hero-body {

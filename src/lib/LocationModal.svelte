@@ -23,10 +23,17 @@
 			modalLocation &&
 			(pinMovedInModal || !hasRequiredLocationParts(localConfirmedLocation))
 		) {
-			const {location} = await lookupLocationDetails(
+			const {location, error} = await lookupLocationDetails(
 				modalLocation.lat,
 				modalLocation.lon,
 			)
+			if (error) {
+				onConfirm({
+					error,
+					locationConfirmed: false,
+				})
+				return
+			}
 			if (location) {
 				localConfirmedLocation = location
 				const parts = [
