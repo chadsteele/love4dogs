@@ -21,9 +21,6 @@
 	let viewportApproximates = $state([])
 	let hashLoadTotal = $state(0)
 	let hashLoadDone = $state(0)
-	let cacheHashesCached = $state(0)
-	let cacheHashesFetching = $state(0)
-	let showLocalCacheDebug = $state(false)
 	let localProfileUuids = $state([])
 	let findingNearMe = $state(false)
 
@@ -780,8 +777,6 @@
 				.filter(Boolean)
 			if (!cleanApproximates.length) {
 				mapPosts = []
-				cacheHashesCached = 0
-				cacheHashesFetching = 0
 				return
 			}
 
@@ -817,9 +812,6 @@
 			const fetchApproximates = apiHealthProbeRequired
 				? missingApproximates.slice(0, 1)
 				: missingApproximates
-			cacheHashesCached =
-				cleanApproximates.length - missingApproximates.length
-			cacheHashesFetching = fetchApproximates.length
 
 			const postsByUri = new Map()
 			for (const post of cachedPosts) {
@@ -901,8 +893,6 @@
 		viewportApproximates = approximates
 		hashLoadTotal = approximates.length
 		hashLoadDone = 0
-		cacheHashesCached = 0
-		cacheHashesFetching = approximates.length
 
 		mapLoadRequestId += 1
 		if (refreshInFlight) {
@@ -1074,9 +1064,6 @@
 	onMount(async () => {
 		let destroyed = false
 		if (typeof window !== "undefined") {
-			const host = String(window.location.hostname || "")
-			showLocalCacheDebug =
-				host === "localhost" || host === "127.0.0.1" || host === "::1"
 			try {
 				const profilesList = await listStoredProfiles()
 				localProfileUuids = profilesList.map(p => p.uuid).filter(Boolean)
@@ -1269,23 +1256,12 @@
 			Loading nearby posts... {Math.min(hashLoadDone, hashLoadTotal)} /
 			{hashLoadTotal} parcels
 		</p>
-		{#if showLocalCacheDebug}
-			<p class="muted cache-debug">
-				cache: {cacheHashesCached} hit, {cacheHashesFetching} fetch
-			</p>
-		{/if}
 		{/if}
 	{:else}
 		{#if isLocalHost}	
 		<p class="muted">
 			Found {validMapPosts().length} post(s)
 		</p>
-		{#if showLocalCacheDebug}
-			<p class="muted cache-debug">
-				last load cache: {cacheHashesCached} hit, {cacheHashesFetching}
-				fetch
-			</p>
-		{/if}
 		{/if}
 	{/if}
 </div>
@@ -1308,12 +1284,6 @@
 	.muted {
 		color: #5f665f;
 		margin: 0.45rem 0;
-	}
-
-	.cache-debug {
-		font-size: 0.78rem;
-		opacity: 0.85;
-		margin-top: -0.15rem;
 	}
 
 	.error {

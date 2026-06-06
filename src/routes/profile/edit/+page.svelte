@@ -22,6 +22,7 @@
 		expandMinifiedHtmlTags,
 		minifyHtml,
 		upsertApproxPostInCache,
+		slowScrollIntoView,
 	} from "$lib/utils"
 	import {
 		hasRequiredLocationParts,
@@ -1438,10 +1439,7 @@
 		if (!isPostEditRoute && profileImageError) {
 			debugProfile("[profile] focusing profile image section")
 			profileImageWrapEl?.focus()
-			profileImageWrapEl?.scrollIntoView({
-				behavior: "smooth",
-				block: "nearest",
-			})
+			slowScrollIntoView(profileImageWrapEl, 1200)
 			return
 		}
 		if (nameError) {

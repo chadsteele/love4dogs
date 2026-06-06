@@ -791,3 +791,52 @@ export async function cleanWaterPostsFromCaches() {
 		}
 	}
 }
+
+/**
+ * Smoothly scrolls an element into view over a custom duration (slower than standard smooth scroll).
+ * @param {HTMLElement} element
+ * @param {number} duration - Duration in milliseconds (default 1200ms)
+ */
+export function slowScrollIntoView(element, duration = 1200) {
+	if (!element || typeof window === 'undefined') return;
+
+	const rect = element.getBoundingClientRect();
+	const viewportHeight = window.innerHeight;
+	const startY = window.pageYOffset;
+	
+	// Determine target Y scroll position.
+	// We want to bring the element into the viewport.
+	let targetY = startY;
+	if (rect.bottom > viewportHeight) {
+		targetY = startY + (rect.bottom - viewportHeight) + 40; // 40px padding below element
+	} else if (rect.top < 0) {
+		targetY = startY + rect.top - 40; // 40px padding above element
+	}
+
+	// Clamp targetY to actual scrollable range
+	const maxScroll = document.documentElement.scrollHeight - viewportHeight;
+	targetY = Math.max(0, Math.min(maxScroll, targetY));
+
+	if (Math.abs(targetY - startY) < 1) return;
+
+	const startTime = performance.now();
+
+	function step(currentTime) {
+		const elapsed = currentTime - startTime;
+		const progress = Math.min(elapsed / duration, 1);
+
+		// Easing: easeInOutCubic
+		const ease = progress < 0.5
+			? 4 * progress * progress * progress
+			: 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+		window.scrollTo(0, startY + (targetY - startY) * ease);
+
+		if (progress < 1) {
+			requestAnimationFrame(step);
+		}
+	}
+
+	requestAnimationFrame(step);
+}
+

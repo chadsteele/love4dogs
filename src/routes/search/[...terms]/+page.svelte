@@ -1,5 +1,5 @@
 <script>
-	import {onMount} from "svelte"
+	import {onMount, tick} from "svelte"
 	import {page} from "$app/state"
 	import {goto} from "$app/navigation"
 	import {CircleAlert} from "lucide-svelte"
@@ -8,6 +8,7 @@
 	import FeedHeaderActions from "$lib/FeedHeaderActions.svelte"
 	import {readSearchTerm, writeSearchTerm} from "$lib/searchStore"
 	import { getSetting, getAllPosts, setPost } from "$lib/db"
+	import { slowScrollIntoView } from "$lib/utils"
 
 	const FAVORITE_SEARCH_TERMS_KEY =
 		"love4dogs.settings.favorite-search-terms-v1"
@@ -26,6 +27,7 @@
 	let currentView = $state("feed")
 	let automateFailed = $state(false)
 	let showNoResultsInfo = $state("")
+	let loadMoreBtn = null
 
 	let searchDebounceTimer = null
 	let lastFeedRequestId = 0
@@ -251,7 +253,7 @@
 		}
 	}
 
-	async function loadMorePosts() {
+	async function loadMorePosts(isManual = false) {
 		if (loadingMore || !feedCursor || !hasMorePosts) return
 
 		loadingMore = true
@@ -282,6 +284,13 @@
 			// Silently fail on load more
 		} finally {
 			loadingMore = false
+			if (isManual) {
+				await tick()
+				if (loadMoreBtn) {
+					// loadMoreBtn.focus()
+					slowScrollIntoView(loadMoreBtn, 3000)
+				}
+			}
 		}
 	}
 
@@ -458,9 +467,10 @@
 			{#if !loadingPosts && visiblePosts().length > 0}
 				<div class="load-more-actions">
 					<button
+						bind:this={loadMoreBtn}
 						type="button"
 						class="load-more-btn"
-						onclick={loadMorePosts}
+						onclick={() => loadMorePosts(true)}
 						disabled={loadingMore || !hasMorePosts}
 					>
 						{#if loadingMore}
@@ -733,19 +743,15 @@
 	}
 
 	.post-list {
-		columns: 2;
-		column-gap: 0.9rem;
-	}
-
-	@media (max-width: 1000px) {
-		.post-list {
-			columns: 2;
-		}
+		display: grid;
+		grid-template-columns: repeat(2, 1fr);
+		gap: 0.9rem;
+		align-items: start;
 	}
 
 	@media (max-width: 640px) {
 		.post-list {
-			columns: 1;
+			grid-template-columns: 1fr;
 		}
 
 		.feed-header {

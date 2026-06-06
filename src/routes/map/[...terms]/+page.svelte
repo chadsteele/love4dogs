@@ -4,6 +4,7 @@
 	import NavBar from "$lib/NavBar.svelte"
 	import MapView from "$lib/MapView.svelte"
 	import FeedHeaderActions from "$lib/FeedHeaderActions.svelte"
+	import { lookupLocationDetails } from "$lib/utils"
 
 	const urlTerms = $derived(
 		String(page.params?.terms || "")
@@ -16,9 +17,37 @@
 	let searchTerm = $state("")
 	let refreshTrigger = $state(0)
 	let mapCenter = $state(null)
+	let country = $state("")
 
 	$effect(() => {
 		searchTerm = urlTerms
+	})
+
+	$effect(() => {
+		const center = mapCenter
+		if (!center || typeof center.lat !== "number" || typeof center.lon !== "number") {
+			country = ""
+			return
+		}
+
+		const timer = setTimeout(async () => {
+			try {
+				const res = await lookupLocationDetails(center.lat, center.lon)
+				if (res && res.location) {
+					const { state, country: countryVal } = res.location
+					country = [state, countryVal].filter(Boolean).join(", ")
+				} else {
+					country = ""
+				}
+			} catch (e) {
+				console.error("Failed to lookup location details:", e)
+				country = ""
+			}
+		}, 400)
+
+		return () => {
+			clearTimeout(timer)
+		}
 	})
 
 	function handleSearchInput() {
@@ -48,11 +77,7 @@
 		<div class="feed-header">
 			<div class="feed-header-left">
 				<h2>
-					{#if urlTerms}
-						Map Results
-					{:else}
-						Map View
-					{/if}
+					{country || "Map Results"}
 				</h2>
 			</div>
 			<FeedHeaderActions
