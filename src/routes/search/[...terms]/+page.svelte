@@ -74,7 +74,8 @@
 	}
 
 	function getSearchTokens(value = "") {
-		return normalizeSearchTerm(value).split(" ").filter(Boolean)
+		const withoutNearMe = String(value || "").replace(/\bnear\s+me\b/gi, "").trim().replace(/\s+/g, " ")
+		return normalizeSearchTerm(withoutNearMe).split(" ").filter(Boolean)
 	}
 
 	function toggleSearchTag(tag = "") {

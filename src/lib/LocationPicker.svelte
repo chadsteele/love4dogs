@@ -107,7 +107,7 @@
 		searchLoading = true
 
 		try {
-			if (!input) {
+			if (!input || input.toLowerCase() === "near me" || input.toLowerCase() === "my location") {
 				const deviceCoords = await getDeviceCoords()
 				if (!deviceCoords) {
 					searchError =
@@ -176,6 +176,11 @@
 		} finally {
 			searchLoading = false
 		}
+	}
+
+	async function runNearMe() {
+		searchText = "Near me"
+		await runSearch("Near me")
 	}
 
 	function syncMapSize() {
@@ -435,7 +440,12 @@
 			</button>
 		</div>
 		{#if searchError}
-			<p class="map-search-error">{searchError}</p>
+			<div class="map-search-error-container">
+				<p class="map-search-error">{searchError}</p>
+				<button type="button" class="near-me-btn" onclick={runNearMe} disabled={searchLoading}>
+					Use Current Location (Near Me)
+				</button>
+			</div>
 		{/if}
 		<div
 			bind:this={shell}
@@ -628,5 +638,37 @@
 		inset: 7px;
 		border-radius: 50%;
 		background: #fff4ea;
+	}
+
+	.map-search-error-container {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		margin: 0 0 0.45rem;
+		flex-wrap: wrap;
+	}
+
+	.near-me-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		padding: 0.35rem 0.75rem;
+		background: #3b6e4f;
+		color: #fff;
+		border: 1px solid #305741;
+		border-radius: 8px;
+		font-size: 0.8rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: background 0.15s ease;
+	}
+
+	.near-me-btn:hover {
+		background: #305741;
+	}
+
+	.near-me-btn:disabled {
+		opacity: 0.7;
+		cursor: wait;
 	}
 </style>

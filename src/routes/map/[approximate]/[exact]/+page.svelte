@@ -8,8 +8,9 @@
 		setApproxPostsInCache,
 		getApproxCacheEntry,
 	} from "$lib/utils"
-	import { getSetting, setSetting } from "$lib/db.js"
+	import { getSetting, setSetting, setPost } from "$lib/db.js"
 	import { listStoredProfiles } from "$lib/profileRegistry"
+	import { readSearchTerm } from "$lib/searchStore.js"
 
 	const LOCAL_MY_POSTS_KEY = "love4dogs.my-post-uris"
 	const SHOW_MY_POSTS_ON_MAP_KEY = "love4dogs.settings.show-my-posts-on-map"
@@ -31,6 +32,8 @@
 	let myPostUris = $state([])
 	let showMyPosts = $state(true)
 	let localProfileUuids = $state([])
+	let searchTerm = $state("")
+	let findingNearMe = $state(false)
 
 	let leaflet = null
 	let mapInstance = null
@@ -64,12 +67,65 @@
 	let refreshQueued = false
 	let requestedViewportApproximates = []
 
+	async function searchNearMe() {
+		searchError = ""
+		findingNearMe = true
+		if (!navigator.geolocation) {
+			searchError = "Geolocation is not supported by your browser."
+			findingNearMe = false
+			return
+		}
+		navigator.geolocation.getCurrentPosition(
+			async (position) => {
+				const lat = position.coords.latitude
+				const lon = position.coords.longitude
+				const hash = gpsToHash(lat, lon)
+				if (!hash?.approx || !hash?.exact) {
+					searchError = "Could not compute a map hash for your location."
+					findingNearMe = false
+					return
+				}
+				
+				const zoom = mapInstance ? mapInstance.getZoom() : 13
+				await setSetting('love4dogs.map-search-location', {
+					lat,
+					lon,
+					approximate: hash.approx,
+					exact: hash.exact,
+					zoom
+				})
+
+				locationQuery = "Near me"
+				if (mapInstance) {
+					mapInstance.setView([lat, lon], zoom, {animate: true})
+					lastLoadedViewportKey = ""
+					requestedViewportKey = ""
+					scheduleViewportRefresh()
+				}
+				findingNearMe = false
+				await goto(`/map/${hash.approx}/${hash.exact}`)
+			},
+			(err) => {
+				searchError = err.message || "Unable to get your location."
+				findingNearMe = false
+			},
+			{enableHighAccuracy: true, timeout: 10000}
+		)
+	}
+
 	async function searchLocation(event) {
 		event?.preventDefault?.()
 		searchError = ""
 		const query = String(locationQuery || "").trim()
 		if (!query) {
 			searchError = "Type a location to search."
+			return
+		}
+
+		if (query.toLowerCase() === "near me" || query.toLowerCase() === "my location") {
+			searchingLocation = true
+			await searchNearMe()
+			searchingLocation = false
 			return
 		}
 
@@ -98,8 +154,16 @@
 				)
 			}
 
+			const zoom = mapInstance ? mapInstance.getZoom() : 13
+			await setSetting('love4dogs.map-search-location', {
+				lat,
+				lon,
+				approximate: hash.approx,
+				exact: hash.exact,
+				zoom
+			})
+
 			if (mapInstance) {
-				const zoom = Number(mapInstance.getZoom?.() || 13)
 				mapInstance.setView([lat, lon], zoom, {animate: true})
 				lastLoadedViewportKey = ""
 				requestedViewportKey = ""
@@ -658,27 +722,15 @@
 							cachedPosts.push(p)
 						}
 					}
-
-					const ageMs = Date.now() - (entry.savedAt || 0)
-					const isExpired = ageMs > 10 * 60 * 1000 // 10 minutes
-					const hasLocal = entry.hasLocalPost || entry.posts.some(p => p.isUserPost || (p.uuid && localProfileUuids.includes(p.uuid)))
-
-					if (isExpired || (hasLocal && showMyPosts)) {
-						if (approxErrorCache.has(approximate)) {
-							const retryAt = approxErrorCache.get(approximate)
-							if (Date.now() < retryAt) continue
-							approxErrorCache.delete(approximate)
-						}
-						missingApproximates.push(approximate)
-					}
-				} else {
-					if (approxErrorCache.has(approximate)) {
-						const retryAt = approxErrorCache.get(approximate)
-						if (Date.now() < retryAt) continue
-						approxErrorCache.delete(approximate)
-					}
-					missingApproximates.push(approximate)
 				}
+
+				// Always fetch in the background to update the cache/map, but respect the error cache cooldown
+				if (approxErrorCache.has(approximate)) {
+					const retryAt = approxErrorCache.get(approximate)
+					if (Date.now() < retryAt) continue
+					approxErrorCache.delete(approximate)
+				}
+				missingApproximates.push(approximate)
 			}
 
 			hashLoadTotal = cleanApproximates.length
@@ -721,6 +773,8 @@
 					let changed = false
 					for (const post of posts) {
 						if (!post?.uri) continue
+						// Cache the full post for offline view
+						await setPost(post.uri, post)
 						const existing = postsByUri.get(post.uri)
 						const nextPost = existing
 							? {...existing, ...post}
@@ -846,11 +900,39 @@
 		}
 	}
 
+	function normalizeSearchTerm(value = "") {
+		return String(value || "")
+			.trim()
+			.replace(/\s+/g, " ")
+	}
+
+	function getSearchTokens(value = "") {
+		const withoutNearMe = String(value || "").replace(/\bnear\s+me\b/gi, "").trim().replace(/\s+/g, " ")
+		return normalizeSearchTerm(withoutNearMe).split(" ").filter(Boolean).map(t => t.toLowerCase())
+	}
+
 	function validMapPosts() {
+		const queryTokens = getSearchTokens(searchTerm)
 		return mapPosts.filter(
 			(post) => {
 				if (!Number.isFinite(post?.lat) || !Number.isFinite(post?.lon)) return false
 				if (!showMyPosts && (post.isUserPost || (post.uuid && localProfileUuids.includes(post.uuid)))) return false
+				
+				if (queryTokens.length > 0) {
+					const text = String(post.text || '').toLowerCase()
+					const name = String(post.name || '').toLowerCase()
+					const desc = String(post.description || '').toLowerCase()
+					const tags = (post.tags || []).map(t => String(t || '').toLowerCase())
+					
+					const matches = queryTokens.every(token => 
+						text.includes(token) || 
+						name.includes(token) || 
+						desc.includes(token) ||
+						tags.includes(token)
+					)
+					if (!matches) return false
+				}
+				
 				return true
 			}
 		)
@@ -932,6 +1014,26 @@
 		setSetting(SHOW_MY_POSTS_ON_MAP_KEY, val).catch(() => {})
 	})
 
+	async function saveCurrentMapState() {
+		if (!mapInstance) return
+		try {
+			const center = mapInstance.getCenter()
+			const zoom = mapInstance.getZoom()
+			const lat = Number(center.lat.toFixed(5))
+			const lon = Number(center.lng.toFixed(5))
+			const hash = gpsToHash(lat, lon)
+			if (hash) {
+				await setSetting('love4dogs.map-search-location', {
+					lat,
+					lon,
+					approximate: hash.approx,
+					exact: hash.exact,
+					zoom
+				})
+			}
+		} catch {}
+	}
+
 	onMount(async () => {
 		let destroyed = false
 		if (typeof window !== "undefined") {
@@ -962,6 +1064,11 @@
 			} catch {
 				localProfileUuids = []
 			}
+			try {
+				searchTerm = await readSearchTerm()
+			} catch {
+				searchTerm = ""
+			}
 		}
 
 		async function initMap() {
@@ -969,6 +1076,18 @@
 			const module = await import("leaflet")
 			if (destroyed) return
 			markMapActivity()
+
+			let zoom = 13
+			try {
+				const saved = await getSetting('love4dogs.map-search-location')
+				if (saved && typeof saved.zoom === 'number') {
+					const latDiff = Math.abs(saved.lat - data.lat)
+					const lonDiff = Math.abs(saved.lon - data.lon)
+					if (latDiff < 0.01 && lonDiff < 0.01) {
+						zoom = saved.zoom
+					}
+				}
+			} catch {}
 
 			leaflet = module.default ?? module
 			mapInstance = leaflet
@@ -981,7 +1100,7 @@
 					doubleClickZoom: true,
 					minZoom: MIN_ZOOM,
 				})
-				.setView([data.lat, data.lon], 13)
+				.setView([data.lat, data.lon], zoom)
 
 			leaflet
 				.tileLayer(
@@ -996,9 +1115,11 @@
 			markerLayer = leaflet.layerGroup().addTo(mapInstance)
 			mapInstance.on("move", () => {
 				scheduleViewportRefresh()
+				saveCurrentMapState()
 			})
 			mapInstance.on("zoom", () => {
 				scheduleViewportRefresh()
+				saveCurrentMapState()
 			})
 			await refreshViewportPosts()
 			renderMarkers()
@@ -1063,7 +1184,12 @@
 			</label>
 		</div>
 		{#if searchError}
-			<p class="error">{searchError}</p>
+			<div class="search-error-container">
+				<p class="error">{searchError}</p>
+				<button type="button" class="near-me-btn" onclick={searchNearMe} disabled={searchingLocation || findingNearMe}>
+					{findingNearMe ? "Locating..." : "Use Current Location (Near Me)"}
+				</button>
+			</div>
 		{/if}
 		<div class="map-view" bind:this={mapEl}></div>
 		{#if loadingPins}
@@ -1351,5 +1477,37 @@
 		.search-btn {
 			width: 100%;
 		}
+	}
+
+	.search-error-container {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		margin: 0.45rem 0;
+		flex-wrap: wrap;
+	}
+
+	.near-me-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		padding: 0.35rem 0.75rem;
+		background: #3b6e4f;
+		color: #fff;
+		border: 1px solid #305741;
+		border-radius: 8px;
+		font-size: 0.8rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: background 0.15s ease;
+	}
+
+	.near-me-btn:hover {
+		background: #305741;
+	}
+
+	.near-me-btn:disabled {
+		opacity: 0.7;
+		cursor: wait;
 	}
 </style>

@@ -450,8 +450,9 @@ export async function GET({ url }) {
 
 	let nextCursor = null;
 
-	if (query) {
-		let searchPath = `app.bsky.feed.searchPosts?q=${encodeURIComponent(query)}&author=${encodeURIComponent(ACCOUNT_HANDLE)}&limit=${limit}${sort === 'top' ? '&sort=top' : ''}`;
+	const cleanedQuery = query.replace(/\bnear\s+me\b/gi, '').trim().replace(/\s+/g, ' ');
+	if (cleanedQuery) {
+		let searchPath = `app.bsky.feed.searchPosts?q=${encodeURIComponent(cleanedQuery)}&author=${encodeURIComponent(ACCOUNT_HANDLE)}&limit=${limit}${sort === 'top' ? '&sort=top' : ''}`;
 		if (cursor) {
 			searchPath += `&cursor=${encodeURIComponent(cursor)}`;
 		}
@@ -477,7 +478,7 @@ export async function GET({ url }) {
 		if (!searchRes) {
 			if (cursor) {
 				console.warn('[feed] cursor pagination failed; ending search pagination', {
-					query,
+					query: cleanedQuery,
 					cursor,
 					upstreamFailures: searchFailures,
 				});
