@@ -43,6 +43,10 @@
 			.join(" "),
 	)
 
+	const showBlockedOnly = $derived(
+		searchTerm.trim().toLowerCase() === "blocked"
+	)
+
 
 
 	function normalizeSearchTerm(value = "") {
@@ -188,16 +192,20 @@
 			const key = String(post?.displayKey || post?.uri || "").trim()
 			if (!key || seen.has(key)) continue
 
-			// Filter out blocked posts
 			const postUuid = resolvePostUuid(post)
-			if (postUuid && blockedUuids.includes(postUuid)) {
-				continue
-			}
-
-			// Filter out blocked authors
 			const authorUuid = resolvePostAuthorId(post)
-			if (authorUuid && blockedAuthors.includes(authorUuid)) {
-				continue
+
+			const isPostBlocked = postUuid && blockedUuids.includes(postUuid)
+			const isAuthorBlocked = authorUuid && blockedAuthors.includes(authorUuid)
+
+			if (showBlockedOnly) {
+				if (!isPostBlocked && !isAuthorBlocked) {
+					continue
+				}
+			} else {
+				if (isPostBlocked || isAuthorBlocked) {
+					continue
+				}
 			}
 
 			seen.add(key)
@@ -252,6 +260,35 @@
 		automateFailed = false
 		if (searchTerm.trim() !== "") {
 			showNoResultsInfo = ""
+		}
+
+		if (showBlockedOnly) {
+			try {
+				const allCached = await getAllPosts()
+				posts = allCached.filter(post => {
+					const postUuid = resolvePostUuid(post)
+					const authorUuid = resolvePostAuthorId(post)
+					const isPostBlocked = postUuid && blockedUuids.includes(postUuid)
+					const isAuthorBlocked = authorUuid && blockedAuthors.includes(authorUuid)
+					return isPostBlocked || isAuthorBlocked
+				})
+				
+				posts.sort((a, b) => {
+					const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0
+					const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0
+					return timeB - timeA
+				})
+				
+				feedCursor = null
+				hasMorePosts = false
+				return
+			} catch (err) {
+				console.error("Failed loading blocked posts locally:", err)
+				feedError = "Failed loading blocked posts."
+			} finally {
+				if (requestId === lastFeedRequestId) loadingPosts = false
+			}
+			return
 		}
 
 		try {
@@ -417,7 +454,7 @@
 			if (isManual) {
 				await tick()
 				if (loadMoreBtn) {
-					slowScrollIntoView(loadMoreBtn, 3000)
+					//slowScrollIntoView(loadMoreBtn, 3000)
 				}
 			}
 		}
@@ -551,13 +588,17 @@
 			<div class="feed-header">
 				<div class="feed-header-left">
 					<h2>
-						{#if searchTerm.trim().length > 0}
-							Search Results
-							{#if isSearchResultsEmpty && !loadingPosts}
-								<span class="results-empty-pill">(empty)</span>
-							{/if}
+						{#if showBlockedOnly}
+							Blocked Posts
 						{:else}
-							Recent Posts
+							{#if searchTerm.trim().length > 0}
+								Search Results
+								{#if isSearchResultsEmpty && !loadingPosts}
+									<span class="results-empty-pill">(empty)</span>
+								{/if}
+							{:else}
+								Recent Posts
+							{/if}
 						{/if}
 					</h2>
 					<label class="sort-toggle" aria-label="Sort search results">
@@ -597,7 +638,9 @@
 			{:else if feedError}
 				<p class="warning"><CircleAlert size={15} /> {feedError}</p>
 			{:else if visiblePosts().length === 0}
-				{#if searchTerm.trim().length > 0}
+				{#if showBlockedOnly}
+					<p class="muted">No blocked posts to show.</p>
+				{:else if searchTerm.trim().length > 0}
 					<div class="empty-search-state">
 						<p class="muted">No posts match this search.</p>
 						<a class="create-post-btn" href="/post">

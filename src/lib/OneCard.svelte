@@ -575,9 +575,32 @@
 			? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(locationLine)}`
 			: "",
 	)
+
+	let isInView = $state(false)
+	let cardEl = $state(null)
+
+	$effect(() => {
+		if (!cardEl) return
+		if (typeof IntersectionObserver === 'undefined') {
+			isInView = true
+			return
+		}
+		const observer = new IntersectionObserver((entries) => {
+			for (const entry of entries) {
+				if (entry.isIntersecting) {
+					isInView = true
+					observer.unobserve(cardEl)
+				}
+			}
+		}, {
+			rootMargin: "0px 0px -50px 0px"
+		})
+		observer.observe(cardEl)
+		return () => observer.disconnect()
+	})
 </script>
 
-<div class="one-card">
+<div class="one-card" class:animate={isInView} bind:this={cardEl}>
 	<a class="card-link" href={cardViewHref} tabindex="0">
 		{#if primaryImage}
 			<div class="card-image">
@@ -687,15 +710,21 @@
 		box-shadow: 0 2px 8px rgba(46, 28, 12, 0.08);
 		transition:
 			transform 0.2s ease,
-			box-shadow 0.2s ease;
+			box-shadow 0.2s ease,
+			opacity 0.2s ease;
 		cursor: pointer;
-		animation: fadeIn 1s ease-out;
+		opacity: 0;
 	}
 
-	@keyframes fadeIn {
+	.one-card.animate {
+		opacity: 1;
+		animation: cardIn 1s ease-out;
+	}
+
+	@keyframes cardIn {
 		from {
 			opacity: 0;
-			transform: translateY(8px);
+			transform: translateY(5rem);
 		}
 		to {
 			opacity: 1;

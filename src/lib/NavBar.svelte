@@ -18,6 +18,7 @@
 		Pencil,
 		Plus,
 		User,
+		EyeOff,
 	} from "lucide-svelte"
 
 	const verifiedProfileUuids = new Set()
@@ -217,6 +218,15 @@
 							}}
 						>
 							<Search size={16} /> Show feed
+						</button>
+						<button
+							type="button"
+							onclick={() => {
+								goto("/search/blocked")
+								selectionMenuOpen = false
+							}}
+						>
+							<EyeOff size={16} /> Show blocked
 						</button>
 						<div class="menu-sep"></div>
 						<button
