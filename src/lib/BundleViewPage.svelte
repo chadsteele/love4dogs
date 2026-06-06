@@ -10,7 +10,7 @@
 	import {CircleAlert as NoticeIcon, User, EllipsisVertical as SettingsIcon, Pencil, Eye, EyeOff, UserX, UserCheck, Flag, Key, Trash2} from "lucide-svelte"
 	import {readSearchTerm, writeSearchTerm} from "$lib/searchStore"
 	import { getProfile, setProfile, getAllPosts, setPost, getSetting, setSetting, deletePost } from "$lib/db"
-	import {listStoredProfiles} from "$lib/profileRegistry"
+	import {listStoredProfiles, getCurrentProfileUuid} from "$lib/profileRegistry"
 	import {isLocalHost, removeApproxPostFromCache} from "$lib/utils"
 	import {formatDisplayAddress} from "$lib/addressFormat"
 
@@ -553,17 +553,30 @@
 				blockedUuids = blockedUuids.filter((id) => id !== uuid)
 				await setSetting("love4dogs.blocked-uuids", blockedUuids)
 				showToast("Content unblocked.")
+				
+				// Send DM to admin-love-4-dogs.bsky.social with unblock structured JSON
+				const fromUuid = await getCurrentProfileUuid()
+				await fetch("/api/send-dm", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({
+						from: fromUuid || "",
+						unblock: uuid
+					})
+				})
 			} else {
 				blockedUuids = [...blockedUuids, uuid]
 				await setSetting("love4dogs.blocked-uuids", blockedUuids)
 				showToast("Content blocked.")
 				
-				// Send DM to admin-love-4-dogs.bsky.social
+				// Send DM to admin-love-4-dogs.bsky.social with structured JSON
+				const fromUuid = await getCurrentProfileUuid()
 				await fetch("/api/send-dm", {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({
-						message: `Block post/profile: ${uuid}`
+						from: fromUuid || "",
+						block: uuid
 					})
 				})
 			}
@@ -579,17 +592,30 @@
 				blockedAuthors = blockedAuthors.filter((id) => id !== targetAuthorId)
 				await setSetting("love4dogs.blocked-authors", blockedAuthors)
 				showToast("Author unblocked.")
+				
+				// Send DM to admin-love-4-dogs.bsky.social with unblock structured JSON
+				const fromUuid = await getCurrentProfileUuid()
+				await fetch("/api/send-dm", {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify({
+						from: fromUuid || "",
+						unblock: targetAuthorId
+					})
+				})
 			} else {
 				blockedAuthors = [...blockedAuthors, targetAuthorId]
 				await setSetting("love4dogs.blocked-authors", blockedAuthors)
 				showToast("Author blocked.")
 				
-				// Send DM to admin-love-4-dogs.bsky.social
+				// Send DM to admin-love-4-dogs.bsky.social with structured JSON
+				const fromUuid = await getCurrentProfileUuid()
 				await fetch("/api/send-dm", {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({
-						message: `Block author: ${targetAuthorId}`
+						from: fromUuid || "",
+						block: targetAuthorId
 					})
 				})
 			}
@@ -601,11 +627,13 @@
 	async function claimOwnership() {
 		try {
 			showToast("Sending ownership claim...")
+			const fromUuid = await getCurrentProfileUuid()
 			const res = await fetch("/api/send-dm", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({
-					message: `Claim ownership of post/profile: ${uuid}`
+					from: fromUuid || "",
+					claim: uuid
 				})
 			})
 			if (res.ok) {

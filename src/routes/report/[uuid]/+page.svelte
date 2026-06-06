@@ -3,6 +3,7 @@
 	import {goto} from "$app/navigation"
 	import NavBar from "$lib/NavBar.svelte"
 	import {CircleAlert, CheckCircle} from "lucide-svelte"
+	import {getCurrentProfileUuid} from "$lib/profileRegistry"
 
 	const uuid = $derived(String(page.params?.uuid || "").trim())
 
@@ -23,13 +24,18 @@
 		errorMsg = ""
 		
 		try {
-			const messageText = `Report for post/profile: ${uuid}\nReason: ${selectedReason}\nDetails: ${complaintDetails}`
+			const fromUuid = await getCurrentProfileUuid()
 			const res = await fetch("/api/send-dm", {
 				method: "POST",
 				headers: {
 					"content-type": "application/json"
 				},
-				body: JSON.stringify({ message: messageText })
+				body: JSON.stringify({
+					from: fromUuid || "",
+					report: uuid,
+					reason: selectedReason,
+					details: complaintDetails
+				})
 			})
 			
 			const data = await res.json().catch(() => ({}))

@@ -1,12 +1,12 @@
 import { env } from '$env/dynamic/private';
+import { AtpAgent } from '@atproto/api';
 
-const BSKY_XRPC = 'https://bsky.social/xrpc';
-const CHAT_XRPC = 'https://api.bsky.chat/xrpc';
+const BSKY_SERVICE = 'https://bsky.social';
+let cachedAgent = null;
+let cachedIdentifier = null;
+let cachedSecret = null;
 
-let cachedSession = null;
-
-async function getSession() {
-	if (cachedSession) return cachedSession;
+async function getAgent(forceRefresh = false) {
 	const identifier = env.BSKY_USERNAME || env.username;
 	const secret = env.BSKY_PASSWORD || env.password;
 
@@ -14,35 +14,73 @@ async function getSession() {
 		throw new Error('Missing Bluesky credentials in .env');
 	}
 
-	const res = await fetch(`${BSKY_XRPC}/com.atproto.server.createSession`, {
-		method: 'POST',
-		headers: { 'content-type': 'application/json' },
-		body: JSON.stringify({ identifier, password: secret })
-	});
-
-	if (!res.ok) {
-		const body = await res.json().catch(() => ({}));
-		throw new Error(body.message || 'Failed to create session');
+	if (
+		cachedAgent &&
+		!forceRefresh &&
+		cachedIdentifier === identifier &&
+		cachedSecret === secret
+	) {
+		return cachedAgent;
 	}
 
-	cachedSession = await res.json();
-	return cachedSession;
+	try {
+		const agent = new AtpAgent({ service: BSKY_SERVICE });
+		await agent.login({ identifier, password: secret });
+		cachedAgent = agent;
+		cachedIdentifier = identifier;
+		cachedSecret = secret;
+		return cachedAgent;
+	} catch (loginErr) {
+		// Clear credentials on login failure so we don't cache bad state
+		cachedAgent = null;
+		cachedIdentifier = null;
+		cachedSecret = null;
+		throw loginErr;
+	}
 }
 
-async function resolveHandle(handle) {
-	const res = await fetch(`${BSKY_XRPC}/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`);
-	if (!res.ok) {
-		throw new Error(`Failed to resolve handle ${handle}`);
-	}
-	const json = await res.json();
-	return json.did;
+async function resolveHandle(agent, handle) {
+	const res = await agent.com.atproto.identity.resolveHandle({ handle });
+	return res.data.did;
 }
 
 export async function POST({ request }) {
 	let message = '';
 	try {
 		const body = await request.json().catch(() => ({}));
-		message = String(body.message || '').trim();
+		
+		// If it is a structured JSON payload request, construct the JSON string
+		if (
+			body.from !== undefined ||
+			body.block !== undefined ||
+			body.unblock !== undefined ||
+			body.report !== undefined ||
+			body.claim !== undefined
+		) {
+			const payload = {};
+			payload.from = String(body.from || '').trim();
+			
+			if (body.block !== undefined) {
+				payload.block = String(body.block || '').trim();
+			} else if (body.unblock !== undefined) {
+				payload.unblock = String(body.unblock || '').trim();
+			} else if (body.report !== undefined) {
+				payload.report = String(body.report || '').trim();
+				payload.reason = String(body.reason || '').trim();
+				payload.details = String(body.details || '').trim();
+			} else if (body.claim !== undefined) {
+				payload.claim = String(body.claim || '').trim();
+			}
+			
+			// Always add a timestamp if not present (per user requirement)
+			payload.timestamp = body.timestamp ? String(body.timestamp).trim() : new Date().toISOString();
+			
+			message = JSON.stringify(payload);
+		} else {
+			// Fallback to legacy plain string
+			message = String(body.message || '').trim();
+		}
+
 		if (!message) {
 			return new Response(JSON.stringify({ error: 'Message is required' }), {
 				status: 400,
@@ -50,48 +88,45 @@ export async function POST({ request }) {
 			});
 		}
 
-		const session = await getSession();
-		const targetDid = await resolveHandle('admin-love-4-dogs.bsky.social');
+		let agent = await getAgent();
 
-		// 1. Get convo or create one
-		const convoRes = await fetch(`${CHAT_XRPC}/chat.bsky.convo.getConvoForMembers`, {
-			method: 'POST',
-			headers: {
-				'content-type': 'application/json',
-				authorization: `Bearer ${session.accessJwt}`
-			},
-			body: JSON.stringify({ members: [targetDid] })
-		});
+		async function attemptSend(activeAgent) {
+			const adminHandle = env.BSKY_ADMIN_HANDLE || env.ADMIN_HANDLE || env.admin_handle;
+			if (!adminHandle) {
+				throw new Error('Missing BSKY_ADMIN_HANDLE/ADMIN_HANDLE in environment variables');
+			}
+			const targetDid = await resolveHandle(activeAgent, adminHandle);
 
-		if (!convoRes.ok) {
-			const err = await convoRes.json().catch(() => ({}));
-			throw new Error(err.message || 'Failed to get convo');
-		}
+			// Create a proxy instance for the chat service
+			const proxy = activeAgent.withProxy('bsky_chat', 'did:web:api.bsky.chat');
 
-		const convo = await convoRes.json();
-		const convoId = convo?.convo?.id;
-		if (!convoId) {
-			throw new Error('Convo ID not returned');
-		}
+			// 1. Get convo or create one
+			const convoRes = await proxy.chat.bsky.convo.getConvoForMembers({
+				members: [targetDid]
+			});
 
-		// 2. Send message
-		const sendRes = await fetch(`${CHAT_XRPC}/chat.bsky.convo.sendMessage`, {
-			method: 'POST',
-			headers: {
-				'content-type': 'application/json',
-				authorization: `Bearer ${session.accessJwt}`
-			},
-			body: JSON.stringify({
+			const convoId = convoRes.data?.convo?.id;
+			if (!convoId) {
+				throw new Error('Convo ID not returned');
+			}
+
+			// 2. Send message
+			await proxy.chat.bsky.convo.sendMessage({
 				convoId,
 				message: {
 					text: message
 				}
-			})
-		});
+			});
+		}
 
-		if (!sendRes.ok) {
-			const err = await sendRes.json().catch(() => ({}));
-			throw new Error(err.message || 'Failed to send message');
+		try {
+			await attemptSend(agent);
+		} catch (sendErr) {
+			// If it failed, it might be due to an expired/invalid session, or updated env credentials.
+			// Let's force a new login and retry once.
+			console.warn(`[API] DM Send attempt failed: ${sendErr.message || sendErr}. Retrying with fresh login...`);
+			agent = await getAgent(true);
+			await attemptSend(agent);
 		}
 
 		return new Response(JSON.stringify({ ok: true }), {
@@ -109,3 +144,4 @@ export async function POST({ request }) {
 		});
 	}
 }
+
