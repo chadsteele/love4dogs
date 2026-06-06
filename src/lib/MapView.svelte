@@ -1,38 +1,30 @@
 <script>
-	import {onMount} from "svelte"
-	import {goto} from "$app/navigation"
+	import { onMount } from "svelte"
 	import "leaflet/dist/leaflet.css"
 	import {
 		getApproxPostsFromCache,
 		gpsToHash,
 		setApproxPostsInCache,
 		getApproxCacheEntry,
+        isLocalHost,
 	} from "$lib/utils"
 	import { getSetting, setSetting, setPost } from "$lib/db.js"
 	import { listStoredProfiles } from "$lib/profileRegistry"
-	import { readSearchTerm } from "$lib/searchStore.js"
+	import { readSearchTerm, writeSearchTerm } from "$lib/searchStore.js"
 
-	const LOCAL_MY_POSTS_KEY = "love4dogs.my-post-uris"
-	const SHOW_MY_POSTS_ON_MAP_KEY = "love4dogs.settings.show-my-posts-on-map"
+	let { searchTerm = "" } = $props()
 
-	let {data} = $props()
 	let mapEl = $state(null)
 	let mapPosts = $state([])
 	let loadingPins = $state(false)
 	let mapError = $state("")
 	let viewportApproximates = $state([])
-	let locationQuery = $state("")
-	let searchingLocation = $state(false)
-	let searchError = $state("")
 	let hashLoadTotal = $state(0)
 	let hashLoadDone = $state(0)
 	let cacheHashesCached = $state(0)
 	let cacheHashesFetching = $state(0)
 	let showLocalCacheDebug = $state(false)
-	let myPostUris = $state([])
-	let showMyPosts = $state(true)
 	let localProfileUuids = $state([])
-	let searchTerm = $state("")
 	let findingNearMe = $state(false)
 
 	let leaflet = null
@@ -67,11 +59,34 @@
 	let refreshQueued = false
 	let requestedViewportApproximates = []
 
+	let lastProcessedSearchTerm = $state(searchTerm)
+
+	// Keep track of search term updates
+	$effect(() => {
+		const current = searchTerm
+		if (current !== lastProcessedSearchTerm) {
+			lastProcessedSearchTerm = current
+			writeSearchTerm(current).catch(() => {})
+
+			const hasNearMe = String(current).toLowerCase().includes("near me")
+			if (hasNearMe && mapInstance) {
+				searchNearMe()
+			}
+		}
+	})
+
+	$effect(() => {
+		// Track all dependencies for rendering markers reactively
+		const _posts = mapPosts
+		const _term = searchTerm
+		const _profileUuids = localProfileUuids
+		renderMarkers()
+	})
+
 	async function searchNearMe() {
-		searchError = ""
 		findingNearMe = true
 		if (!navigator.geolocation) {
-			searchError = "Geolocation is not supported by your browser."
+			mapError = "Geolocation is not supported by your browser."
 			findingNearMe = false
 			return
 		}
@@ -81,7 +96,7 @@
 				const lon = position.coords.longitude
 				const hash = gpsToHash(lat, lon)
 				if (!hash?.approx || !hash?.exact) {
-					searchError = "Could not compute a map hash for your location."
+					mapError = "Could not compute a map hash for your location."
 					findingNearMe = false
 					return
 				}
@@ -95,7 +110,6 @@
 					zoom
 				})
 
-				locationQuery = "Near me"
 				if (mapInstance) {
 					mapInstance.setView([lat, lon], zoom, {animate: true})
 					lastLoadedViewportKey = ""
@@ -103,79 +117,13 @@
 					scheduleViewportRefresh()
 				}
 				findingNearMe = false
-				await goto(`/map/${hash.approx}/${hash.exact}`)
 			},
 			(err) => {
-				searchError = err.message || "Unable to get your location."
+				mapError = err.message || "Unable to get your location."
 				findingNearMe = false
 			},
 			{enableHighAccuracy: true, timeout: 10000}
 		)
-	}
-
-	async function searchLocation(event) {
-		event?.preventDefault?.()
-		searchError = ""
-		const query = String(locationQuery || "").trim()
-		if (!query) {
-			searchError = "Type a location to search."
-			return
-		}
-
-		if (query.toLowerCase() === "near me" || query.toLowerCase() === "my location") {
-			searchingLocation = true
-			await searchNearMe()
-			searchingLocation = false
-			return
-		}
-
-		searchingLocation = true
-		try {
-			const res = await fetch("/api/geocode", {
-				method: "POST",
-				headers: {"Content-Type": "application/json"},
-				body: JSON.stringify({query}),
-			})
-			const json = await res.json().catch(() => ({}))
-			if (!res.ok) {
-				throw new Error(json.error || "Unable to find that location.")
-			}
-
-			const lat = Number(json?.lat)
-			const lon = Number(json?.lon)
-			if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-				throw new Error("Invalid coordinates returned from geocoder.")
-			}
-
-			const hash = gpsToHash(lat, lon)
-			if (!hash?.approx || !hash?.exact) {
-				throw new Error(
-					"Unable to compute a map hash for that location.",
-				)
-			}
-
-			const zoom = mapInstance ? mapInstance.getZoom() : 13
-			await setSetting('love4dogs.map-search-location', {
-				lat,
-				lon,
-				approximate: hash.approx,
-				exact: hash.exact,
-				zoom
-			})
-
-			if (mapInstance) {
-				mapInstance.setView([lat, lon], zoom, {animate: true})
-				lastLoadedViewportKey = ""
-				requestedViewportKey = ""
-				scheduleViewportRefresh()
-			}
-
-			await goto(`/map/${hash.approx}/${hash.exact}`)
-		} catch (error) {
-			searchError = error?.message || "Unable to find that location."
-		} finally {
-			searchingLocation = false
-		}
 	}
 
 	function clamp(value, min, max) {
@@ -256,14 +204,6 @@
 		return Math.max(Math.max(spanDriven, zoomDriven), MIN_GRID_SAMPLES)
 	}
 
-	function openDirections(lat, lon) {
-		window.open(
-			`https://maps.google.com/?q=${lat},${lon}`,
-			"_blank",
-			"noopener,noreferrer",
-		)
-	}
-
 	function slugify(value = "") {
 		return String(value || "")
 			.trim()
@@ -272,6 +212,7 @@
 			.replace(/^-+|-+$/g, "")
 	}
 
+	// alt-payload parsing utilities
 	function extractTagsFromAltPayload(alt = "") {
 		const source = String(alt || "").trim()
 		if (!source) return []
@@ -293,7 +234,7 @@
 						inner?.combined?.primary,
 					)
 				} catch {
-					// Ignore malformed nested payloads and keep best-effort parsing.
+					// Ignore malformed nested payloads.
 				}
 			}
 
@@ -320,7 +261,6 @@
 	}
 
 	function isProfilePost(post = {}) {
-		// Check if post has the "profile" tag
 		let tags = Array.isArray(post?.tags) ? post.tags : []
 
 		if (!tags.length) {
@@ -370,7 +310,7 @@
 						inner?.combined?.primary,
 					)
 				} catch {
-					// Ignore malformed nested payloads and keep best-effort parsing.
+					// Ignore malformed nested payloads.
 				}
 			}
 
@@ -519,14 +459,6 @@
 			}
 		}
 
-		if (data?.approximate) {
-			const currentApprox = String(data.approximate).toLowerCase()
-			const prevScore = approxOrderScore.get(currentApprox)
-			if (typeof prevScore !== "number" || prevScore > 0) {
-				approxOrderScore.set(currentApprox, 0)
-			}
-		}
-
 		return [...approxOrderScore.entries()]
 			.sort((left, right) => left[1] - right[1])
 			.map(([approx]) => approx)
@@ -607,7 +539,6 @@
 					markApiHealthyNow()
 					const json = await res.json().catch(() => ({}))
 					if (!res.ok) {
-						// Don't permanently block throttled hashes; let them retry
 						if (json.throttled) {
 							markThrottleBackoffNow()
 							stopAfterThrottle = true
@@ -627,7 +558,6 @@
 						}
 						continue
 					}
-					// If upstream is throttled, don't poison the cache with empty results
 					if (json.throttled) {
 						markThrottleBackoffNow()
 						stopAfterThrottle = true
@@ -724,7 +654,6 @@
 					}
 				}
 
-				// Always fetch in the background to update the cache/map, but respect the error cache cooldown
 				if (approxErrorCache.has(approximate)) {
 					const retryAt = approxErrorCache.get(approximate)
 					if (Date.now() < retryAt) continue
@@ -741,17 +670,7 @@
 			cacheHashesCached =
 				cleanApproximates.length - missingApproximates.length
 			cacheHashesFetching = fetchApproximates.length
-			console.log("[map] approx cache status", {
-				total: cleanApproximates.length,
-				cached: cleanApproximates.length - missingApproximates.length,
-				fetching: fetchApproximates.length,
-				probeOnly: apiHealthProbeRequired,
-				concurrency: currentFetchConcurrency(),
-				spacingMs: currentRequestSpacingMs(),
-				throttleBackoffActive: isThrottleBackoffActive(),
-			})
 
-			// Seed the map immediately with anything already cached
 			const postsByUri = new Map()
 			for (const post of cachedPosts) {
 				if (!post?.uri) continue
@@ -767,13 +686,11 @@
 				},
 				requestId,
 				async (approximate, posts) => {
-					// Drop pins immediately as each hash cell resolves
 					if (requestId !== mapLoadRequestId) return
 					await setApproxPostsInCache(approximate, posts)
 					let changed = false
 					for (const post of posts) {
 						if (!post?.uri) continue
-						// Cache the full post for offline view
 						await setPost(post.uri, post)
 						const existing = postsByUri.get(post.uri)
 						const nextPost = existing
@@ -802,18 +719,6 @@
 					}
 				}
 			}
-			const throttledResponses = responses.filter(
-				(result) =>
-					result?.status === "fulfilled" && result?.value?.throttled,
-			).length
-			if (throttledResponses > 0) {
-				console.log("[map] throttled; stopped remaining hash fetches", {
-					throttledResponses,
-					requested: fetchApproximates.length,
-				})
-			}
-			// Final assignment ensures any posts from fulfilled results that
-			// arrived while the request was still in flight are included
 			mapPosts = [...postsByUri.values()]
 
 			const rejected = responses.find(
@@ -840,8 +745,6 @@
 		if (key === requestedViewportKey && refreshInFlight) return
 		if (key === lastLoadedViewportKey && !refreshInFlight) return
 
-		// Immediately reflect the new target workload in the UI, even if an
-		// older request is currently running.
 		requestedViewportApproximates = approximates
 		requestedViewportKey = key
 		viewportApproximates = approximates
@@ -850,7 +753,6 @@
 		cacheHashesCached = 0
 		cacheHashesFetching = approximates.length
 
-		// Invalidate any in-flight request so workers stop after their current step.
 		mapLoadRequestId += 1
 		if (refreshInFlight) {
 			refreshQueued = true
@@ -864,9 +766,6 @@
 			if (loadKey === requestedViewportKey) {
 				lastLoadedViewportKey = loadKey
 			}
-			console.log(
-				`Found ${validMapPosts().length} post(s) from ${viewportApproximates.length} approx hash cell(s) in this view. `,
-			)
 		} finally {
 			refreshInFlight = false
 			if (refreshQueued) {
@@ -916,7 +815,6 @@
 		return mapPosts.filter(
 			(post) => {
 				if (!Number.isFinite(post?.lat) || !Number.isFinite(post?.lon)) return false
-				if (!showMyPosts && (post.isUserPost || (post.uuid && localProfileUuids.includes(post.uuid)))) return false
 				
 				if (queryTokens.length > 0) {
 					const text = String(post.text || '').toLowerCase()
@@ -1002,18 +900,6 @@
 		}
 	}
 
-	$effect(() => {
-		// Read mapPosts and showMyPosts before any early return so Svelte 5 tracks them
-		const _posts = mapPosts
-		const _show = showMyPosts
-		renderMarkers()
-	})
-
-	$effect(() => {
-		const val = showMyPosts
-		setSetting(SHOW_MY_POSTS_ON_MAP_KEY, val).catch(() => {})
-	})
-
 	async function saveCurrentMapState() {
 		if (!mapInstance) return
 		try {
@@ -1041,53 +927,81 @@
 			showLocalCacheDebug =
 				host === "localhost" || host === "127.0.0.1" || host === "::1"
 			try {
-				const parsed = await getSetting(LOCAL_MY_POSTS_KEY, [])
-				myPostUris = Array.isArray(parsed)
-					? [
-							...new Set(
-								parsed.map((uri) => String(uri || "").trim()),
-							),
-						]
-					: []
-			} catch {
-				myPostUris = []
-			}
-			try {
-				const val = await getSetting(SHOW_MY_POSTS_ON_MAP_KEY, true)
-				showMyPosts = val !== false
-			} catch {
-				showMyPosts = true
-			}
-			try {
 				const profilesList = await listStoredProfiles()
 				localProfileUuids = profilesList.map(p => p.uuid).filter(Boolean)
 			} catch {
 				localProfileUuids = []
 			}
-			try {
-				searchTerm = await readSearchTerm()
-			} catch {
-				searchTerm = ""
-			}
 		}
 
 		async function initMap() {
-			if (!data?.valid || typeof window === "undefined") return
-			const module = await import("leaflet")
-			if (destroyed) return
+			if (typeof window === "undefined") return
 			markMapActivity()
 
-			let zoom = 13
+			let saved = null
 			try {
-				const saved = await getSetting('love4dogs.map-search-location')
-				if (saved && typeof saved.zoom === 'number') {
-					const latDiff = Math.abs(saved.lat - data.lat)
-					const lonDiff = Math.abs(saved.lon - data.lon)
-					if (latDiff < 0.01 && lonDiff < 0.01) {
-						zoom = saved.zoom
-					}
-				}
+				saved = await getSetting('love4dogs.map-search-location')
 			} catch {}
+
+			const hasNearMe = String(searchTerm || "").toLowerCase().includes("near me")
+
+			let lat, lon, zoom = 13
+			let useSaved = false
+
+			if (saved && !hasNearMe) {
+				lat = saved.lat
+				lon = saved.lon
+				zoom = saved.zoom || 13
+				useSaved = true
+			}
+
+			if (!useSaved) {
+				try {
+					if (!navigator.geolocation) {
+						throw new Error("Geolocation is not supported by your browser.")
+					}
+					findingNearMe = true
+					const position = await new Promise((resolve, reject) => {
+						navigator.geolocation.getCurrentPosition(resolve, reject, {
+							enableHighAccuracy: true,
+							timeout: 10000
+						})
+					})
+					lat = position.coords.latitude
+					lon = position.coords.longitude
+					zoom = saved?.zoom || 13
+					
+					const hash = gpsToHash(lat, lon)
+					if (hash?.approx && hash?.exact) {
+						await setSetting('love4dogs.map-search-location', {
+							lat,
+							lon,
+							approximate: hash.approx,
+							exact: hash.exact,
+							zoom
+						})
+					}
+				} catch (err) {
+					console.error("Geolocation failed:", err)
+					if (saved) {
+						lat = saved.lat
+						lon = saved.lon
+						zoom = saved.zoom || 13
+						useSaved = true
+					} else {
+						mapError = "Unable to get your location."
+						findingNearMe = false
+						return
+					}
+				} finally {
+					findingNearMe = false
+				}
+			}
+
+			if (destroyed) return
+
+			const module = await import("leaflet")
+			if (destroyed) return
 
 			leaflet = module.default ?? module
 			mapInstance = leaflet
@@ -1100,7 +1014,7 @@
 					doubleClickZoom: true,
 					minZoom: MIN_ZOOM,
 				})
-				.setView([data.lat, data.lon], zoom)
+				.setView([lat, lon], zoom)
 
 			leaflet
 				.tileLayer(
@@ -1113,6 +1027,7 @@
 				.addTo(mapInstance)
 
 			markerLayer = leaflet.layerGroup().addTo(mapInstance)
+			
 			mapInstance.on("move", () => {
 				scheduleViewportRefresh()
 				saveCurrentMapState()
@@ -1121,6 +1036,7 @@
 				scheduleViewportRefresh()
 				saveCurrentMapState()
 			})
+
 			await refreshViewportPosts()
 			renderMarkers()
 			setTimeout(() => mapInstance?.invalidateSize({pan: false}), 0)
@@ -1143,143 +1059,68 @@
 	})
 </script>
 
-<svelte:head>
-	<title>Map Location</title>
-</svelte:head>
-
-<main class="map-page">
-	<nav class="topline">
-		<a class="nav-btn" href="/search">＜ Go Back</a>
-		<h1 class="map-title">Love4Dogs</h1>
-		{#if data.valid}
-			<button
-				class="nav-btn"
-				onclick={() => openDirections(data.lat, data.lon)}
-			>
-				Get Directions ↗
-			</button>
-		{/if}
-	</nav>
-	{#if data.valid}
-		<form class="search-row" onsubmit={searchLocation}>
-			<input
-				type="search"
-				class="search-input"
-				placeholder="Search city, village, address..."
-				bind:value={locationQuery}
-				autocomplete="off"
-			/>
-			<button
-				class="search-btn"
-				type="submit"
-				disabled={searchingLocation}
-			>
-				{searchingLocation ? "Searching..." : "Map"}
-			</button>
-		</form>
-		<div class="filter-row">
-			<label class="toggle-my-posts">
-				<input type="checkbox" bind:checked={showMyPosts} />
-				<span>Show my posts on the map</span>
-			</label>
-		</div>
-		{#if searchError}
-			<div class="search-error-container">
-				<p class="error">{searchError}</p>
-				<button type="button" class="near-me-btn" onclick={searchNearMe} disabled={searchingLocation || findingNearMe}>
-					{findingNearMe ? "Locating..." : "Use Current Location (Near Me)"}
-				</button>
-			</div>
-		{/if}
-		<div class="map-view" bind:this={mapEl}></div>
-		{#if loadingPins}
-			<div
-				class="loading-bar"
-				role="progressbar"
-				aria-label="Loading map posts"
-				aria-valuemin="0"
-				aria-valuemax={hashLoadTotal || 0}
-				aria-valuenow={Math.min(hashLoadDone, hashLoadTotal || 0)}
-			>
-				<span
-					class="loading-bar__fill"
-					style={`width: ${loadingProgressPercent()}%`}
-				></span>
-			</div>
-			<p class="muted">
-				Loading nearby posts... {Math.min(hashLoadDone, hashLoadTotal)} /
-				{hashLoadTotal} parcels
-			</p>
-			{#if showLocalCacheDebug}
-				<p class="muted cache-debug">
-					cache: {cacheHashesCached} hit, {cacheHashesFetching} fetch
-				</p>
-			{/if}
-		{:else if mapError}
+<div class="map-view-container">
+	{#if mapError && !mapInstance}
+		<div class="error-banner">
 			<p class="error">{mapError}</p>
-		{:else}
-			<p class="muted">
-				Found {validMapPosts().length} post(s)
+		</div>
+	{/if}
+
+	<div class="map-view" bind:this={mapEl}></div>
+
+	{#if loadingPins}
+		<div
+			class="loading-bar"
+			role="progressbar"
+			aria-label="Loading map posts"
+			aria-valuemin="0"
+			aria-valuemax={hashLoadTotal || 0}
+			aria-valuenow={Math.min(hashLoadDone, hashLoadTotal || 0)}
+		>
+			<span
+				class="loading-bar__fill"
+				style={`width: ${loadingProgressPercent()}%`}
+			></span>
+		</div>
+		{#if isLocalHost}
+		<p class="muted">
+			Loading nearby posts... {Math.min(hashLoadDone, hashLoadTotal)} /
+			{hashLoadTotal} parcels
+		</p>
+		{#if showLocalCacheDebug}
+			<p class="muted cache-debug">
+				cache: {cacheHashesCached} hit, {cacheHashesFetching} fetch
 			</p>
-			{#if showLocalCacheDebug}
-				<p class="muted cache-debug">
-					last load cache: {cacheHashesCached} hit, {cacheHashesFetching}
-					fetch
-				</p>
-			{/if}
+		{/if}
 		{/if}
 	{:else}
-		<p class="error">{data.error}</p>
-		<p class="muted">Try: /map/mkw9x/mkw9x3zzk</p>
+		{#if isLocalHost}	
+		<p class="muted">
+			Found {validMapPosts().length} post(s)
+		</p>
+		{#if showLocalCacheDebug}
+			<p class="muted cache-debug">
+				last load cache: {cacheHashesCached} hit, {cacheHashesFetching}
+				fetch
+			</p>
+		{/if}
+		{/if}
 	{/if}
-</main>
+</div>
 
 <style>
-	.map-page {
-		max-width: 920px;
-		margin: 1.25rem auto;
-		padding: 1rem;
-		background: rgba(255, 250, 241, 0.88);
-		border: 1px solid rgba(58, 91, 65, 0.18);
-		border-radius: 16px;
-		box-shadow: 0 10px 26px rgba(65, 42, 20, 0.12);
-	}
-
-	.topline {
+	.map-view-container {
 		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 1rem;
-		margin-bottom: 1rem;
+		flex-direction: column;
+		width: 100%;
 	}
 
-	.map-title {
-		margin: 0;
-		font-size: 1.5rem;
-		flex: 1;
-		text-align: center;
-	}
-
-	.nav-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.3rem;
-		padding: 0.45rem 1rem;
-		background: #3b6e4f;
-		color: #fff;
-		border: 1px solid #305741;
+	.error-banner {
+		padding: 0.75rem;
+		background: #fdf2f2;
+		border: 1px solid #f8b4b4;
 		border-radius: 8px;
-		font-size: 0.875rem;
-		font-weight: 600;
-		cursor: pointer;
-		transition: background 0.15s ease;
-		white-space: nowrap;
-		text-decoration: none;
-		font-family: inherit;
-	}
-
-	.nav-btn:hover {
-		background: #305741;
+		margin-bottom: 0.75rem;
 	}
 
 	.muted {
@@ -1295,49 +1136,7 @@
 
 	.error {
 		color: #8e2f21;
-		margin: 0.45rem 0;
-	}
-
-	.search-row {
-		display: flex;
-		gap: 0.55rem;
-		margin: 0 0 0.7rem;
-	}
-
-	.search-input {
-		flex: 1;
-		min-width: 0;
-		padding: 0.62rem 0.72rem;
-		border: 1px solid #bdad9e;
-		border-radius: 10px;
-		background: #fffdf9;
-		font: inherit;
-	}
-
-	.search-input:focus {
-		outline: 2px solid rgba(59, 110, 79, 0.25);
-		outline-offset: 1px;
-		border-color: #3b6e4f;
-	}
-
-	.search-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		padding: 0.6rem 0.95rem;
-		border: 1px solid #305741;
-		border-radius: 10px;
-		background: #3b6e4f;
-		color: #fff;
-		font: inherit;
-		font-weight: 600;
-		cursor: pointer;
-		white-space: nowrap;
-	}
-
-	.search-btn:disabled {
-		opacity: 0.75;
-		cursor: wait;
+		margin: 0;
 	}
 
 	.map-view {
@@ -1442,72 +1241,5 @@
 		font-size: 0.78rem;
 		font-weight: 600;
 		cursor: pointer;
-	}
-
-	.filter-row {
-		display: flex;
-		align-items: center;
-		margin-top: 0.5rem;
-		margin-bottom: 0.85rem;
-	}
-
-	.toggle-my-posts {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.5rem;
-		font-size: 0.9rem;
-		color: #3a5b41;
-		cursor: pointer;
-		user-select: none;
-		font-weight: 500;
-	}
-
-	.toggle-my-posts input[type="checkbox"] {
-		width: 1.1rem;
-		height: 1.1rem;
-		accent-color: #3b6e4f;
-		cursor: pointer;
-	}
-
-	@media (max-width: 640px) {
-		.search-row {
-			flex-direction: column;
-		}
-
-		.search-btn {
-			width: 100%;
-		}
-	}
-
-	.search-error-container {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-		margin: 0.45rem 0;
-		flex-wrap: wrap;
-	}
-
-	.near-me-btn {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.3rem;
-		padding: 0.35rem 0.75rem;
-		background: #3b6e4f;
-		color: #fff;
-		border: 1px solid #305741;
-		border-radius: 8px;
-		font-size: 0.8rem;
-		font-weight: 600;
-		cursor: pointer;
-		transition: background 0.15s ease;
-	}
-
-	.near-me-btn:hover {
-		background: #305741;
-	}
-
-	.near-me-btn:disabled {
-		opacity: 0.7;
-		cursor: wait;
 	}
 </style>

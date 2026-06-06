@@ -37,6 +37,12 @@
 			.join(" "),
 	)
 
+	const mapHref = $derived(
+		searchTerm.trim()
+			? "/map/" + searchTerm.trim().split(/\s+/).map(encodeURIComponent).join("/")
+			: "/map"
+	)
+
 	function normalizeSearchTerm(value = "") {
 		return String(value || "")
 			.trim()
@@ -401,7 +407,7 @@
 					>
 						<RefreshCw size={14} />
 					</button>
-					<a href="/map" class="map-view-btn">
+					<a href={mapHref} class="map-view-btn">
 						<MapIcon size={14} /> Map View
 					</a>
 				</div>

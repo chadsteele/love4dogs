@@ -90,12 +90,26 @@
 	}
 
 	function handleSearchSubmit() {
-		if (
-			typeof window !== "undefined" &&
-			!window.location.pathname.startsWith("/search")
-		) {
-			goto(buildSearchPath(searchTerm))
-			return
+		if (typeof window !== "undefined") {
+			if (window.location.pathname.startsWith("/map")) {
+				const normalized = String(searchTerm || "")
+					.trim()
+					.replace(/\s+/g, " ")
+				const segments = normalized
+					? normalized
+							.split(" ")
+							.map((segment) => encodeURIComponent(segment))
+							.join("/")
+					: ""
+				const target = segments ? `/map/${segments}` : "/map"
+				goto(target)
+				onSearchSubmit()
+				return
+			}
+			if (!window.location.pathname.startsWith("/search")) {
+				goto(buildSearchPath(searchTerm))
+				return
+			}
 		}
 		onSearchSubmit()
 	}

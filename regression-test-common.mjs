@@ -373,24 +373,51 @@ function isLikelyWaterAddress(location = {}) {
 }
 
 async function geocodeBaseLocation({baseUrl, query, fetchImpl = fetch}) {
-	const response = await fetchImpl(`${baseUrl}/api/geocode`, {
-		method: 'POST',
-		headers: {'Content-Type': 'application/json'},
-		body: JSON.stringify({query}),
-	});
+	const maxRetries = 5;
+	let attempt = 0;
+	let delay = 2000;
 
-	const payload = await response.json().catch(() => ({}));
-	if (!response.ok || payload?.ok === false) {
-		throw new Error(payload?.error || `Geocoding failed for ${JSON.stringify(query)}`);
+	while (attempt < maxRetries) {
+		try {
+			const response = await fetchImpl(`${baseUrl}/api/geocode`, {
+				method: 'POST',
+				headers: {'Content-Type': 'application/json'},
+				body: JSON.stringify({query}),
+			});
+
+			const payload = await response.json().catch(() => ({}));
+			if (response.ok && payload?.ok !== false) {
+				const lat = Number(payload?.lat);
+				const lon = Number(payload?.lon);
+				if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+					throw new Error(`Geocoding returned invalid coordinates for ${JSON.stringify(query)}`);
+				}
+				return {lat, lon};
+			}
+
+			const errMsg = String(payload?.error || '').toLowerCase();
+			const isTemp = errMsg.includes('temporarily unavailable') || errMsg.includes('too many requests') || errMsg.includes('rate limit');
+			if (isTemp || response.status === 429 || response.status === 503) {
+				attempt++;
+				console.log(`  Geocoding rate limited or temp unavailable. Waiting ${delay / 1000}s (Attempt ${attempt}/${maxRetries})...`);
+				await sleep(delay);
+				delay *= 2;
+				continue;
+			}
+
+			throw new Error(payload?.error || `Geocoding failed for ${JSON.stringify(query)}`);
+		} catch (err) {
+			attempt++;
+			if (attempt < maxRetries) {
+				console.log(`  Error calling geocoder: ${err.message}. Waiting ${delay / 1000}s (Attempt ${attempt}/${maxRetries})...`);
+				await sleep(delay);
+				delay *= 2;
+			} else {
+				throw err;
+			}
+		}
 	}
-
-	const lat = Number(payload?.lat);
-	const lon = Number(payload?.lon);
-	if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-		throw new Error(`Geocoding returned invalid coordinates for ${JSON.stringify(query)}`);
-	}
-
-	return {lat, lon};
+	throw new Error(`Geocoding failed for ${JSON.stringify(query)} after ${maxRetries} attempts.`);
 }
 
 async function reverseGeocodeLocation({baseUrl, lat, lon, fetchImpl = fetch}) {
@@ -434,8 +461,8 @@ export async function createRandomTestLocation({
 	baseUrl,
 	location = 'Mauritius',
 	fetchImpl = fetch,
-	maxOffsetMiles = 30,
-	maxAttempts = 12,
+	maxOffsetMiles = 8,
+	maxAttempts = 30,
 } = {}) {
 	const sourceLocation = String(location || '').trim();
 	const normalizedLocation = sourceLocation && ['mauritius', 'mu', 'mru', 'port-louis'].includes(sourceLocation.toLowerCase())
@@ -453,6 +480,9 @@ export async function createRandomTestLocation({
 	});
 
 	for (let attempt = 1; attempt <= Math.max(1, maxAttempts); attempt += 1) {
+		if (attempt > 1) {
+			await sleep(1000);
+		}
 		const {lat, lon} = offsetCoordinatesByMiles(baseLat, baseLon, maxOffsetMiles);
 		const reverse = await reverseGeocodeLocation({baseUrl: apiBase, lat, lon, fetchImpl});
 		if (!reverse) continue;
