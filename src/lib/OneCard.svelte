@@ -689,7 +689,6 @@
 			transform 0.2s ease,
 			box-shadow 0.2s ease;
 		cursor: pointer;
-		margin-bottom: 1rem;
 		animation: fadeIn 1s ease-out;
 	}
 

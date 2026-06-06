@@ -492,10 +492,17 @@
 					<p class="muted">No posts to show.</p>
 				{/if}
 			{:else}
-				<div class="post-list">
-					{#each visiblePosts() as post (post.displayKey || post.uri)}
-						<OneCard {post} onTagClick={toggleSearchTag} />
-					{/each}
+				<div class="post-list-mosaic">
+					<div class="column">
+						{#each visiblePosts().filter((_, i) => i % 2 === 0) as post (post.displayKey || post.uri)}
+							<OneCard {post} onTagClick={toggleSearchTag} />
+						{/each}
+					</div>
+					<div class="column">
+						{#each visiblePosts().filter((_, i) => i % 2 !== 0) as post (post.displayKey || post.uri)}
+							<OneCard {post} onTagClick={toggleSearchTag} />
+						{/each}
+					</div>
 				</div>
 			{/if}
 
@@ -777,16 +784,21 @@
 		color: #8e2f21;
 	}
 
-	.post-list {
-		display: grid;
-		grid-template-columns: repeat(2, 1fr);
+	.post-list-mosaic {
+		display: flex;
 		gap: 0.9rem;
-		align-items: start;
+	}
+
+	.post-list-mosaic .column {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		gap: 0.9rem;
 	}
 
 	@media (max-width: 640px) {
-		.post-list {
-			grid-template-columns: 1fr;
+		.post-list-mosaic {
+			flex-direction: column;
 		}
 
 		.feed-header {
