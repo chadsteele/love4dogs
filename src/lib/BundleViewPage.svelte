@@ -7,10 +7,11 @@
 	import ProfilePostHeader from "$lib/ProfilePostHeader.svelte"
 	import AuthorRow from "$lib/AuthorRow.svelte"
 	import {deriveBundleCreatedAtMs} from "$lib/dateTime"
-	import {CircleAlert as NoticeIcon, User, Settings as SettingsIcon} from "lucide-svelte"
+	import {CircleAlert as NoticeIcon, User, EllipsisVertical as SettingsIcon, Pencil, Eye, EyeOff, UserX, UserCheck, Flag, Key, Trash2} from "lucide-svelte"
 	import {readSearchTerm, writeSearchTerm} from "$lib/searchStore"
-	import { getProfile, setProfile, getAllPosts, setPost, getSetting, setSetting } from "$lib/db"
+	import { getProfile, setProfile, getAllPosts, setPost, getSetting, setSetting, deletePost } from "$lib/db"
 	import {listStoredProfiles} from "$lib/profileRegistry"
+	import {isLocalHost, removeApproxPostFromCache} from "$lib/utils"
 	import {formatDisplayAddress} from "$lib/addressFormat"
 
 	// ── props ──────────────────────────────────────────────────────────────────
@@ -481,6 +482,10 @@
 						String(primary?.authorAvatar || "").trim() ||
 						author.authorAvatar,
 				}
+				chunkUris = collectChunkUrisFromPosts(
+					Array.isArray(bundle?.posts) ? bundle.posts : [],
+					uuid,
+				)
 				// Cache post to IndexedDB
 				await setPost(jsonData.uri || uuid, jsonData)
 				// Route if data has profile tag
@@ -622,6 +627,53 @@
 			}
 		}, 4000)
 	}
+
+	async function handleDeletePost() {
+		const confirmDelete = confirm("Are you sure you want to delete this post? This will permanently remove it from both the local database and Bluesky.");
+		if (!confirmDelete) return;
+
+		try {
+			showToast("Deleting post...");
+			
+			const urisToDelete = [...chunkUris];
+			const mainUri = jsonData?.uri || jsonData?.rootUri || jsonData?.atUri;
+			if (mainUri && !urisToDelete.includes(mainUri)) {
+				urisToDelete.push(mainUri);
+			}
+
+			if (urisToDelete.length === 0) {
+				showToast("No post URIs found to delete.", "error");
+				return;
+			}
+
+			for (const uri of urisToDelete) {
+				const formData = new FormData();
+				formData.append('mode', 'delete-post-uri');
+				formData.append('uri', uri);
+				const res = await fetch('/api/post', {
+					method: 'POST',
+					body: formData
+				});
+				if (!res.ok) {
+					const data = await res.json().catch(() => ({}));
+					console.warn(`Failed to delete post on Bluesky for URI ${uri}:`, data.error);
+				}
+			}
+
+			for (const uri of urisToDelete) {
+				await deletePost(uri);
+				await removeApproxPostFromCache(uri);
+			}
+
+			showToast("Post deleted successfully.");
+			setTimeout(() => {
+				goto("/map");
+			}, 1500);
+		} catch (err) {
+			console.error("Delete failed:", err);
+			showToast("Failed to delete post.", "error");
+		}
+	}
 </script>
 
 <svelte:head>
@@ -710,6 +762,7 @@
 									}
 								}}
 							>
+								<Pencil size={16} />
 								Edit
 							</button>
 						{/if}
@@ -720,7 +773,13 @@
 								await toggleBlockUuid()
 							}}
 						>
-							{blockedUuids.includes(uuid) ? 'Unblock' : 'Block'}
+							{#if blockedUuids.includes(uuid)}
+								<Eye size={16} />
+								Unblock
+							{:else}
+								<EyeOff size={16} />
+								Block
+							{/if}
 						</button>
 						{#if targetAuthorId}
 							<button
@@ -730,7 +789,13 @@
 									await toggleBlockAuthor()
 								}}
 							>
-								{blockedAuthors.includes(targetAuthorId) ? 'Unblock author' : 'Block author'}
+								{#if blockedAuthors.includes(targetAuthorId)}
+									<UserCheck size={16} />
+									Unblock author
+								{:else}
+									<UserX size={16} />
+									Block author
+								{/if}
 							</button>
 						{/if}
 						<button
@@ -740,6 +805,7 @@
 								goto(`/report/${encodeURIComponent(uuid)}`)
 							}}
 						>
+							<Flag size={16} />
 							Report
 						</button>
 						<button
@@ -749,8 +815,21 @@
 								await claimOwnership()
 							}}
 						>
+							<Key size={16} />
 							Claim ownership
 						</button>
+						{#if !isProfile && (isAuthor || isLocalHost())}
+							<button
+								type="button"
+								onclick={async () => {
+									menuOpen = false
+									await handleDeletePost()
+								}}
+							>
+								<Trash2 size={16} />
+								Delete
+							</button>
+						{/if}
 					</div>
 				{/if}
 			</div>
@@ -950,6 +1029,7 @@
 		width: 100%;
 		display: flex;
 		align-items: center;
+		gap: 0.55rem;
 		padding: 0.55rem 0.75rem;
 		border: none;
 		border-radius: 8px;
