@@ -38,7 +38,7 @@
 	/>
 
 	<section class="map-container-panel">
-		<MapView {searchTerm} />
+		<MapView searchTerm={urlTerms} />
 	</section>
 </main>
 

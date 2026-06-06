@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { AtpAgent } from '@atproto/api';
+import isSea from 'is-sea';
 
 const BSKY_SERVICE = 'https://bsky.social';
 const DEFAULT_COLLECTION = 'app.bsky.feed.post';
@@ -101,6 +102,7 @@ function extractExactHash(text = '') {
 	return match ? match[1] : '';
 }
 
+// Parse Alt attribute
 function extractExactHashFromAlt(record) {
 	const images = record?.value?.embed?.images || [];
 	for (const img of images) {
@@ -116,6 +118,7 @@ function extractExactHashFromAlt(record) {
 	return '';
 }
 
+// Parse UUID
 function getRecordUuid(record) {
 	const value = record?.value || {};
 	const images = value.embed?.images || [];
@@ -133,6 +136,11 @@ function getRecordUuid(record) {
 }
 
 async function isLikelyWaterAddress(lat, lon) {
+	if (isSea(lat, lon)) {
+		console.log(`[is-sea] Detected water coordinates: ${lat}, ${lon}`);
+		return true;
+	}
+
 	const maxRetries = 5;
 	let attempt = 0;
 	let delay = 2000;

@@ -78,6 +78,7 @@
 
 	function buildSearchPath(term = "") {
 		const normalized = String(searchTerm || term || "")
+			.replace(/,/g, " ")
 			.trim()
 			.replace(/\s+/g, " ")
 		const segments = normalized
@@ -93,6 +94,7 @@
 		if (typeof window !== "undefined") {
 			if (window.location.pathname.startsWith("/map")) {
 				const normalized = String(searchTerm || "")
+					.replace(/,/g, " ")
 					.trim()
 					.replace(/\s+/g, " ")
 				const segments = normalized
@@ -248,7 +250,30 @@
 			<input
 				type="search"
 				bind:value={searchTerm}
-				oninput={onSearchInput}
+				oninput={(e) => {
+					const target = e.currentTarget
+					const rawValue = target.value
+					const filtered = rawValue.replace(/[^a-zA-Z0-9 ]/g, "")
+					if (rawValue !== filtered) {
+						const start = target.selectionStart
+						const end = target.selectionEnd
+						let removedBeforeCursor = 0
+						for (let i = 0; i < start; i++) {
+							if (/[^a-zA-Z0-9 ]/.test(rawValue[i])) {
+								removedBeforeCursor++
+							}
+						}
+						searchTerm = filtered
+						target.value = filtered
+						target.setSelectionRange(
+							start - removedBeforeCursor,
+							end - removedBeforeCursor,
+						)
+					} else {
+						searchTerm = filtered
+					}
+					onSearchInput(e)
+				}}
 				onsearch={onSearchInput}
 				placeholder="Search"
 			/>

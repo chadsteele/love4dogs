@@ -26,6 +26,37 @@
 	let searchError = $state("")
 	let resizeCleanup = null
 
+	async function handleConfirmLocation() {
+		if (!hideLocation) {
+			const lat = location?.lat != null ? Number(location.lat) : null
+			const lon = location?.lon != null ? Number(location.lon) : null
+			if (lat == null || lon == null) return
+
+			searchLoading = true
+			searchError = ""
+			try {
+				const response = await fetch("/api/geocode", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ lat, lon, reverse: true })
+				})
+				const data = await response.json().catch(() => ({}))
+				if (!response.ok || data.error?.includes("water") || data.error?.includes("ocean")) {
+					searchError = data.error || "Location cannot be in the ocean or water."
+					return
+				}
+				hideLocation = true
+			} catch (err) {
+				searchError = "Could not verify location. Please try again."
+			} finally {
+				searchLoading = false
+			}
+		} else {
+			hideLocation = false
+			searchError = ""
+		}
+	}
+
 	function currentCoords() {
 		if (location?.lat != null && location?.lon != null) {
 			return [Number(location.lat), Number(location.lon)]
@@ -406,7 +437,7 @@
 				type="button"
 				class="location-check-btn"
 				class:is-active={hideLocation}
-				onclick={() => (hideLocation = !hideLocation)}
+				onclick={handleConfirmLocation}
 				aria-label={hideLocation ? "Show map" : "Hide map"}
 				><span class="location-check-dot"
 					>{hideLocation ? "✓" : ""}</span

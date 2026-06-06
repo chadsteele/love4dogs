@@ -24,6 +24,7 @@
 	let favoriteSearchTerms = $state([])
 	let currentView = $state("feed")
 	let automateFailed = $state(false)
+	let showNoResultsInfo = $state("")
 
 	let searchDebounceTimer = null
 	let lastFeedRequestId = 0
@@ -39,7 +40,7 @@
 
 	const mapHref = $derived(
 		searchTerm.trim()
-			? "/map/" + searchTerm.trim().split(/\s+/).map(encodeURIComponent).join("/")
+			? "/map/" + searchTerm.replace(/,/g, " ").trim().split(/\s+/).map(encodeURIComponent).join("/")
 			: "/map"
 	)
 
@@ -131,7 +132,10 @@
 
 	function updateUrlFromSearch(term = "") {
 		if (typeof window === "undefined") return
-		const normalized = normalizeSearchTerm(term)
+		const normalized = String(term || "")
+			.replace(/,/g, " ")
+			.trim()
+			.replace(/\s+/g, " ")
 		const segments = normalized
 			? normalized
 					.split(" ")
@@ -153,6 +157,9 @@
 		feedCursorHost = null
 		hasMorePosts = true
 		automateFailed = false
+		if (searchTerm.trim() !== "") {
+			showNoResultsInfo = ""
+		}
 
 		try {
 			const query = buildFeedQuery(searchTerm)
@@ -187,6 +194,14 @@
 					await setPost(post.uri, post)
 				}
 			}
+
+			if (posts.length === 0 && searchTerm.trim() !== "") {
+				showNoResultsInfo = searchTerm
+				searchTerm = ""
+				updateUrlFromSearch("")
+				await loadFeed()
+				return
+			}
 		} catch (error) {
 			if (requestId !== lastFeedRequestId) return
 
@@ -212,6 +227,14 @@
 					} else {
 						posts = allCached
 					}
+
+					if (posts.length === 0 && searchTerm.trim() !== "") {
+						showNoResultsInfo = searchTerm
+						searchTerm = ""
+						updateUrlFromSearch("")
+						posts = allCached
+					}
+
 					posts.sort((a, b) => {
 						const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0
 						const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0
@@ -413,6 +436,14 @@
 				</div>
 			</div>
 
+			{#if showNoResultsInfo}
+				<div class="no-results-banner">
+					<CircleAlert size={16} />
+					<span>No posts matched "{showNoResultsInfo}". Showing all recent posts instead.</span>
+					<button type="button" class="dismiss-btn" onclick={() => showNoResultsInfo = ""}>Dismiss</button>
+				</div>
+			{/if}
+
 			{#if loadingPosts}
 				<p class="muted">Loading posts...</p>
 			{:else if feedError}
@@ -459,6 +490,42 @@
 </main>
 
 <style>
+	.no-results-banner {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		background: rgba(215, 125, 78, 0.08);
+		border: 1px solid rgba(215, 125, 78, 0.25);
+		border-radius: 12px;
+		padding: 0.75rem 1rem;
+		margin-bottom: 1rem;
+		color: #9c4c23;
+		font-size: 0.9rem;
+	}
+
+	.no-results-banner :global(svg) {
+		color: #d77d4e;
+		flex-shrink: 0;
+	}
+
+	.dismiss-btn {
+		margin-left: auto;
+		background: transparent;
+		border: 1px solid rgba(215, 125, 78, 0.4);
+		border-radius: 6px;
+		padding: 0.25rem 0.55rem;
+		color: #9c4c23;
+		font-size: 0.8rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all 0.15s ease;
+	}
+
+	.dismiss-btn:hover {
+		background: rgba(215, 125, 78, 0.12);
+		border-color: #9c4c23;
+	}
+
 	.page {
 		max-width: 1120px;
 		margin: 0 auto;

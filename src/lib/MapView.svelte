@@ -59,7 +59,137 @@
 	let refreshQueued = false
 	let requestedViewportApproximates = []
 
+	let activeKeywordFilter = $state("")
+	let pauseBackgroundSearch = $state(false)
 	let lastProcessedSearchTerm = $state(searchTerm)
+
+	function parseSearchTerm(term) {
+		const norm = String(term || "").trim()
+		if (!norm) return { isNearMe: false, locationQuery: "", keyword: "" }
+
+		// Check for "near me" as a whole phrase
+		const hasNearMe = /\bnear\s+me\b/i.test(norm)
+		if (hasNearMe) {
+			const keyword = norm.replace(/\bnear\s+me\b/gi, "").replace(/\s+/g, " ").trim()
+			return {
+				isNearMe: true,
+				locationQuery: "me",
+				keyword
+			}
+		}
+
+		// Check for "near" keyword
+		const nearMatch = norm.match(/\b(near)\b/i)
+		if (nearMatch) {
+			const index = norm.toLowerCase().lastIndexOf("near")
+			const before = norm.slice(0, index).trim()
+			const after = norm.slice(index + 4).trim()
+			if (after.toLowerCase() === "me") {
+				return {
+					isNearMe: true,
+					locationQuery: "me",
+					keyword: before
+				}
+			}
+			return {
+				isNearMe: false,
+				locationQuery: after,
+				keyword: before
+			}
+		}
+
+		// No "near" or "near me"
+		return {
+			isNearMe: false,
+			locationQuery: norm,
+			keyword: ""
+		}
+	}
+
+	async function resolveSearchLocation(term) {
+		const parsed = parseSearchTerm(term)
+		
+		if (parsed.isNearMe) {
+			return { type: "near-me", keyword: parsed.keyword }
+		}
+
+		if (!parsed.locationQuery) {
+			return { type: "none", keyword: "" }
+		}
+
+		try {
+			const res = await fetch("/api/geocode", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ query: parsed.locationQuery })
+			})
+			if (res.ok) {
+				const data = await res.json()
+				if (data && data.ok && typeof data.lat === "number" && typeof data.lon === "number") {
+					const hasNear = String(term).toLowerCase().includes("near")
+					const isProminent = 
+						hasNear || 
+						data.class === "boundary" || 
+						data.class === "place" || 
+						data.class === "highway" || 
+						data.class === "railway" || 
+						data.class === "postcode" ||
+						(data.importance && data.importance > 0.35)
+
+					if (isProminent) {
+						return {
+							type: "coordinates",
+							lat: data.lat,
+							lon: data.lon,
+							keyword: parsed.keyword
+						}
+					}
+				}
+			}
+		} catch (err) {
+			console.error("Geocoding failed inside resolveSearchLocation:", err)
+		}
+
+		return { type: "keyword-only", keyword: term }
+	}
+
+	async function processSearch(current) {
+		pauseBackgroundSearch = true
+		mapLoadRequestId += 1
+		
+		const resolved = await resolveSearchLocation(current)
+		
+		if (resolved.type === "coordinates") {
+			const zoom = 13
+			await setSetting('love4dogs.map-search-location', {
+				lat: resolved.lat,
+				lon: resolved.lon,
+				approximate: gpsToHash(resolved.lat, resolved.lon).approx,
+				exact: gpsToHash(resolved.lat, resolved.lon).exact,
+				zoom
+			})
+			if (mapInstance) {
+				mapInstance.setView([resolved.lat, resolved.lon], zoom, { animate: true })
+				lastLoadedViewportKey = ""
+				requestedViewportKey = ""
+				scheduleViewportRefresh()
+			}
+			activeKeywordFilter = resolved.keyword
+		} else if (resolved.type === "near-me") {
+			activeKeywordFilter = resolved.keyword
+			if (mapInstance) {
+				await searchNearMe()
+			}
+		} else {
+			activeKeywordFilter = resolved.keyword
+		}
+		
+		pauseBackgroundSearch = false
+		
+		if (resolved.type !== "coordinates" && resolved.type !== "near-me") {
+			refreshViewportPosts()
+		}
+	}
 
 	// Keep track of search term updates
 	$effect(() => {
@@ -67,18 +197,14 @@
 		if (current !== lastProcessedSearchTerm) {
 			lastProcessedSearchTerm = current
 			writeSearchTerm(current).catch(() => {})
-
-			const hasNearMe = String(current).toLowerCase().includes("near me")
-			if (hasNearMe && mapInstance) {
-				searchNearMe()
-			}
+			processSearch(current)
 		}
 	})
 
 	$effect(() => {
 		// Track all dependencies for rendering markers reactively
 		const _posts = mapPosts
-		const _term = searchTerm
+		const _term = activeKeywordFilter
 		const _profileUuids = localProfileUuids
 		renderMarkers()
 	})
@@ -90,40 +216,45 @@
 			findingNearMe = false
 			return
 		}
-		navigator.geolocation.getCurrentPosition(
-			async (position) => {
-				const lat = position.coords.latitude
-				const lon = position.coords.longitude
-				const hash = gpsToHash(lat, lon)
-				if (!hash?.approx || !hash?.exact) {
-					mapError = "Could not compute a map hash for your location."
-					findingNearMe = false
-					return
-				}
-				
-				const zoom = mapInstance ? mapInstance.getZoom() : 13
-				await setSetting('love4dogs.map-search-location', {
-					lat,
-					lon,
-					approximate: hash.approx,
-					exact: hash.exact,
-					zoom
-				})
+		return new Promise((resolve) => {
+			navigator.geolocation.getCurrentPosition(
+				async (position) => {
+					const lat = position.coords.latitude
+					const lon = position.coords.longitude
+					const hash = gpsToHash(lat, lon)
+					if (!hash?.approx || !hash?.exact) {
+						mapError = "Could not compute a map hash for your location."
+						findingNearMe = false
+						resolve()
+						return
+					}
+					
+					const zoom = mapInstance ? mapInstance.getZoom() : 13
+					await setSetting('love4dogs.map-search-location', {
+						lat,
+						lon,
+						approximate: hash.approx,
+						exact: hash.exact,
+						zoom
+					})
 
-				if (mapInstance) {
-					mapInstance.setView([lat, lon], zoom, {animate: true})
-					lastLoadedViewportKey = ""
-					requestedViewportKey = ""
-					scheduleViewportRefresh()
-				}
-				findingNearMe = false
-			},
-			(err) => {
-				mapError = err.message || "Unable to get your location."
-				findingNearMe = false
-			},
-			{enableHighAccuracy: true, timeout: 10000}
-		)
+					if (mapInstance) {
+						mapInstance.setView([lat, lon], zoom, {animate: true})
+						lastLoadedViewportKey = ""
+						requestedViewportKey = ""
+						scheduleViewportRefresh()
+					}
+					findingNearMe = false
+					resolve()
+				},
+				(err) => {
+					mapError = err.message || "Unable to get your location."
+					findingNearMe = false
+					resolve()
+				},
+				{enableHighAccuracy: true, timeout: 10000}
+			)
+		})
 	}
 
 	function clamp(value, min, max) {
@@ -609,6 +740,7 @@
 	}
 
 	async function loadMapPosts(approximates = []) {
+		if (pauseBackgroundSearch) return
 		const requestId = ++mapLoadRequestId
 		loadingPins = true
 		mapError = ""
@@ -739,6 +871,7 @@
 	}
 
 	async function refreshViewportPosts() {
+		if (pauseBackgroundSearch) return
 		if (!mapInstance) return
 		const approximates = collectViewportApproximates()
 		const key = [...approximates].sort().join(",")
@@ -811,7 +944,7 @@
 	}
 
 	function validMapPosts() {
-		const queryTokens = getSearchTokens(searchTerm)
+		const queryTokens = getSearchTokens(activeKeywordFilter)
 		return mapPosts.filter(
 			(post) => {
 				if (!Number.isFinite(post?.lat) || !Number.isFinite(post?.lon)) return false
@@ -938,65 +1071,81 @@
 			if (typeof window === "undefined") return
 			markMapActivity()
 
-			let saved = null
-			try {
-				saved = await getSetting('love4dogs.map-search-location')
-			} catch {}
-
-			const hasNearMe = String(searchTerm || "").toLowerCase().includes("near me")
-
-			let lat, lon, zoom = 13
-			let useSaved = false
-
-			if (saved && !hasNearMe) {
-				lat = saved.lat
-				lon = saved.lon
-				zoom = saved.zoom || 13
-				useSaved = true
-			}
-
-			if (!useSaved) {
+			async function getBrowserCoords() {
+				if (!navigator.geolocation) {
+					throw new Error("Geolocation is not supported by your browser.")
+				}
+				findingNearMe = true
 				try {
-					if (!navigator.geolocation) {
-						throw new Error("Geolocation is not supported by your browser.")
-					}
-					findingNearMe = true
 					const position = await new Promise((resolve, reject) => {
 						navigator.geolocation.getCurrentPosition(resolve, reject, {
 							enableHighAccuracy: true,
 							timeout: 10000
 						})
 					})
-					lat = position.coords.latitude
-					lon = position.coords.longitude
-					zoom = saved?.zoom || 13
-					
-					const hash = gpsToHash(lat, lon)
-					if (hash?.approx && hash?.exact) {
-						await setSetting('love4dogs.map-search-location', {
-							lat,
-							lon,
-							approximate: hash.approx,
-							exact: hash.exact,
-							zoom
-						})
-					}
-				} catch (err) {
-					console.error("Geolocation failed:", err)
-					if (saved) {
-						lat = saved.lat
-						lon = saved.lon
-						zoom = saved.zoom || 13
-						useSaved = true
-					} else {
-						mapError = "Unable to get your location."
-						findingNearMe = false
-						return
+					return {
+						lat: position.coords.latitude,
+						lon: position.coords.longitude
 					}
 				} finally {
 					findingNearMe = false
 				}
 			}
+
+			let saved = null
+			try {
+				saved = await getSetting('love4dogs.map-search-location')
+			} catch {}
+
+			let lat, lon, zoom = 13
+			let activeKeyword = ""
+
+			const resolved = await resolveSearchLocation(searchTerm)
+			if (resolved.type === "coordinates") {
+				lat = resolved.lat
+				lon = resolved.lon
+				activeKeyword = resolved.keyword
+			} else {
+				activeKeyword = resolved.keyword
+				let coords = null
+				if (resolved.type !== "near-me" && saved) {
+					coords = { lat: saved.lat, lon: saved.lon }
+					zoom = saved.zoom || 13
+				} else {
+					try {
+						coords = await getBrowserCoords()
+						zoom = saved?.zoom || 13
+						if (coords) {
+							const hash = gpsToHash(coords.lat, coords.lon)
+							if (hash?.approx && hash?.exact) {
+								await setSetting('love4dogs.map-search-location', {
+									lat: coords.lat,
+									lon: coords.lon,
+									approximate: hash.approx,
+									exact: hash.exact,
+									zoom
+								})
+							}
+						}
+					} catch (err) {
+						console.error("Browser geolocation failed:", err)
+						if (saved) {
+							coords = { lat: saved.lat, lon: saved.lon }
+							zoom = saved.zoom || 13
+						} else {
+							mapError = "Unable to get your location."
+							return
+						}
+					}
+				}
+				if (coords) {
+					lat = coords.lat
+					lon = coords.lon
+				}
+			}
+
+			lastProcessedSearchTerm = searchTerm
+			activeKeywordFilter = activeKeyword
 
 			if (destroyed) return
 

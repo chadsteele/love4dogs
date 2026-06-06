@@ -1,3 +1,5 @@
+import isSea from 'is-sea';
+
 const geocodeCache = new Map();
 const reverseGeocodeCache = new Map();
 
@@ -119,6 +121,13 @@ export async function POST({request}) {
 					status: 200,
 					headers: {'Content-Type': 'application/json'}
 				});
+			}
+
+			if (isSea(reverseLat, reverseLon)) {
+				return new Response(
+					JSON.stringify({error: 'Location cannot be in the ocean or water.'}),
+					{status: 400, headers: {'Content-Type': 'application/json'}},
+				)
 			}
 
 			const cacheKey = `${reverseLat.toFixed(5)},${reverseLon.toFixed(5)}`;
@@ -307,25 +316,8 @@ export async function POST({request}) {
 		}
 
 		const result = data[0]
-		if (isLikelyWaterAddress(result, false)) {
-			const errorResult = { error: 'Location cannot be in the ocean or water.', status: 400 };
-			geocodeCache.set(cacheKey, errorResult);
-			return new Response(
-				JSON.stringify({error: errorResult.error}),
-				{status: 400, headers: {'Content-Type': 'application/json'}},
-			)
-		}
-
 		const lat = parseFloat(result.lat)
 		const lon = parseFloat(result.lon)
-		const city =
-			result?.address?.city ||
-			result?.address?.town ||
-			result?.address?.village ||
-			result?.address?.hamlet ||
-			""
-		const country = result?.address?.country || ""
-		const zip = result?.address?.postcode || ""
 
 		if (isNaN(lat) || isNaN(lon)) {
 			console.error('Invalid coordinates from Nominatim:', result)
@@ -335,7 +327,35 @@ export async function POST({request}) {
 			)
 		}
 
-		const successResult = {ok: true, lat, lon, city, country, zip};
+		if (isSea(lat, lon) || isLikelyWaterAddress(result, false)) {
+			const errorResult = { error: 'Location cannot be in the ocean or water.', status: 400 };
+			geocodeCache.set(cacheKey, errorResult);
+			return new Response(
+				JSON.stringify({error: errorResult.error}),
+				{status: 400, headers: {'Content-Type': 'application/json'}},
+			)
+		}
+
+		const city =
+			result?.address?.city ||
+			result?.address?.town ||
+			result?.address?.village ||
+			result?.address?.hamlet ||
+			""
+		const country = result?.address?.country || ""
+		const zip = result?.address?.postcode || ""
+
+		const successResult = {
+			ok: true,
+			lat,
+			lon,
+			city,
+			country,
+			zip,
+			class: result.class,
+			type: result.type,
+			importance: result.importance
+		};
 		geocodeCache.set(cacheKey, successResult);
 
 		return new Response(JSON.stringify(successResult), {

@@ -309,6 +309,29 @@
 			<input
 				type="text"
 				bind:value={newFavoriteTerm}
+				oninput={(e) => {
+					const target = e.currentTarget
+					const rawValue = target.value
+					const filtered = rawValue.replace(/[^a-zA-Z0-9 ]/g, "")
+					if (rawValue !== filtered) {
+						const start = target.selectionStart
+						const end = target.selectionEnd
+						let removedBeforeCursor = 0
+						for (let i = 0; i < start; i++) {
+							if (/[^a-zA-Z0-9 ]/.test(rawValue[i])) {
+								removedBeforeCursor++
+							}
+						}
+						newFavoriteTerm = filtered
+						target.value = filtered
+						target.setSelectionRange(
+							start - removedBeforeCursor,
+							end - removedBeforeCursor,
+						)
+					} else {
+						newFavoriteTerm = filtered
+					}
+				}}
 				placeholder="Add a search term (for example: adoption)"
 			/>
 			<button type="submit">Add</button>
@@ -366,6 +389,29 @@
 			<input
 				type="text"
 				bind:value={defaultSearchTerm}
+				oninput={(e) => {
+					const target = e.currentTarget
+					const rawValue = target.value
+					const filtered = rawValue.replace(/[^a-zA-Z0-9 ]/g, "")
+					if (rawValue !== filtered) {
+						const start = target.selectionStart
+						const end = target.selectionEnd
+						let removedBeforeCursor = 0
+						for (let i = 0; i < start; i++) {
+							if (/[^a-zA-Z0-9 ]/.test(rawValue[i])) {
+								removedBeforeCursor++
+							}
+						}
+						defaultSearchTerm = filtered
+						target.value = filtered
+						target.setSelectionRange(
+							start - removedBeforeCursor,
+							end - removedBeforeCursor,
+						)
+					} else {
+						defaultSearchTerm = filtered
+					}
+				}}
 				placeholder="Default search term"
 			/>
 			<button type="button" onclick={saveDefaultTerm}>Save</button>
