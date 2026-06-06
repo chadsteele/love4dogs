@@ -39,7 +39,10 @@
 	<NavBar />
 
 	<section class="panel">
-		<h2>Select Current Profile</h2>
+		<div class="panel-header">
+			<h2>Select Current Profile</h2>
+			<a href="/profile/new" class="new-profile-btn">+ New</a>
+		</div>
 		<p class="help">
 			Choose which profile is current. New posts will use this profile.
 		</p>
@@ -78,6 +81,33 @@
 		border: 1px solid #dfd3c4;
 		border-radius: 16px;
 		padding: 1rem;
+	}
+
+	.panel-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 1rem;
+	}
+
+	.new-profile-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		background: #3b6e4f;
+		border: 1px solid #305741;
+		color: #fff;
+		font-weight: 600;
+		text-decoration: none;
+		border-radius: 999px;
+		padding: 0.45rem 1rem;
+		font-size: 0.88rem;
+		cursor: pointer;
+		transition: background 0.15s ease;
+	}
+
+	.new-profile-btn:hover {
+		background: #305741;
 	}
 
 	h2 {

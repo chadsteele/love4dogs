@@ -7,6 +7,7 @@
 		getCurrentProfileUuid,
 		listStoredProfiles,
 		setCurrentProfileUuid,
+		deleteStoredProfileByUuid,
 	} from "$lib/profileRegistry"
 	import {
 		Menu,
@@ -18,6 +19,8 @@
 		Plus,
 		User,
 	} from "lucide-svelte"
+
+	const verifiedProfileUuids = new Set()
 
 	let {
 		searchTerm = $bindable(""),
@@ -45,8 +48,36 @@
 	const navAvatarSrc = $derived(String(navCurrentProfile?.avatarUrl || ""))
 
 	async function refreshNavProfiles() {
-		navProfiles = await listStoredProfiles()
+		const stored = await listStoredProfiles()
+		navProfiles = stored
 		navCurrentUuid = await getCurrentProfileUuid()
+
+		const now = Date.now()
+		for (const profile of stored) {
+			if (verifiedProfileUuids.has(profile.uuid)) {
+				continue
+			}
+			// Give newly saved profiles 60 seconds to index on bsky before verifying
+			if (profile.savedAt && now - profile.savedAt < 60000) {
+				continue
+			}
+			(async () => {
+				try {
+					const res = await fetch(`/api/post-by-canonical-url?uuid=${encodeURIComponent(profile.uuid)}`)
+					if (res.status === 404) {
+						await deleteStoredProfileByUuid(profile.uuid)
+						navProfiles = navProfiles.filter(p => p.uuid !== profile.uuid)
+						if (navCurrentUuid === profile.uuid) {
+							navCurrentUuid = await getCurrentProfileUuid()
+						}
+					} else if (res.ok) {
+						verifiedProfileUuids.add(profile.uuid)
+					}
+				} catch (err) {
+					console.error(`Failed to verify profile ${profile.uuid} in bsky:`, err)
+				}
+			})()
+		}
 	}
  
  	function goToProfileChooser() {
@@ -311,15 +342,9 @@
 			</button>
 			{#if profileMenuOpen}
 				<div class="profile-menu">
-					<ProfileList
-						profiles={navProfiles}
-						currentUuid={navCurrentUuid}
-						mode="picker"
-						onChoose={chooseCurrentProfile}
-					/>
 					<div class="profile-menu-actions">
 						<button type="button" onclick={openProfileManager}>
-							Manage profiles
+							Manage 
 						</button>
 						<button
 							type="button"
@@ -328,9 +353,17 @@
 								goto(buildNewProfileEditPath())
 							}}
 						>
-							Create profile
+							Create 
 						</button>
+						
 					</div>
+					<ProfileList
+						profiles={navProfiles}
+						currentUuid={navCurrentUuid}
+						mode="picker"
+						onChoose={chooseCurrentProfile}
+					/>
+					
 				</div>
 			{/if}
 		</div>
@@ -360,7 +393,7 @@
 		border-radius: 0;
 		border-left: none;
 		border-right: none;
-		z-index: 10;
+		z-index: 1010;
 		box-sizing: border-box;
 	}
 
@@ -434,8 +467,8 @@
 		grid-template-columns: 1fr 1fr;
 		gap: 0.45rem;
 		margin-top: 0.5rem;
-		padding-top: 0.5rem;
-		border-top: 1px solid #e6ddcf;
+		margin-bottom: 0.5rem;
+	
 	}
 
 	.profile-menu-actions button {

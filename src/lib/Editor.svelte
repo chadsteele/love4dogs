@@ -2493,7 +2493,7 @@
 	.pell-wrapper.full-page {
 		position: fixed;
 		inset: 0;
-		z-index: 1000;
+		z-index: 2000;
 		border-radius: 0;
 		max-height: 100dvh;
 	}
@@ -2519,7 +2519,7 @@
 		right: 0;
 		top: 42px;
 		bottom: 0;
-		z-index: 1000;
+		z-index: 2000;
 		min-height: auto;
 		max-height: none;
 		height: auto;
