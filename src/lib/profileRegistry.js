@@ -1,4 +1,6 @@
 
+import { generateUuid } from './uuid.js';
+
 import {
 	getSetting,
 	setSetting,
@@ -28,12 +30,7 @@ function canUseStorage() {
 }
 
 export function generateProfileUuid() {
-	if (typeof crypto !== "undefined" && crypto?.randomUUID) {
-		return String(crypto.randomUUID())
-			.replace(/-/g, "")
-			.slice(0, 8)
-	}
-	return Math.random().toString(36).slice(2, 10)
+	return generateUuid(8);
 }
 
 export function buildNewProfileEditPath() {

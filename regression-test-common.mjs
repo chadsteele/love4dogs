@@ -1,4 +1,5 @@
 import {readFile, writeFile} from 'node:fs/promises';
+import { generateUuid as sharedGenerateUuid } from './src/lib/uuid.js';
 
 // Tag pool for regression tests
 export const REGRESSION_TAG_POOL = [
@@ -143,12 +144,7 @@ export function pickRandomRegressionProfileSeed(seeds = []) {
 }
 
 export function generateUuid(length = 12) {
-	const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-	let result = '';
-	for (let i = 0; i < length; i += 1) {
-		result += chars[Math.floor(Math.random() * chars.length)];
-	}
-	return result;
+	return sharedGenerateUuid(length);
 }
 
 export async function fetchRandomDogImageUrl(fetchImpl = fetch) {
