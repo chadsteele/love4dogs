@@ -21,6 +21,7 @@
 		Strikethrough,
 		Underline,
 		Video as VideoIcon,
+		Trash2 as Trash
 	} from "lucide-svelte"
 
 	const MAX_IMAGE_SIZE_BYTES = 2_000_000
@@ -1584,8 +1585,8 @@
 			hideMediaDeleteButton()
 			return
 		}
-		mediaDeleteX = Math.max(0, targetRect.right - wrapperRect.left - 10)
-		mediaDeleteY = Math.max(0, targetRect.top - wrapperRect.top + 10)
+		mediaDeleteX = Math.max(0, targetRect.right - wrapperRect.left)
+		mediaDeleteY = Math.max(0, targetRect.top - wrapperRect.top)
 	}
 
 	function showMediaDeleteButton(targetEl, contentEl) {
@@ -2297,7 +2298,7 @@
 				removeActiveMedia()
 			}}
 		>
-			x
+			<Trash />
 		</button>
 	{/if}
 </div>
@@ -2473,10 +2474,10 @@
 		overflow-y: auto;
 		overflow-x: auto;
 		overscroll-behavior-x: contain;
-		padding: 0.75rem;
+		padding: 1rem;
 		outline: none;
 		font: inherit;
-		color: #1a1a1a;
+		color: var(--color-text-body, #374151);
 		line-height: 1.55;
 		box-sizing: border-box;
 		width: 100%;
@@ -2557,38 +2558,68 @@
 		font-size: 0.875rem;
 	}
 
-	.pell-wrapper :global(.pell-content img),
-	.pell-wrapper :global(.pell-content video) {
+	.pell-wrapper :global(.pell-content img) {
 		display: block;
-		margin: 0.7rem auto;
 		width: auto;
+		max-width: 720px;
 		height: auto;
-		max-width: min(90dvw, 100%);
-		max-height: 30dvh;
+		margin: 1rem auto;
 		border-radius: 14px;
-		box-shadow: 0 14px 30px -18px rgba(20, 18, 14, 0.55);
+		box-shadow: 0 12px 28px rgba(65, 42, 20, 0.18);
+		background: #fff;
 	}
 
-	@media (min-width: 900px) {
-		.pell-wrapper :global(.pell-content img),
-		.pell-wrapper :global(.pell-content video) {
-			float: left;
-			margin: 0.7rem 0.7rem 0.7rem 0;
-			margin-right: 50px;
-		}
+	.pell-wrapper :global(.pell-content video) {
+		display: block;
+		width: 100%;
+		max-width: 720px;
+		height: auto;
+		margin: 1rem auto;
+		border-radius: 14px;
+		box-shadow: 0 12px 28px rgba(65, 42, 20, 0.18);
+		background: #fff;
 	}
 
 	.pell-wrapper :global(.pell-content iframe) {
 		display: block;
-		margin: 0.7rem auto;
-		/* width: 900px;
-		aspect-ratio: 560 / 315; */
-		max-width: min(90dvw, 100%);
+		width: 100%;
+		max-width: 900px;
+		min-height: 320px;
+		aspect-ratio: 16 / 9;
+		margin: 1rem auto;
+		border: 0;
 		border-radius: 14px;
-		box-shadow: 0 14px 30px -18px rgba(20, 18, 14, 0.55);
+		box-shadow: 0 12px 28px rgba(65, 42, 20, 0.18);
+		background: #fff;
 	}
 
-	.pell-wrapper :global(.pell-content iframe),
+	.pell-wrapper :global(.pell-content p:first-child),
+	.pell-wrapper :global(.pell-content h1:first-child),
+	.pell-wrapper :global(.pell-content h2:first-child),
+	.pell-wrapper :global(.pell-content h3:first-child) {
+		margin-top: 0;
+	}
+
+	.pell-wrapper :global(.pell-content p:last-child) {
+		margin-bottom: 0;
+	}
+
+	.pell-wrapper :global(.pell-content a) {
+		word-break: break-all;
+	}
+
+	.pell-wrapper :global(.pell-content figure) {
+		margin: 1rem auto;
+		max-width: 720px;
+	}
+
+	.pell-wrapper :global(.pell-content figcaption) {
+		margin-top: 0.4rem;
+		text-align: center;
+		font-size: 0.85rem;
+		color: #5f665f;
+	}
+
 	.pell-wrapper :global(.pell-content table),
 	.pell-wrapper :global(.pell-content pre),
 	.pell-wrapper :global(.pell-content code) {
@@ -2598,9 +2629,11 @@
 
 	.media-delete-btn {
 		position: absolute;
-		transform: translate(50%, -50%);
-		width: 1.35rem;
-		height: 1.35rem;
+		transform: translate(-100%, 0);
+		width: 2rem;
+		height: 2rem;
+		margin-top: 0.5rem;
+		margin-left: -0.5rem;
 		border-radius: 999px;
 		border: 1px solid #d4c2ae;
 		background: #fff7ee;

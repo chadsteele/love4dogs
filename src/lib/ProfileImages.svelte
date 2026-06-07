@@ -1,7 +1,7 @@
 <script>
 	const MAX_IMAGE_SIZE_BYTES = 2_000_000
 	const NORMALIZED_IMAGE_MAX_DIM = 1800
-	import {User, Pencil} from "lucide-svelte"
+	import {User, Pencil, Trash2 as Trash} from "lucide-svelte"
 	import {mediaTokenFromFile} from "$lib/utils"
 	import {setOfflineImage} from "$lib/db.js"
 
@@ -344,7 +344,7 @@
 				aria-label="Remove background image"
 				disabled={disabled || uploadingProfile || uploadingBackground}
 			>
-				x
+				<Trash size={18} />
 			</button>
 		{:else}
 			<button
@@ -368,7 +368,7 @@
 				aria-label="Remove profile image"
 				disabled={disabled || uploadingProfile || uploadingBackground}
 			>
-				x
+				<Trash size={18} />
 			</button>
 		{/if}
 		<button
