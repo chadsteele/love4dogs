@@ -477,6 +477,17 @@
 		}
 	}
 
+	let lastSeenUrlTerms = $state(urlTerms)
+
+	$effect(() => {
+		const currentUrlTerms = urlTerms
+		if (currentUrlTerms !== lastSeenUrlTerms) {
+			lastSeenUrlTerms = currentUrlTerms
+			searchTerm = currentUrlTerms
+			loadFeed()
+		}
+	})
+
 	onMount(async () => {
 		favoriteSearchTerms = await readFavoriteSearchTerms()
 		await refreshBlockedLists()

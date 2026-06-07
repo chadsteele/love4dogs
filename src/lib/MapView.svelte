@@ -23,6 +23,8 @@
 	let hashLoadDone = $state(0)
 	let localProfileUuids = $state([])
 	let findingNearMe = $state(false)
+	let blockedUuids = $state([])
+	let blockedAuthors = $state([])
 
 	let leaflet = null
 	let mapInstance = null
@@ -221,6 +223,8 @@
 		const _posts = mapPosts
 		const _term = activeKeywordFilter
 		const _profileUuids = localProfileUuids
+		const _blockedUuids = blockedUuids
+		const _blockedAuthors = blockedAuthors
 		renderMarkers()
 	})
 
@@ -497,6 +501,69 @@
 		if (!uuid || (bskyPostRkey && uuid === bskyPostRkey)) return ""
 		const slug = slugify(String(post?.text || "").split("\n")[0]) || uuid
 		return `/${pathType}/view/${encodeURIComponent(uuid)}/${encodeURIComponent(slug)}`
+	}
+
+	function extractAuthorIdFromAltPayload(alt = "") {
+		const source = String(alt || "").trim()
+		if (!source) return ""
+
+		try {
+			const parsed = JSON.parse(source)
+			const candidates = [
+				parsed,
+				parsed?.primary,
+				parsed?.combined?.primary,
+			]
+
+			if (typeof parsed?.h === "string" && parsed.h.trim()) {
+				try {
+					const inner = JSON.parse(parsed.h)
+					candidates.push(
+						inner,
+						inner?.primary,
+						inner?.combined?.primary,
+					)
+				} catch {
+					// Ignore malformed nested payloads.
+				}
+			}
+
+			for (const candidate of candidates) {
+				if (!candidate || typeof candidate !== "object") continue
+				const authorId = String(
+					candidate?.authorid || candidate?.authorId || "",
+				).trim()
+				if (authorId) return authorId
+			}
+		} catch {
+			return ""
+		}
+
+		return ""
+	}
+
+	function resolvePostUuid(post = {}) {
+		const directUuid = String(post?.uuid || "").trim()
+		if (directUuid) return directUuid
+
+		for (const alt of post?.imageAlts || []) {
+			const fromAlt = extractUuidFromAltPayload(alt)
+			if (fromAlt) return fromAlt
+		}
+
+		return extractUuidFromAltPayload(post?.video?.alt || "")
+	}
+
+	function resolvePostAuthorId(post = {}) {
+		const directAuthorId = String(post?.authorid || post?.authorId || "").trim()
+		if (directAuthorId) return directAuthorId
+
+		for (const alt of post?.imageAlts || []) {
+			const fromAlt = extractAuthorIdFromAltPayload(alt)
+			if (fromAlt) return fromAlt
+		}
+
+		return extractAuthorIdFromAltPayload(post?.video?.alt || "")
 	}
 
 	async function resolvePostViewHrefFromApi(post = {}) {
@@ -956,13 +1023,19 @@
 		return mapPosts.filter(
 			(post) => {
 				if (!Number.isFinite(post?.lat) || !Number.isFinite(post?.lon)) return false
-				
+
+				// Block filters
+				const postUuid = resolvePostUuid(post)
+				const authorUuid = resolvePostAuthorId(post)
+				if (postUuid && blockedUuids.includes(postUuid)) return false
+				if (authorUuid && blockedAuthors.includes(authorUuid)) return false
+
 				if (queryTokens.length > 0) {
 					const text = String(post.text || '').toLowerCase()
 					const name = String(post.name || '').toLowerCase()
 					const desc = String(post.description || '').toLowerCase()
 					const tags = (post.tags || []).map(t => String(t || '').toLowerCase())
-					
+
 					const matches = queryTokens.every(token => 
 						text.includes(token) || 
 						name.includes(token) || 
@@ -971,7 +1044,7 @@
 					)
 					if (!matches) return false
 				}
-				
+
 				return true
 			}
 		)
@@ -1061,8 +1134,18 @@
 		} catch {}
 	}
 
+	async function refreshBlockedLists() {
+		try {
+			blockedUuids = await getSetting("love4dogs.blocked-uuids", [])
+			blockedAuthors = await getSetting("love4dogs.blocked-authors", [])
+		} catch (e) {
+			console.error("Failed to load blocked lists inside MapView:", e)
+		}
+	}
+
 	onMount(async () => {
 		let destroyed = false
+		let onFocusOrStorage
 		if (typeof window !== "undefined") {
 			try {
 				const profilesList = await listStoredProfiles()
@@ -1070,6 +1153,13 @@
 			} catch {
 				localProfileUuids = []
 			}
+
+			onFocusOrStorage = () => {
+				refreshBlockedLists()
+			}
+			window.addEventListener("focus", onFocusOrStorage)
+			window.addEventListener("storage", onFocusOrStorage)
+			await refreshBlockedLists()
 		}
 
 		async function initMap() {
@@ -1215,6 +1305,10 @@
 
 		return () => {
 			destroyed = true
+			if (typeof window !== "undefined" && onFocusOrStorage) {
+				window.removeEventListener("focus", onFocusOrStorage)
+				window.removeEventListener("storage", onFocusOrStorage)
+			}
 			if (viewportRefreshTimer) {
 				clearTimeout(viewportRefreshTimer)
 				viewportRefreshTimer = null
