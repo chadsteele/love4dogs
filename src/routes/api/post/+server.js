@@ -4,6 +4,7 @@ import { MEDIA_TOKEN_PREFIX } from '$lib/utils.js';
 import { normalizePostType, upsertTypeTag } from '$lib/postTypeTags.js';
 import { createHash } from 'node:crypto';
 import { AtpAgent, RichText } from '@atproto/api';
+import { getPost, setPost } from '$lib/db.js';
 
 const BSKY_XRPC = 'https://bsky.social/xrpc';
 const BSKY_PUBLIC_SERVICE = 'https://public.api.bsky.app';
@@ -534,6 +535,15 @@ export async function GET({ url }) {
 			});
 		}
 
+		// Cache check
+		const cacheKey = `bsky:post:thread:${uri}`;
+		const cached = await getPost(cacheKey);
+		if (cached) {
+			return new Response(JSON.stringify(cached), {
+				headers: { 'content-type': 'application/json' }
+			});
+		}
+
 		let session = await getSession();
 		let res = await fetch(
 			`${BSKY_XRPC}/app.bsky.feed.getPostThread?uri=${encodeURIComponent(uri)}&depth=0`,
@@ -604,7 +614,10 @@ export async function GET({ url }) {
 			});
 		}
 
-		return new Response(JSON.stringify({ ok: true, post }), {
+		const responseData = { ok: true, post };
+		await setPost(cacheKey, responseData);
+
+		return new Response(JSON.stringify(responseData), {
 			headers: { 'content-type': 'application/json' }
 		});
 	} catch (error) {

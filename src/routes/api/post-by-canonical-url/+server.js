@@ -1,4 +1,5 @@
 import { env } from '$env/dynamic/private';
+import { getPost, setPost } from '$lib/db.js';
 
 const BSKY_XRPC = 'https://bsky.social/xrpc';
 const BSKY_HANDLE = 'love4dogs.club';
@@ -76,6 +77,15 @@ export async function GET({ url }) {
 			);
 		}
 
+		const cacheKey = `bsky:post-by-canonical-url:${uuid}`;
+		const cached = await getPost(cacheKey);
+		if (cached) {
+			return new Response(
+				JSON.stringify(cached),
+				{ status: 200, headers: { 'content-type': 'application/json' } }
+			);
+		}
+
 		const session = await getSession();
 
 		// Search for posts using uuid only.
@@ -108,8 +118,10 @@ export async function GET({ url }) {
 				if (altMatchesUuid(alt, uuid)) {
 					const uri = resolveRootUri(post);
 					if (!uri) continue;
+					const responseData = { uri };
+					await setPost(cacheKey, responseData);
 					return new Response(
-						JSON.stringify({ uri }),
+						JSON.stringify(responseData),
 						{ status: 200, headers: { 'content-type': 'application/json' } }
 					);
 				}

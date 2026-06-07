@@ -537,3 +537,33 @@ if (typeof window !== 'undefined') {
 		console.error('Migration failed:', err);
 	});
 }
+
+export async function getAllPostKeys() {
+	const db = await getDB();
+	if (!db) {
+		return Array.from(memoryStores.posts.keys());
+	}
+	return new Promise((resolve) => {
+		const tx = db.transaction('posts', 'readonly');
+		const store = tx.objectStore('posts');
+		const req = store.getAllKeys();
+		req.onsuccess = () => resolve(req.result || []);
+		req.onerror = () => resolve([]);
+	});
+}
+
+export async function clearAllPosts() {
+	const db = await getDB();
+	if (!db) {
+		memoryStores.posts.clear();
+		return;
+	}
+	return new Promise((resolve, reject) => {
+		const tx = db.transaction('posts', 'readwrite');
+		const store = tx.objectStore('posts');
+		const req = store.clear();
+		req.onsuccess = () => resolve();
+		req.onerror = () => reject(req.error);
+	});
+}
+

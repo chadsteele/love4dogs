@@ -1,5 +1,6 @@
 import {json} from '@sveltejs/kit'
 import {loadMostRecentProfileBundleFromPublicBsky} from '$lib/bskyChunkStore'
+import {getPost, setPost} from '$lib/db.js'
 
 export async function GET({url, fetch}) {
 	const uuid = String(url.searchParams.get('uuid') || '').trim()
@@ -7,13 +8,20 @@ export async function GET({url, fetch}) {
 		return json({error: 'uuid required'}, {status: 400})
 	}
 
+	const cacheKey = `bsky:profile-bundle:${uuid}`;
 	try {
+		const cached = await getPost(cacheKey);
+		if (cached) {
+			return json(cached);
+		}
+
 		const bundle = await loadMostRecentProfileBundleFromPublicBsky({
 			fetchImpl: fetch,
 			uuid,
 			author: 'love4dogs.club',
 			debug: true,
 		})
+		await setPost(cacheKey, bundle);
 		return json(bundle)
 	} catch (error) {
 		return json(
@@ -25,3 +33,4 @@ export async function GET({url, fetch}) {
 		)
 	}
 }
+

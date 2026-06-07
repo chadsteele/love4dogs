@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/private';
 import { parseTimestampMs } from '$lib/dateTime.js';
+import { getPost, setPost } from '$lib/db.js';
 
 const BSKY_PUBLIC_XRPC_HOSTS = [
 	'https://public.api.bsky.app/xrpc',
@@ -431,6 +432,17 @@ export async function GET({ url }) {
 	const cursor = url.searchParams.get('cursor')?.trim() || '';
 	const cursorHost = url.searchParams.get('cursorHost')?.trim() || '';
 	const forceRefresh = url.searchParams.get('refresh') === '1';
+
+	const cleanedQuery = query.replace(/\bnear\s+me\b/gi, '').trim().replace(/\s+/g, ' ');
+	const cacheKey = `bsky:feed:${cleanedQuery}:${sort}:${limit}:${cursor}:${cursorHost}`;
+
+	const cached = await getPost(cacheKey);
+	if (cached) {
+		return new Response(JSON.stringify(cached), {
+			headers: { 'content-type': 'application/json' }
+		});
+	}
+
 	const cacheBuster = forceRefresh ? Date.now() : null;
 	const publicFetchOptions = {
 		method: 'GET',
@@ -450,7 +462,6 @@ export async function GET({ url }) {
 
 	let nextCursor = null;
 
-	const cleanedQuery = query.replace(/\bnear\s+me\b/gi, '').trim().replace(/\s+/g, ' ');
 	if (cleanedQuery) {
 		let searchPath = `app.bsky.feed.searchPosts?q=${encodeURIComponent(cleanedQuery)}&author=${encodeURIComponent(ACCOUNT_HANDLE)}&limit=${limit}${sort === 'top' ? '&sort=top' : ''}`;
 		if (cursor) {
@@ -482,13 +493,15 @@ export async function GET({ url }) {
 					cursor,
 					upstreamFailures: searchFailures,
 				});
+				const responseData = {
+					account: ACCOUNT_HANDLE,
+					posts: [],
+					cursor: null,
+					commonRecentTags: []
+				};
+				await setPost(cacheKey, responseData);
 				return new Response(
-					JSON.stringify({
-						account: ACCOUNT_HANDLE,
-						posts: [],
-						cursor: null,
-						commonRecentTags: []
-					}),
+					JSON.stringify(responseData),
 					{ headers: { 'content-type': 'application/json' } }
 				);
 			}
@@ -509,14 +522,17 @@ export async function GET({ url }) {
 		posts = dedupePosts(posts);
 		posts = await hydratePostComments(posts);
 
+		const responseData = {
+			account: ACCOUNT_HANDLE,
+			posts,
+			cursor: nextCursor,
+			cursorHost: searchHost || cursorHost || null,
+			commonRecentTags: []
+		};
+		await setPost(cacheKey, responseData);
+
 		return new Response(
-			JSON.stringify({
-				account: ACCOUNT_HANDLE,
-				posts,
-				cursor: nextCursor,
-				cursorHost: searchHost || cursorHost || null,
-				commonRecentTags: []
-			}),
+			JSON.stringify(responseData),
 			{ headers: { 'content-type': 'application/json' } }
 		);
 	}
@@ -565,14 +581,17 @@ export async function GET({ url }) {
 	let posts = dedupePosts(feedItems.map(mapPost));
 	posts = await hydratePostComments(posts);
 
+	const responseData = {
+		account: ACCOUNT_HANDLE,
+		posts,
+		cursor: nextCursor,
+		cursorHost: authorFeedHost || cursorHost || null,
+		commonRecentTags
+	};
+	await setPost(cacheKey, responseData);
+
 	return new Response(
-		JSON.stringify({
-			account: ACCOUNT_HANDLE,
-			posts,
-			cursor: nextCursor,
-			cursorHost: authorFeedHost || cursorHost || null,
-			commonRecentTags
-		}),
+		JSON.stringify(responseData),
 		{ headers: { 'content-type': 'application/json' } }
 	);
 }
