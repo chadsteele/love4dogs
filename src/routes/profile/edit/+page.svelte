@@ -7,6 +7,7 @@
 	import ProfileImages from "$lib/ProfileImages.svelte"
 	import LocationModal from "$lib/LocationModal.svelte"
 	import ContactInput from "$lib/ContactInput.svelte"
+	import HashTagCloud from "$lib/HashTagCloud.svelte"
 	import {
 		buildCanonicalUrl,
 		buildLocationBlock,
@@ -150,6 +151,16 @@
 	let suppressAutosave = false
 	let lastAutosaveSnapshot = ""
 	let profileRecordStamp = $state(buildCompressedTimestamp())
+	let postTags = $state([])
+
+	function togglePostTag(tag) {
+		if (postTags.includes(tag)) {
+			postTags = postTags.filter((t) => t !== tag)
+		} else {
+			postTags = [...postTags, tag]
+		}
+		activateValidation()
+	}
 
 	let minifiedChunkEntries = $state([])
 	let chunkBuildVersion = 0
@@ -157,9 +168,10 @@
 	const editorUploadCache = new Map()
 	let failedCdnUrls = $state(new Set())
 
-	const isPostEditRoute = $derived.by(() =>
-		String(page.url?.pathname || "").startsWith(POST_EDIT_PATH_PREFIX),
-	)
+	const isPostEditRoute = $derived.by(() => {
+		const pathname = String(page.url?.pathname || "")
+		return pathname === "/post/edit" || pathname.startsWith(POST_EDIT_PATH_PREFIX)
+	})
 
 	function debugProfile(...args) {
 		if (DEBUG_PROFILE) console.log(...args)
@@ -1069,14 +1081,17 @@
 		authorid: uuid,
 		stamp: profileRecordStamp,
 		email: encryptEmailForPayload(email),
-		profilePic:
-			selectedProfileImage?.bskyUrl || selectedProfileImage?.url || null,
-		backgroundPic:
-			selectedBackgroundImage?.bskyUrl ||
-			selectedBackgroundImage?.url ||
-			null,
+		profilePic: isPostEditRoute
+			? null
+			: selectedProfileImage?.bskyUrl || selectedProfileImage?.url || null,
+		backgroundPic: isPostEditRoute
+			? null
+			: selectedBackgroundImage?.bskyUrl ||
+			  selectedBackgroundImage?.url ||
+			  null,
 		name: profileName,
 		description: profileDescription,
+		tags: isPostEditRoute ? $state.snapshot(postTags) : [],
 	})
 
 	const subsequentPostsPayload = $derived(
@@ -1222,6 +1237,7 @@
 		profileDescription = String(
 			primary?.description || primary?.summary || "",
 		)
+		postTags = Array.isArray(primary?.tags) ? primary.tags : []
 		const combinedSubsequentHtml = subsequent
 			.map((entry) => String(entry || ""))
 			.join("")
@@ -1243,6 +1259,7 @@
 		email = decodePayloadEmail(data?.email)
 		profileName = String(data?.name || data?.title || "")
 		profileDescription = String(data?.description || data?.summary || "")
+		postTags = Array.isArray(data?.tags) ? data.tags : []
 		contentHtml = expandMinifiedHtmlTags(String(data?.html || ""))
 		profileUploadedMedia = normalizeStoredMedia([
 			buildMediaFromUrl(data?.profilePic, "Profile image"),
@@ -1283,6 +1300,7 @@
 			locationConfirmed,
 			confirmedAddress,
 			confirmedLocation,
+			tags: $state.snapshot(postTags),
 		}
 	}
 
@@ -1331,6 +1349,7 @@
 	}
 
 	function shouldRegisterCurrentProfile(profile = {}) {
+		if (isPostEditRoute) return false
 		if (!profile || typeof profile !== "object") return false
 		if (String(profile.profileName || "").trim()) return true
 		if (String(profile.profileDescription || "").trim()) return true
@@ -1361,6 +1380,7 @@
 		email = String(profile.email || "")
 		profileName = String(profile.profileName || "")
 		profileDescription = String(profile.profileDescription || "")
+		postTags = Array.isArray(profile.tags) ? profile.tags : []
 		contentHtml = String(profile.contentHtml || "")
 		profileUploadedMedia = normalizeStoredMedia(
 			profile.profileUploadedMedia,
@@ -1613,18 +1633,21 @@
 						authorid: uuid,
 						stamp: profileRecordStamp,
 						email: encryptEmailForPayload(email),
-						profilePic:
-							publishProfileImage?.bskyUrl ||
-							selectedProfileImage?.bskyUrl ||
-							selectedProfileImage?.url ||
-							null,
-						backgroundPic:
-							publishBackgroundImage?.bskyUrl ||
-							selectedBackgroundImage?.bskyUrl ||
-							selectedBackgroundImage?.url ||
-							null,
+						profilePic: isPostEditRoute
+							? null
+							: publishProfileImage?.bskyUrl ||
+							  selectedProfileImage?.bskyUrl ||
+							  selectedProfileImage?.url ||
+							  null,
+						backgroundPic: isPostEditRoute
+							? null
+							: publishBackgroundImage?.bskyUrl ||
+							  selectedBackgroundImage?.bskyUrl ||
+							  selectedBackgroundImage?.url ||
+							  null,
 						name: profileName,
 						description: profileDescription,
+						tags: isPostEditRoute ? $state.snapshot(postTags) : [],
 					}
 					const subsequentPayloadForBundle = mapSubsequentPayloadForBundle(
 						subsequentPostsPayload,
@@ -1775,7 +1798,7 @@
 				subsequentPostsPayload,
 			)
 			const primaryPayloadForBundle = {
-				type: "profile",
+				type: isPostEditRoute ? "post" : "profile",
 				uuid,
 				authorid: uuid,
 				stamp: profileRecordStamp,
@@ -1792,6 +1815,7 @@
 					null,
 				name: profileName,
 				description: profileDescription,
+				tags: isPostEditRoute ? $state.snapshot(postTags) : [],
 			}
 			const combinedBundle = buildBskyCombinedPayloadBundle(
 				primaryPayloadForBundle,
@@ -1885,12 +1909,13 @@
 				fetchImpl: fetch,
 				endpoint: "/api/post",
 				uuid,
-				postType: "profile",
+				postType: isPostEditRoute ? "post" : "profile",
 				postText,
 				chunks,
 				primaryMedia,
 				replyAttachmentPool: attachmentPool,
 				videoAttachments,
+				tags: isPostEditRoute ? $state.snapshot(postTags) : [],
 			})
 
 			const newPublishedAtUri = String(
@@ -1987,6 +2012,7 @@
 		email = ""
 		profileName = ""
 		profileDescription = ""
+		postTags = []
 		contentHtml = ""
 		profileUploadedMedia = []
 		backgroundUploadedMedia = []
@@ -2114,6 +2140,26 @@
 
 		async function init() {
 			try {
+				if (!routeUuid) {
+					debugProfile("[profile] onMount:no uuid in URL; starting empty")
+					uuid = generateShortUuid()
+					existingProfileAtUri = ""
+					email = ""
+					profileName = ""
+					profileDescription = ""
+					contentHtml = ""
+					profileUploadedMedia = []
+					backgroundUploadedMedia = []
+					editorMediaList = []
+					locationConfirmed = false
+					confirmedAddress = ""
+					confirmedLocation = null
+					initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
+					storageReady = true
+					setStoredSnapshotBaseline(buildStoredProfileForStorage())
+					return
+				}
+
 				if (routeUuid) {
 					if (isPostEditRoute) {
 						try {
@@ -2565,6 +2611,11 @@
 			></textarea>
 		</label>
 		<p class="char-count">{remainingProfileChars}/{descMaxLength}</p>
+		{#if isPostEditRoute}
+			<div class="post-tags-container">
+				<HashTagCloud activeTags={postTags} onToggle={togglePostTag} />
+			</div>
+		{/if}
 		<div class="editor-wrap">
 			<Editor
 				bind:value={contentHtml}
@@ -2838,6 +2889,16 @@
 		margin-top: 0.55rem;
 		min-width: 0;
 		width: 100%;
+	}
+	.post-tags-container {
+		margin-top: 0.6rem;
+		margin-bottom: 0.8rem;
+	}
+	.post-tags-container .label {
+		font-size: 0.82rem;
+		color: #51655a;
+		margin: 0 0 0.3rem;
+		font-weight: 600;
 	}
 	.char-count {
 		margin: 0;

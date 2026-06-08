@@ -1,5 +1,8 @@
 <script>
 	import DateTime from "$lib/DateTime.svelte"
+	import {
+		Trash2 as Trash
+	} from "lucide-svelte"
 
 	let {
 		profiles = [],
@@ -8,6 +11,7 @@
 		onChoose = () => {},
 		onEdit = () => {},
 		onDelete = () => {},
+		allowDelete = false,
 	} = $props()
 </script>
 
@@ -39,6 +43,15 @@
 						<span class="badge">Current</span>
 					{/if}
 				</button>
+				{#if allowDelete}
+					<button
+						type="button"
+						class="chip chip-danger delete-btn-icon"
+						onclick={(e) => { e.stopPropagation(); onDelete(profile.uuid); }}
+					>
+						<Trash size={16} />
+					</button>
+				{/if}
 			{:else}
 				<div class="profile-main">
 					{#if profile.avatarUrl}
@@ -114,7 +127,8 @@
 	}
 
 	.profile-row {
-		width: 100%;
+		flex: 1;
+		min-width: 0;
 		display: grid;
 		grid-template-columns: 44px 1fr auto;
 		gap: 0.75rem;
@@ -196,6 +210,16 @@
 	.chip-danger {
 		border-color: #b53a2b;
 		color: #8e2f21;
+	}
+
+	.delete-btn-icon {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
+		width: 36px;
+		height: 36px;
+		flex-shrink: 0;
 	}
 
 	@media (max-width: 760px) {

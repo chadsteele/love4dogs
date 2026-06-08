@@ -2,6 +2,7 @@
 	import {goto} from "$app/navigation"
 	import {isLocalHost} from "$lib/utils"
 	import ProfileList from "$lib/ProfileList.svelte"
+	import HashTagCloud from "$lib/HashTagCloud.svelte"
 	import {
 		buildNewProfileEditPath,
 		getCurrentProfileUuid,
@@ -152,6 +153,29 @@
 		goto("/about")
 	}
 
+	const activeSearchTags = $derived(
+		searchTerm
+			.toLowerCase()
+			.split(/\s+/)
+			.map(t => t.replace(/[^a-zA-Z0-9 ]/g, ""))
+			.filter(Boolean)
+	)
+
+	function toggleTagInSearch(tag) {
+		const normalizedTag = tag.replace(/[^a-zA-Z0-9 ]/g, "").toLowerCase()
+		if (!normalizedTag) return
+		const terms = searchTerm
+			.split(/\s+/)
+			.filter(Boolean)
+		const index = terms.findIndex(t => t.replace(/[^a-zA-Z0-9 ]/g, "").toLowerCase() === normalizedTag)
+		if (index >= 0) {
+			searchTerm = terms.filter(t => t.replace(/[^a-zA-Z0-9 ]/g, "").toLowerCase() !== normalizedTag).join(" ")
+		} else {
+			searchTerm = (searchTerm.trim() + " " + tag.replace(/[^a-zA-Z0-9 ]/g, "")).trim()
+		}
+		onSearchInput()
+	}
+
 	$effect(() => {
 		if (!selectionMenuOpen) return
 
@@ -280,46 +304,49 @@
 	</div>
 
 	{#if showSearch}
-		<form
-			class="search"
-			onsubmit={(event) => {
-				event.preventDefault()
-				handleSearchSubmit()
-			}}
-		>
-			<Search size={18} />
-			<input
-				type="search"
-				bind:value={searchTerm}
-				oninput={(e) => {
-					const target = e.currentTarget
-					const rawValue = target.value
-					const filtered = rawValue.replace(/[^a-zA-Z0-9 ]/g, "")
-					if (rawValue !== filtered) {
-						const start = target.selectionStart
-						const end = target.selectionEnd
-						let removedBeforeCursor = 0
-						for (let i = 0; i < start; i++) {
-							if (/[^a-zA-Z0-9 ]/.test(rawValue[i])) {
-								removedBeforeCursor++
-							}
-						}
-						searchTerm = filtered
-						target.value = filtered
-						target.setSelectionRange(
-							start - removedBeforeCursor,
-							end - removedBeforeCursor,
-						)
-					} else {
-						searchTerm = filtered
-					}
-					onSearchInput(e)
+		<div class="search-container">
+			<form
+				class="search"
+				onsubmit={(event) => {
+					event.preventDefault()
+					handleSearchSubmit()
 				}}
-				onsearch={onSearchInput}
-				placeholder="Search"
-			/>
-			<button type="submit">Search</button>
-		</form>
+			>
+				<Search size={18} />
+				<input
+					type="search"
+					bind:value={searchTerm}
+					oninput={(e) => {
+						const target = e.currentTarget
+						const rawValue = target.value
+						const filtered = rawValue.replace(/[^a-zA-Z0-9 ]/g, "")
+						if (rawValue !== filtered) {
+							const start = target.selectionStart
+							const end = target.selectionEnd
+							let removedBeforeCursor = 0
+							for (let i = 0; i < start; i++) {
+								if (/[^a-zA-Z0-9 ]/.test(rawValue[i])) {
+									removedBeforeCursor++
+								}
+							}
+							searchTerm = filtered
+							target.value = filtered
+							target.setSelectionRange(
+								start - removedBeforeCursor,
+								end - removedBeforeCursor,
+							)
+						} else {
+							searchTerm = filtered
+						}
+						onSearchInput(e)
+					}}
+					onsearch={onSearchInput}
+					placeholder="Search"
+				/>
+				<button type="submit">Search</button>
+			</form>
+			<HashTagCloud activeTags={activeSearchTags} onToggle={toggleTagInSearch} />
+		</div>
 	{/if}
 
 	<div class="topbar-links">
@@ -332,7 +359,20 @@
 				<Pencil size={16} /> &nbsp; Edit
 			</a>
 		{:else if !hideCreateButton}
-			<a class="post-route-btn" href="/post/edit" aria-label="Create Post">
+			<a
+				class="post-route-btn"
+				href={navCurrentUuid ? "/post/edit" : "/profile/edit"}
+				onclick={async (e) => {
+					e.preventDefault()
+					const current = await getCurrentProfileUuid()
+					if (current) {
+						goto("/post/edit")
+					} else {
+						goto("/profile/edit")
+					}
+				}}
+				aria-label="Create Post"
+			>
 				<Plus size={16} /> &nbsp; Create
 			</a>
 		{/if}
@@ -358,9 +398,14 @@
 						</button>
 						<button
 							type="button"
-							onclick={() => {
+							onclick={async () => {
 								profileMenuOpen = false
-								goto(buildNewProfileEditPath())
+								const current = await getCurrentProfileUuid()
+								if (current) {
+									goto("/post/edit")
+								} else {
+									goto("/profile/edit")
+								}
 							}}
 						>
 							Create 
@@ -555,6 +600,17 @@
 		font-size: 1.35rem;
 	}
 
+	.search-container {
+		display: flex;
+		flex-direction: column;
+		gap: 0.45rem;
+		width: min(100%, 470px);
+		min-width: min(375px, 100%);
+		flex: 1 1 375px;
+		max-width: 100%;
+		box-sizing: border-box;
+	}
+
 	.search {
 		display: flex;
 		align-items: center;
@@ -563,10 +619,7 @@
 		border-radius: 999px;
 		background: #fffdf8;
 		border: 1px solid rgba(48, 80, 54, 0.2);
-		width: min(100%, 470px);
-		min-width: min(375px, 100%);
-		flex: 1 1 375px;
-		max-width: 100%;
+		width: 100%;
 		box-sizing: border-box;
 	}
 
@@ -672,7 +725,7 @@
 			gap: 0.85rem;
 		}
 
-		.search {
+		.search-container {
 			order: 3;
 			width: 100%;
 			min-width: min(375px, 100%);
