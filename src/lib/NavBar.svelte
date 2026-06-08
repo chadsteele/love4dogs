@@ -3,6 +3,7 @@
 	import {isLocalHost} from "$lib/utils"
 	import ProfileList from "$lib/ProfileList.svelte"
 	import HashTagCloud from "$lib/HashTagCloud.svelte"
+	import {defaultHashtags} from "$lib/config"
 	import {
 		buildNewProfileEditPath,
 		getCurrentProfileUuid,
@@ -154,24 +155,33 @@
 	}
 
 	const activeSearchTags = $derived(
-		searchTerm
-			.toLowerCase()
-			.split(/\s+/)
-			.map(t => t.replace(/[^a-zA-Z0-9 ]/g, ""))
-			.filter(Boolean)
+		defaultHashtags.filter(tag => {
+			const cleanTag = tag.replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s+/g, " ").trim().toLowerCase()
+			if (!cleanTag) return false
+			const cleanSearch = searchTerm.replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s+/g, " ").trim().toLowerCase()
+			return (" " + cleanSearch + " ").includes(" " + cleanTag + " ")
+		})
 	)
 
 	function toggleTagInSearch(tag) {
-		const normalizedTag = tag.replace(/[^a-zA-Z0-9 ]/g, "").toLowerCase()
-		if (!normalizedTag) return
-		const terms = searchTerm
-			.split(/\s+/)
-			.filter(Boolean)
-		const index = terms.findIndex(t => t.replace(/[^a-zA-Z0-9 ]/g, "").toLowerCase() === normalizedTag)
-		if (index >= 0) {
-			searchTerm = terms.filter(t => t.replace(/[^a-zA-Z0-9 ]/g, "").toLowerCase() !== normalizedTag).join(" ")
+		const cleanTag = tag.replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s+/g, " ").trim().toLowerCase()
+		if (!cleanTag) return
+
+		const normalizedSearch = searchTerm.replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s+/g, " ").trim()
+		const cleanSearch = normalizedSearch.toLowerCase()
+
+		const paddedSearch = " " + cleanSearch + " "
+		const paddedTag = " " + cleanTag + " "
+
+		if (paddedSearch.includes(paddedTag)) {
+			const startIndex = paddedSearch.indexOf(paddedTag)
+			if (startIndex >= 0) {
+				const before = normalizedSearch.slice(0, Math.max(0, startIndex))
+				const after = normalizedSearch.slice(startIndex + cleanTag.length)
+				searchTerm = (before + " " + after).replace(/\s+/g, " ").trim()
+			}
 		} else {
-			searchTerm = (searchTerm.trim() + " " + tag.replace(/[^a-zA-Z0-9 ]/g, "")).trim()
+			searchTerm = (normalizedSearch + " " + tag.replace(/[^a-zA-Z0-9 ]/g, "")).replace(/\s+/g, " ").trim()
 		}
 		onSearchInput()
 	}
