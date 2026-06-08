@@ -1261,6 +1261,46 @@
 		word-break: break-all;
 	}
 
+	.content-html :global([align="left"]) { text-align: left; }
+	.content-html :global([align="center"]) { text-align: center; }
+	.content-html :global([align="right"]) { text-align: right; }
+
+	.content-html :global([align="left"] img),
+	.content-html :global([align="left"] video),
+	.content-html :global([align="left"] iframe),
+	.content-html :global([align="left"] figure),
+	.content-html :global(img[align="left"]),
+	.content-html :global(video[align="left"]),
+	.content-html :global(iframe[align="left"]),
+	.content-html :global(figure[align="left"]) {
+		margin-left: 0;
+		margin-right: auto;
+	}
+
+	.content-html :global([align="right"] img),
+	.content-html :global([align="right"] video),
+	.content-html :global([align="right"] iframe),
+	.content-html :global([align="right"] figure),
+	.content-html :global(img[align="right"]),
+	.content-html :global(video[align="right"]),
+	.content-html :global(iframe[align="right"]),
+	.content-html :global(figure[align="right"]) {
+		margin-left: auto;
+		margin-right: 0;
+	}
+
+	.content-html :global([align="center"] img),
+	.content-html :global([align="center"] video),
+	.content-html :global([align="center"] iframe),
+	.content-html :global([align="center"] figure),
+	.content-html :global(img[align="center"]),
+	.content-html :global(video[align="center"]),
+	.content-html :global(iframe[align="center"]),
+	.content-html :global(figure[align="center"]) {
+		margin-left: auto;
+		margin-right: auto;
+	}
+
 	.content-html :global(figure) {
 		margin: 1rem auto;
 		max-width: 720px;

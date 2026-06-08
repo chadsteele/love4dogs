@@ -21,7 +21,10 @@
 		Strikethrough,
 		Underline,
 		Video as VideoIcon,
-		Trash2 as Trash
+		Trash2 as Trash,
+		AlignLeft,
+		AlignCenter,
+		AlignRight
 	} from "lucide-svelte"
 
 	const MAX_IMAGE_SIZE_BYTES = 2_000_000
@@ -55,6 +58,7 @@
 			"underline",
 			"strikethrough",
 			"link",
+			"alignToggle",
 		],
 		ondragover = () => {},
 		ondragleave = () => {},
@@ -92,6 +96,9 @@
 	let stylePaintAwaitingFreshSelection = false
 	let lastEditorRange = null
 	let lastEditorExpandedRange = null
+	let alignLeftIcon = ""
+	let alignCenterIcon = ""
+	let alignRightIcon = ""
 
 	onMount(() => {
 		return () => {
@@ -725,6 +732,9 @@
 			}
 			// Strip all attributes except a safe subset on anchors and media tags.
 			for (const attr of [...node.attributes]) {
+				if (attr.name === "align") {
+					continue
+				}
 				if (
 					tag === "img" &&
 					(attr.name === "src" ||
@@ -1120,6 +1130,58 @@
 		}
 		htmlMode = false
 		syncHtmlModeButtonState()
+	}
+
+	function syncAlignButtonState() {
+		if (!containerEl || !alignLeftIcon) return
+		const button =
+			containerEl.querySelector('button[title="Toggle alignment"]') ||
+			containerEl.querySelector('button[title="Align Left"]') ||
+			containerEl.querySelector('button[title="Align Center"]') ||
+			containerEl.querySelector('button[title="Align Right"]')
+		if (!button) return
+
+		let nextIcon = alignCenterIcon
+		let nextTitle = "Align Center"
+
+		let isCenter = document.queryCommandState("justifyCenter")
+		let isRight = document.queryCommandState("justifyRight")
+
+		if (activeMediaTarget) {
+			let container = activeMediaTarget
+			if (
+				activeMediaTarget.parentElement &&
+				["FIGURE", "A"].includes(activeMediaTarget.parentElement.tagName)
+			) {
+				container = activeMediaTarget.parentElement
+			}
+			const alignVal = container.getAttribute("align")
+			if (alignVal === "center") {
+				isCenter = true
+				isRight = false
+			} else if (alignVal === "right") {
+				isCenter = false
+				isRight = true
+			} else if (alignVal === "left") {
+				isCenter = false
+				isRight = false
+			}
+		}
+
+		if (isCenter) {
+			nextIcon = alignRightIcon
+			nextTitle = "Align Right"
+		} else if (isRight) {
+			nextIcon = alignLeftIcon
+			nextTitle = "Align Left"
+		}
+
+		if (button.innerHTML !== nextIcon) {
+			button.innerHTML = nextIcon
+		}
+		if (button.title !== nextTitle) {
+			button.title = nextTitle
+		}
 	}
 
 	function syncHtmlModeButtonState() {
@@ -1770,6 +1832,10 @@
 			strokeWidth: 2,
 		}
 
+		alignLeftIcon = createElement(AlignLeft, iconProps).outerHTML
+		alignCenterIcon = createElement(AlignCenter, iconProps).outerHTML
+		alignRightIcon = createElement(AlignRight, iconProps).outerHTML
+
 		const defaultActionDefs = {
 			h1: {
 				icon: "H1",
@@ -1805,6 +1871,56 @@
 				icon: createElement(LinkIcon, iconProps).outerHTML,
 				title: "Link",
 				result: () => toggleLink(pellEditor?.content),
+			},
+			alignToggle: {
+				icon: alignCenterIcon,
+				title: "Toggle alignment",
+				result: () => {
+					if (activeMediaTarget) {
+						let container = activeMediaTarget
+						if (
+							activeMediaTarget.parentElement &&
+							["FIGURE", "A"].includes(activeMediaTarget.parentElement.tagName)
+						) {
+							container = activeMediaTarget.parentElement
+						}
+
+						let currentAlign = container.getAttribute("align") || "left"
+						if (!container.getAttribute("align")) {
+							if (document.queryCommandState("justifyCenter")) currentAlign = "center"
+							else if (document.queryCommandState("justifyRight")) currentAlign = "right"
+						}
+
+						let nextAlign = "center"
+						if (currentAlign === "center") {
+							nextAlign = "right"
+						} else if (currentAlign === "right") {
+							nextAlign = "left"
+						}
+
+						container.setAttribute("align", nextAlign)
+						dispatchEditorInput(pellEditor?.content)
+						syncAlignButtonState()
+						setTimeout(() => {
+							if (pellEditor?.content) {
+								repositionMediaDeleteButton(pellEditor.content)
+							}
+						}, 0)
+					} else {
+						if (document.queryCommandState("justifyCenter")) {
+							document.execCommand("justifyRight", false)
+						} else if (document.queryCommandState("justifyRight")) {
+							document.execCommand("justifyLeft", false)
+						} else {
+							document.execCommand("justifyCenter", false)
+						}
+						syncAlignButtonState()
+					}
+				},
+				state: () => {
+					syncAlignButtonState()
+					return false
+				},
 			},
 		}
 
@@ -1906,6 +2022,7 @@
 		syncHtmlModeButtonState()
 		syncRemoveFormattingButtonState(pellEditor.content)
 		syncStylePaintButtonState()
+		syncAlignButtonState()
 
 		// Add placeholder behaviour
 		const content = pellEditor.content
@@ -2606,6 +2723,46 @@
 
 	.pell-wrapper :global(.pell-content a) {
 		word-break: break-all;
+	}
+
+	.pell-wrapper :global(.pell-content [align="left"]) { text-align: left; }
+	.pell-wrapper :global(.pell-content [align="center"]) { text-align: center; }
+	.pell-wrapper :global(.pell-content [align="right"]) { text-align: right; }
+
+	.pell-wrapper :global(.pell-content [align="left"] img),
+	.pell-wrapper :global(.pell-content [align="left"] video),
+	.pell-wrapper :global(.pell-content [align="left"] iframe),
+	.pell-wrapper :global(.pell-content [align="left"] figure),
+	.pell-wrapper :global(.pell-content img[align="left"]),
+	.pell-wrapper :global(.pell-content video[align="left"]),
+	.pell-wrapper :global(.pell-content iframe[align="left"]),
+	.pell-wrapper :global(.pell-content figure[align="left"]) {
+		margin-left: 0;
+		margin-right: auto;
+	}
+
+	.pell-wrapper :global(.pell-content [align="right"] img),
+	.pell-wrapper :global(.pell-content [align="right"] video),
+	.pell-wrapper :global(.pell-content [align="right"] iframe),
+	.pell-wrapper :global(.pell-content [align="right"] figure),
+	.pell-wrapper :global(.pell-content img[align="right"]),
+	.pell-wrapper :global(.pell-content video[align="right"]),
+	.pell-wrapper :global(.pell-content iframe[align="right"]),
+	.pell-wrapper :global(.pell-content figure[align="right"]) {
+		margin-left: auto;
+		margin-right: 0;
+	}
+
+	.pell-wrapper :global(.pell-content [align="center"] img),
+	.pell-wrapper :global(.pell-content [align="center"] video),
+	.pell-wrapper :global(.pell-content [align="center"] iframe),
+	.pell-wrapper :global(.pell-content [align="center"] figure),
+	.pell-wrapper :global(.pell-content img[align="center"]),
+	.pell-wrapper :global(.pell-content video[align="center"]),
+	.pell-wrapper :global(.pell-content iframe[align="center"]),
+	.pell-wrapper :global(.pell-content figure[align="center"]) {
+		margin-left: auto;
+		margin-right: auto;
 	}
 
 	.pell-wrapper :global(.pell-content figure) {

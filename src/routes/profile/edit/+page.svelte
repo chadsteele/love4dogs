@@ -1470,53 +1470,9 @@
 	}
 
 	$effect(() => {
-		locationConfirmed = locationConfirmed && addressOkay(addressText)
+		locationConfirmed = locationConfirmed && addressOkay(addressText, confirmedLocation)
 		if (locationConfirmed) locationError = ""
 	})
-
-	async function handleModalConfirm() {
-		locationError = ""
-		if (
-			modalLocation &&
-			(pinMovedInModal || !hasRequiredLocationParts(confirmedLocation))
-		) {
-			const {location, error} = await lookupLocationDetails(
-				modalLocation.lat,
-				modalLocation.lon,
-			)
-			if (error) {
-				locationConfirmed = false
-				locationError = error
-				return
-			}
-			if (location) {
-				confirmedLocation = location
-				const parts = [
-					location.city,
-					location.state,
-					location.country,
-					location.zip,
-				].filter(Boolean)
-				if (parts.length) addressText = parts.join(", ")
-				modalLocation = {...modalLocation, ...location}
-			}
-		}
-
-		if (!hasRequiredLocationParts(confirmedLocation)) {
-			locationConfirmed = false
-			locationError =
-				"Location must include state, country, and zip before it can be confirmed."
-			return
-		}
-
-		const completeAddress = buildCompleteAddress(confirmedLocation)
-		if (completeAddress) addressText = completeAddress
-
-		confirmedAddress = addressText.trim()
-		locationConfirmed = true
-		locationError = ""
-		showLocationModal = false
-	}
 
 	function handleModalCancel() {
 		showLocationModal = false
@@ -2706,6 +2662,7 @@
 		showModal={showLocationModal}
 		{modalLocation}
 		{addressText}
+		{confirmedLocation}
 		{pinMovedInModal}
 		onConfirm={async (result) => {
 			if (result.error) {

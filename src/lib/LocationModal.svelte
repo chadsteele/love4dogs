@@ -10,6 +10,7 @@
 		showModal = false,
 		modalLocation = null,
 		addressText = "",
+		confirmedLocation = null,
 		pinMovedInModal = false,
 		onConfirm = () => {},
 		onCancel = () => {},
@@ -17,6 +18,12 @@
 	} = $props()
 
 	let localConfirmedLocation = $state(null)
+
+	$effect(() => {
+		if (showModal) {
+			localConfirmedLocation = confirmedLocation
+		}
+	})
 
 	async function handleConfirm() {
 		if (
@@ -36,20 +43,6 @@
 			}
 			if (location) {
 				localConfirmedLocation = location
-				const parts = [
-					location.city,
-					location.state,
-					location.country,
-					location.zip,
-				].filter(Boolean)
-				if (parts.length) {
-					onConfirm({
-						addressText: parts.join(", "),
-						modalLocation: {...modalLocation, ...location},
-						confirmedLocation: location,
-					})
-					return
-				}
 			}
 		}
 

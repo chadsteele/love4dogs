@@ -42,6 +42,7 @@ export function addressOkay(newAddress, confirmedLocation) {
 	if (!hasRequiredLocationParts(confirmedLocation)) return false
 	const neu = normalizeAddressPart(newAddress)
 	const required = [
+		confirmedLocation?.city,
 		confirmedLocation?.state,
 		confirmedLocation?.country,
 		confirmedLocation?.zip,
