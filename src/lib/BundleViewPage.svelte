@@ -13,6 +13,7 @@
 	import {listStoredProfiles, getCurrentProfileUuid} from "$lib/profileRegistry"
 	import {isLocalHost, removeApproxPostFromCache} from "$lib/utils"
 	import {formatDisplayAddress} from "$lib/addressFormat"
+	import Chat from "$lib/Chat.svelte"
 
 	// ── props ──────────────────────────────────────────────────────────────────
 	let {type = "post"} = $props()
@@ -974,6 +975,8 @@
 				</div>
 			</div>
 		</section>
+
+		<Chat context={uuid} />
 	{/if}
 
 	{#if toastMessage}
@@ -990,6 +993,7 @@
 		padding: 1rem;
 		display: grid;
 		gap: 0.8rem;
+		min-width: 0;
 	}
 
 	.panel {
@@ -998,6 +1002,8 @@
 		border-radius: 16px;
 		padding: 0.9rem;
 		box-shadow: 0 8px 20px rgba(65, 42, 20, 0.1);
+		min-width: 0;
+		overflow-x: hidden;
 	}
 
 	.hero {
@@ -1188,7 +1194,7 @@
 	.media-card video {
 		display: block;
 		width: 100%;
-		max-width: 720px;
+		max-width: min(100%, 720px);
 		height: auto;
 		margin: 0 auto;
 		border-radius: 14px;
@@ -1214,7 +1220,7 @@
 	.content-html :global(img) {
 		display: block;
 		width: auto;
-		max-width: 720px;
+		max-width: min(100%, 720px);
 		height: auto;
 		margin: 1rem auto;
 		border-radius: 14px;
@@ -1225,7 +1231,7 @@
 	.content-html :global(video) {
 		display: block;
 		width: 100%;
-		max-width: 720px;
+		max-width: min(100%, 720px);
 		height: auto;
 		margin: 1rem auto;
 		border-radius: 14px;
@@ -1236,7 +1242,7 @@
 	.content-html :global(iframe) {
 		display: block;
 		width: 100%;
-		max-width: 900px;
+		max-width: min(100%, 900px);
 		min-height: 320px;
 		aspect-ratio: 16 / 9;
 		margin: 1rem auto;

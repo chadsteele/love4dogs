@@ -718,28 +718,43 @@
 	}
 
 	@media (max-width: 960px) {
+		.topbar {
+			display: grid;
+			grid-template-columns: 1fr auto;
+			align-items: center;
+			gap: 0.75rem 0.5rem;
+			width: 100%;
+			margin-left: 0;
+			margin-right: 0;
+			padding: 0.8rem 0.5rem;
+		}
+
 		.title-rest {
 			display: block;
 		}
 
 		.topbar-left {
-			order: 1;
+			grid-row: 1;
+			grid-column: 1;
+			order: unset;
 		}
 
 		.topbar-links {
-			position: absolute;
-			top: 0.8rem;
-			right: 1rem;
+			grid-row: 1;
+			grid-column: 2;
+			position: static;
 			width: auto;
+			display: flex;
 			align-items: center;
-			gap: 0.85rem;
+			gap: 0.6rem;
 		}
 
 		.search-container {
-			order: 3;
+			grid-row: 2;
+			grid-column: 1 / span 2;
 			width: 100%;
-			min-width: min(375px, 100%);
-			flex-basis: 100%;
+			min-width: 0;
+			flex-basis: auto;
 		}
 
 		.post-route-btn {
@@ -767,6 +782,25 @@
 			content: "✎";
 			font-size: 1.2rem;
 			line-height: 1;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.logo-wrap {
+			width: 42px;
+			height: 42px;
+		}
+
+		h1 {
+			font-size: 1.15rem;
+		}
+
+		.selection-menu-btn,
+		.profile-avatar-btn,
+		.post-route-btn,
+		.edit-profile-btn {
+			width: 36px;
+			height: 36px;
 		}
 	}
 </style>

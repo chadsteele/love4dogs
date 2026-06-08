@@ -109,6 +109,12 @@
 		margin-left: 0;
 	}
 
+	@media (max-width: 600px) {
+		.author-row.no-avatar {
+			margin-left: 0;
+		}
+	}
+
 	.author-media {
 		padding-top: 0.9rem;
 		flex-shrink: 0;

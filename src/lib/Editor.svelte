@@ -2678,7 +2678,7 @@
 	.pell-wrapper :global(.pell-content img) {
 		display: block;
 		width: auto;
-		max-width: 720px;
+		max-width: min(100%, 720px);
 		height: auto;
 		margin: 1rem auto;
 		border-radius: 14px;
@@ -2689,7 +2689,7 @@
 	.pell-wrapper :global(.pell-content video) {
 		display: block;
 		width: 100%;
-		max-width: 720px;
+		max-width: min(100%, 720px);
 		height: auto;
 		margin: 1rem auto;
 		border-radius: 14px;
@@ -2700,7 +2700,7 @@
 	.pell-wrapper :global(.pell-content iframe) {
 		display: block;
 		width: 100%;
-		max-width: 900px;
+		max-width: min(100%, 900px);
 		min-height: 320px;
 		aspect-ratio: 16 / 9;
 		margin: 1rem auto;

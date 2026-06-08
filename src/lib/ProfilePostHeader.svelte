@@ -100,6 +100,7 @@
 			--bg-height: 136px;
 			--avatar-size: 88px;
 			--title-gap: 0.55rem;
+			margin-bottom: calc(88px / 2 + 0.5rem);
 		}
 	}
 
