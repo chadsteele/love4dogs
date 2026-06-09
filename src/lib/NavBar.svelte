@@ -21,7 +21,11 @@
 		Plus,
 		User,
 		EyeOff,
+		ChevronsLeftRight,
+		LayoutGrid,
 	} from "lucide-svelte"
+	import {tagCloudStore} from "$lib/tagCloudStore.svelte"
+
 
 	const verifiedProfileUuids = new Set()
 
@@ -227,6 +231,16 @@
 			window.removeEventListener("focus", onStorage)
 		}
 	})
+
+	const hashtagStateTitle = $derived.by(() => {
+		if (tagCloudStore.state === "normal") {
+			return "Hashtags: Scroll horizontally (Click to stack)"
+		} else if (tagCloudStore.state === "stacked") {
+			return "Hashtags: Stacked vertically (Click to hide)"
+		} else {
+			return "Hashtags: Hidden (Click to show scrollable)"
+		}
+	})
 </script>
 
 <nav class="topbar">
@@ -354,6 +368,21 @@
 					placeholder="Search"
 				/>
 				<button type="submit">Search</button>
+				<button
+					type="button"
+					class="hashtag-toggle-btn"
+					onclick={() => tagCloudStore.toggle()}
+					title={hashtagStateTitle}
+					aria-label={hashtagStateTitle}
+				>
+					{#if tagCloudStore.state === 'normal'}
+						<ChevronsLeftRight size={14} />
+					{:else if tagCloudStore.state === 'stacked'}
+						<LayoutGrid size={14} />
+					{:else}
+						<EyeOff size={14} />
+					{/if}
+				</button>
 			</form>
 			<HashTagCloud activeTags={activeSearchTags} onToggle={toggleTagInSearch} />
 		</div>
@@ -649,6 +678,42 @@
 		border-radius: 999px;
 		font-weight: 600;
 		cursor: pointer;
+	}
+	
+	.search .hashtag-toggle-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		height: 32px;
+		width: 32px;
+		border-radius: 50%;
+		border: 1px solid #c4b89e;
+		background: linear-gradient(180deg, #fffdf9 0%, #f8f1e6 100%);
+		color: #3b5e47;
+		cursor: pointer;
+		flex-shrink: 0;
+		transition:
+			background 0.12s,
+			color 0.12s,
+			border-color 0.12s,
+			box-shadow 0.12s,
+			transform 0.08s;
+		padding: 0;
+	}
+	.search .hashtag-toggle-btn:hover {
+		border-color: #3b6e4f;
+		background: #e8f3eb;
+		box-shadow: 0 1px 0 rgba(59, 110, 79, 0.2);
+		color: #3b6e4f;
+	}
+	.search .hashtag-toggle-btn:active {
+		transform: translateY(1px);
+	}
+	.search .hashtag-toggle-btn :global(svg) {
+		transition: transform 0.2s ease;
+	}
+	.search .hashtag-toggle-btn:hover :global(svg) {
+		transform: scale(1.15);
 	}
 
 	.post-route-btn {

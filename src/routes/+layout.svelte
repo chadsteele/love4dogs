@@ -236,4 +236,155 @@
 			row-gap: 0.1rem;
 		}
 	}
+
+	/* ── Shared Content HTML / Editor Pell Content Media Layout styles ─────────────────────────────────────────── */
+	:global(.content-html img),
+	:global(.pell-wrapper .pell-content img) {
+		display: block;
+		width: auto;
+		max-width: min(100%, 720px);
+		height: auto;
+		margin: 1rem auto;
+		border-radius: 14px;
+		box-shadow: 0 12px 28px rgba(65, 42, 20, 0.18);
+		background: #fff;
+	}
+
+	:global(.content-html video),
+	:global(.pell-wrapper .pell-content video) {
+		display: block;
+		width: 100%;
+		max-width: min(100%, 720px);
+		height: auto;
+		margin: 1rem auto;
+		border-radius: 14px;
+		box-shadow: 0 12px 28px rgba(65, 42, 20, 0.18);
+		background: #fff;
+	}
+
+	:global(.content-html iframe),
+	:global(.pell-wrapper .pell-content iframe) {
+		display: block;
+		width: 100%;
+		max-width: min(100%, 900px);
+		min-height: 320px;
+		aspect-ratio: 16 / 9;
+		margin: 1rem auto;
+		border: 0;
+		border-radius: 14px;
+		box-shadow: 0 12px 28px rgba(65, 42, 20, 0.18);
+		background: #fff;
+	}
+
+	:global(.content-html p:first-child),
+	:global(.content-html h1:first-child),
+	:global(.content-html h2:first-child),
+	:global(.content-html h3:first-child),
+	:global(.pell-wrapper .pell-content p:first-child),
+	:global(.pell-wrapper .pell-content h1:first-child),
+	:global(.pell-wrapper .pell-content h2:first-child),
+	:global(.pell-wrapper .pell-content h3:first-child) {
+		margin-top: 0;
+	}
+
+	:global(.content-html p:last-child),
+	:global(.pell-wrapper .pell-content p:last-child) {
+		margin-bottom: 0;
+	}
+
+	:global(.content-html a),
+	:global(.pell-wrapper .pell-content a) {
+		word-break: break-all;
+	}
+
+	:global(.content-html [align="left"]),
+	:global(.pell-wrapper .pell-content [align="left"]) { text-align: left; }
+	:global(.content-html [align="center"]),
+	:global(.pell-wrapper .pell-content [align="center"]) { text-align: center; }
+	:global(.content-html [align="right"]),
+	:global(.pell-wrapper .pell-content [align="right"]) { text-align: right; }
+
+	:global(.content-html [align="left"] img),
+	:global(.content-html [align="left"] video),
+	:global(.content-html [align="left"] iframe),
+	:global(.content-html [align="left"] figure),
+	:global(.content-html img[align="left"]),
+	:global(.content-html video[align="left"]),
+	:global(.content-html iframe[align="left"]),
+	:global(.content-html figure[align="left"]),
+	:global(.pell-wrapper .pell-content [align="left"] img),
+	:global(.pell-wrapper .pell-content [align="left"] video),
+	:global(.pell-wrapper .pell-content [align="left"] iframe),
+	:global(.pell-wrapper .pell-content [align="left"] figure),
+	:global(.pell-wrapper .pell-content img[align="left"]),
+	:global(.pell-wrapper .pell-content video[align="left"]),
+	:global(.pell-wrapper .pell-content iframe[align="left"]),
+	:global(.pell-wrapper .pell-content figure[align="left"]) {
+		margin-left: 0;
+		margin-right: auto;
+	}
+
+	:global(.content-html [align="right"] img),
+	:global(.content-html [align="right"] video),
+	:global(.content-html [align="right"] iframe),
+	:global(.content-html [align="right"] figure),
+	:global(.content-html img[align="right"]),
+	:global(.content-html video[align="right"]),
+	:global(.content-html iframe[align="right"]),
+	:global(.content-html figure[align="right"]),
+	:global(.pell-wrapper .pell-content [align="right"] img),
+	:global(.pell-wrapper .pell-content [align="right"] video),
+	:global(.pell-wrapper .pell-content [align="right"] iframe),
+	:global(.pell-wrapper .pell-content [align="right"] figure),
+	:global(.pell-wrapper .pell-content img[align="right"]),
+	:global(.pell-wrapper .pell-content video[align="right"]),
+	:global(.pell-wrapper .pell-content iframe[align="right"]),
+	:global(.pell-wrapper .pell-content figure[align="right"]) {
+		margin-left: auto;
+		margin-right: 0;
+	}
+
+	:global(.content-html [align="center"] img),
+	:global(.content-html [align="center"] video),
+	:global(.content-html [align="center"] iframe),
+	:global(.content-html [align="center"] figure),
+	:global(.content-html img[align="center"]),
+	:global(.content-html video[align="center"]),
+	:global(.content-html iframe[align="center"]),
+	:global(.content-html figure[align="center"]),
+	:global(.pell-wrapper .pell-content [align="center"] img),
+	:global(.pell-wrapper .pell-content [align="center"] video),
+	:global(.pell-wrapper .pell-content [align="center"] iframe),
+	:global(.pell-wrapper .pell-content [align="center"] figure),
+	:global(.pell-wrapper .pell-content img[align="center"]),
+	:global(.pell-wrapper .pell-content video[align="center"]),
+	:global(.pell-wrapper .pell-content iframe[align="center"]),
+	:global(.pell-wrapper .pell-content figure[align="center"]) {
+		margin-left: auto;
+		margin-right: auto;
+	}
+
+	:global(.content-html figure),
+	:global(.pell-wrapper .pell-content figure) {
+		margin: 1rem auto;
+		max-width: 720px;
+	}
+
+	:global(.content-html figcaption),
+	:global(.pell-wrapper .pell-content figcaption) {
+		margin-top: 0.4rem;
+		text-align: center;
+		font-size: 0.85rem;
+		color: #5f665f;
+	}
+
+	:global(.content-html table),
+	:global(.content-html pre),
+	:global(.content-html code),
+	:global(.pell-wrapper .pell-content table),
+	:global(.pell-wrapper .pell-content pre),
+	:global(.pell-wrapper .pell-content code) {
+		max-width: 100%;
+		box-sizing: border-box;
+	}
 </style>

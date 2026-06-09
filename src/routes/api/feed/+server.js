@@ -437,7 +437,7 @@ export async function GET({ url }) {
 	const cacheKey = `bsky:feed:${cleanedQuery}:${sort}:${limit}:${cursor}:${cursorHost}`;
 
 	const cached = await getPost(cacheKey);
-	if (cached) {
+	if (cached && !forceRefresh) {
 		return new Response(JSON.stringify(cached), {
 			headers: { 'content-type': 'application/json' }
 		});
