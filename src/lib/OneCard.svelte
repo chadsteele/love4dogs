@@ -18,6 +18,8 @@
 
 	let {post, onclick = () => {}, onTagClick = () => {}} = $props()
 	let hasHydrated = $state(false)
+	let discussionComment = $state(null)
+	let loadingComment = $state(true)
 	const altCandidatesCache = new Map()
 	const altRecordCache = new Map()
 	const altLocationCache = new Map()
@@ -202,8 +204,41 @@
 		return rewriteLove4DogsUrlForLocalhost(source)
 	}
 
-	onMount(() => {
+	onMount(async () => {
 		hasHydrated = true
+		
+		const uuid = resolveCardUuid(post)
+		if (uuid) {
+			try {
+				const res = await fetch(`/api/feed?query=${encodeURIComponent(uuid)}&limit=1&chat=1`)
+				if (res.ok) {
+					const data = await res.json()
+					const posts = data?.posts || []
+					if (posts.length > 0) {
+						const firstPost = posts[0]
+						if (firstPost.imageAlts && firstPost.imageAlts.length > 0) {
+							try {
+								const payload = JSON.parse(firstPost.imageAlts[0])
+								if (payload && payload.uuid && payload.context === uuid) {
+									discussionComment = {
+										handle: firstPost.author?.handle || "anonymous",
+										name: firstPost.author?.displayName || firstPost.author?.handle || "Anonymous",
+										avatar: firstPost.author?.avatar || "",
+										text: payload.text || firstPost.text || ""
+									}
+								}
+							} catch {}
+						}
+					}
+				}
+			} catch (err) {
+				console.error("Failed to load discussion comment for card:", uuid, err)
+			} finally {
+				loadingComment = false
+			}
+		} else {
+			loadingComment = false
+		}
 	})
 
 	function getCardTitle() {
@@ -569,7 +604,7 @@
 					post?.author?.displayName || post?.author?.handle || "",
 				).trim(),
 	)
-	const comments = $derived(post?.comments || [])
+
 	const locationFields = $derived(extractLocationFields(post))
 	const locationLine = $derived(
 		formatDisplayAddress({
@@ -667,34 +702,31 @@
 				<span class="stat-date"><DateTime tag="span" value={post.createdAt} /></span>
 			{/if}
 		</div>
-		{#if post.replyCount > 0 && comments.length > 0}
+		{#if discussionComment}
 			<ul class="comments-list">
-				{#each comments as c}
-					<li class="comment">
-						{#if c.avatar}
-							<img
-								class="comment-avatar"
-								src={c.avatar}
-								alt={`@${c.handle}`}
-								loading="lazy"
-							/>
-						{:else}
-							<span
-								class="comment-avatar comment-avatar-fallback"
-								aria-hidden="true"
-							></span>
-						{/if}
-						<div class="comment-main">
-							<span class="comment-author">@{c.handle}</span>
-							<span class="comment-text">{c.text}</span>
-						</div>
-					</li>
-				{/each}
+				<li class="comment">
+					{#if discussionComment.avatar}
+						<img
+							class="comment-avatar"
+							src={discussionComment.avatar}
+							alt={`@${discussionComment.handle}`}
+							loading="lazy"
+						/>
+					{:else}
+						<span
+							class="comment-avatar comment-avatar-fallback"
+							aria-hidden="true"
+						></span>
+					{/if}
+					<div class="comment-main">
+						<span class="comment-author">@{discussionComment.handle}</span>
+						<span class="comment-text">{discussionComment.text}</span>
+					</div>
+				</li>
 			</ul>
 			<div class="comment-compose-disabled" aria-hidden="true">
 				<div class="comment-input-disabled">
 					Add your comments 
-					<span class="bluesky-icon" aria-hidden="true">{@html siBluesky.svg}</span>
 				</div>
 				<div class="comment-submit-disabled">Submit</div>
 			</div>
