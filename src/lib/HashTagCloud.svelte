@@ -1,7 +1,6 @@
 <script>
 	import {defaultHashtags} from "$lib/config"
 	import {tagCountsStore} from "$lib/tagCountsStore.svelte"
-	import {tagCloudStore} from "$lib/tagCloudStore.svelte"
 
 	/** @type {{ activeTags: string[] | Set<string>, onToggle: (tag: string) => void }} */
 	let {
@@ -42,59 +41,33 @@
 	})
 </script>
 
-{#if tagCloudStore.state !== 'hidden'}
-	<div class="tag-cloud" class:stacked={tagCloudStore.state === 'stacked'}>
-		<div class="tag-cloud-inner" class:stacked={tagCloudStore.state === 'stacked'}>
-			{#each sortedHashtags as tag}
-				<button
-					type="button"
-					class="pill"
-					class:active={isActive(tag)}
-					onclick={() => handleToggle(tag)}
-				>
-					{tag}
-				</button>
-			{/each}
-		</div>
+<div class="tag-cloud">
+	<div class="tag-cloud-inner">
+		{#each sortedHashtags as tag}
+			<button
+				type="button"
+				class="pill"
+				class:active={isActive(tag)}
+				onclick={() => handleToggle(tag)}
+			>
+				{tag}
+			</button>
+		{/each}
 	</div>
-{/if}
+</div>
 
 <style>
 	.tag-cloud {
 		display: block;
 		width: 100%;
-		overflow-x: auto;
-		scrollbar-width: thin;
-		scrollbar-color: rgba(59, 110, 79, 0.3) transparent;
 		padding-bottom: 0.35rem;
-	}
-	.tag-cloud.stacked {
-		overflow-x: visible;
-		padding-bottom: 0;
-	}
-
-	.tag-cloud::-webkit-scrollbar {
-		height: 4px;
-	}
-	.tag-cloud-track {
-		background: transparent;
-	}
-	.tag-cloud::-webkit-scrollbar-thumb {
-		background: rgba(59, 110, 79, 0.3);
-		border-radius: 99px;
-	}
-	.tag-cloud::-webkit-scrollbar-thumb:hover {
-		background: rgba(59, 110, 79, 0.55);
 	}
 
 	.tag-cloud-inner {
 		display: flex;
-		flex-wrap: nowrap;
+		flex-wrap: wrap;
 		gap: 0.35rem;
 		padding: 0.1rem 0.2rem;
-	}
-	.tag-cloud-inner.stacked {
-		flex-wrap: wrap;
 	}
 
 	.pill {

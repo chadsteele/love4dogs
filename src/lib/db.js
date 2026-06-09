@@ -363,6 +363,22 @@ export async function enqueueSync(item) {
 	});
 }
 
+export async function updateSyncItem(id, item) {
+	const db = await getDB();
+	const unwrapped = unwrap(item);
+	if (!db) {
+		memoryStores.syncQueue.set(id, unwrapped);
+		return;
+	}
+	return new Promise((resolve, reject) => {
+		const tx = db.transaction('syncQueue', 'readwrite');
+		const store = tx.objectStore('syncQueue');
+		const req = store.put(unwrapped, id);
+		req.onsuccess = () => resolve();
+		req.onerror = () => reject(req.error);
+	});
+}
+
 export async function getSyncQueue() {
 	const db = await getDB();
 	if (!db) {

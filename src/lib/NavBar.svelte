@@ -21,10 +21,7 @@
 		Plus,
 		User,
 		EyeOff,
-		ChevronsLeftRight,
-		LayoutGrid,
 	} from "lucide-svelte"
-	import {tagCloudStore} from "$lib/tagCloudStore.svelte"
 
 
 	const verifiedProfileUuids = new Set()
@@ -187,6 +184,9 @@
 		} else {
 			searchTerm = (normalizedSearch + " " + tag.replace(/[^a-zA-Z0-9 ]/g, "")).replace(/\s+/g, " ").trim()
 		}
+		if (searchInputEl) {
+			searchInputEl.focus()
+		}
 		onSearchInput()
 	}
 
@@ -232,15 +232,28 @@
 		}
 	})
 
-	const hashtagStateTitle = $derived.by(() => {
-		if (tagCloudStore.state === "normal") {
-			return "Hashtags: Scroll horizontally (Click to stack)"
-		} else if (tagCloudStore.state === "stacked") {
-			return "Hashtags: Stacked vertically (Click to hide)"
-		} else {
-			return "Hashtags: Hidden (Click to show scrollable)"
+	let isFocused = $state(false)
+	let searchInputEl = $state(null)
+	let blurTimeout
+
+	function handleFocus() {
+		if (blurTimeout) clearTimeout(blurTimeout)
+		isFocused = true
+	}
+
+	function handleBlur() {
+		blurTimeout = setTimeout(() => {
+			if (typeof document !== 'undefined' && !document.activeElement?.closest('.search-container')) {
+				isFocused = false
+			}
+		}, 200)
+	}
+
+	function focusSearchInput() {
+		if (searchInputEl) {
+			searchInputEl.focus()
 		}
-	})
+	}
 </script>
 
 <nav class="topbar">
@@ -328,18 +341,25 @@
 	</div>
 
 	{#if showSearch}
-		<div class="search-container">
+		<div class="search-container" class:focused={isFocused}>
 			<form
 				class="search"
+				onclick={focusSearchInput}
 				onsubmit={(event) => {
 					event.preventDefault()
 					handleSearchSubmit()
 				}}
 			>
-				<Search size={18} />
+				<Search size={16} />
+				{#if !isFocused}
+					<span class="search-placeholder-label">Search</span>
+				{/if}
 				<input
+					bind:this={searchInputEl}
 					type="search"
 					bind:value={searchTerm}
+					onfocus={handleFocus}
+					onblur={handleBlur}
 					oninput={(e) => {
 						const target = e.currentTarget
 						const rawValue = target.value
@@ -368,23 +388,10 @@
 					placeholder="Search"
 				/>
 				<button type="submit">Search</button>
-				<button
-					type="button"
-					class="hashtag-toggle-btn"
-					onclick={() => tagCloudStore.toggle()}
-					title={hashtagStateTitle}
-					aria-label={hashtagStateTitle}
-				>
-					{#if tagCloudStore.state === 'normal'}
-						<ChevronsLeftRight size={14} />
-					{:else if tagCloudStore.state === 'stacked'}
-						<LayoutGrid size={14} />
-					{:else}
-						<EyeOff size={14} />
-					{/if}
-				</button>
 			</form>
-			<HashTagCloud activeTags={activeSearchTags} onToggle={toggleTagInSearch} />
+			<div class="hashtag-cloud-wrapper" class:open={isFocused}>
+				<HashTagCloud activeTags={activeSearchTags} onToggle={toggleTagInSearch} />
+			</div>
 		</div>
 	{/if}
 
@@ -642,24 +649,56 @@
 	.search-container {
 		display: flex;
 		flex-direction: column;
-		gap: 0.45rem;
+		width: 100px;
+		min-width: 0;
+		flex: 0 0 100px;
+		max-width: 100%;
+		margin-left: auto;
+		box-sizing: border-box;
+		transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+		            flex 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+		            min-width 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+	}
+	.search-container.focused {
 		width: min(100%, 470px);
 		min-width: min(375px, 100%);
 		flex: 1 1 375px;
-		max-width: 100%;
-		box-sizing: border-box;
 	}
 
 	.search {
 		display: flex;
 		align-items: center;
-		gap: 0.6rem;
-		padding: 0.4rem 0.55rem;
+		gap: 0.4rem;
+		padding: 0.45rem 0.85rem;
 		border-radius: 999px;
-		background: #fffdf8;
-		border: 1px solid rgba(48, 80, 54, 0.2);
+		background: #3b6e4f;
+		border: 1px solid #305741;
+		color: #fff;
 		width: 100%;
 		box-sizing: border-box;
+		cursor: pointer;
+		justify-content: center;
+		transition: background 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+		            border-color 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+		            color 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+		            padding 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+	}
+	.search-container.focused .search {
+		background: #fffdf8;
+		border-color: rgba(48, 80, 54, 0.2);
+		color: #3b5e47;
+		cursor: default;
+		justify-content: flex-start;
+		padding: 0.4rem 0.55rem;
+		box-shadow: none;
+	}
+
+	.search-placeholder-label {
+		font-weight: 600;
+		font-size: 0.88rem;
+		user-select: none;
+		white-space: nowrap;
 	}
 
 	.search input {
@@ -668,6 +707,34 @@
 		background: transparent;
 		flex: 1;
 		font-size: 0.95rem;
+		color: inherit;
+		transition: width 0.35s ease, opacity 0.2s ease, padding 0.35s ease;
+	}
+	.search-container:not(.focused) .search input {
+		width: 0;
+		max-width: 0;
+		opacity: 0;
+		padding: 0;
+		margin: 0;
+		pointer-events: none;
+	}
+
+	.search :global(svg) {
+		color: currentColor;
+		flex-shrink: 0;
+		transition: transform 0.2s ease;
+	}
+	.search:hover :global(svg) {
+		transform: scale(1.1);
+	}
+
+	.search input::placeholder {
+		color: #8fa396;
+		opacity: 0.8;
+		transition: opacity 0.25s ease;
+	}
+	.search-container:not(.focused) .search input::placeholder {
+		opacity: 0.5;
 	}
 
 	.search button {
@@ -678,42 +745,49 @@
 		border-radius: 999px;
 		font-weight: 600;
 		cursor: pointer;
-	}
-	
-	.search .hashtag-toggle-btn {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		height: 32px;
-		width: 32px;
-		border-radius: 50%;
-		border: 1px solid #c4b89e;
-		background: linear-gradient(180deg, #fffdf9 0%, #f8f1e6 100%);
-		color: #3b5e47;
-		cursor: pointer;
-		flex-shrink: 0;
-		transition:
-			background 0.12s,
-			color 0.12s,
-			border-color 0.12s,
-			box-shadow 0.12s,
-			transform 0.08s;
+		opacity: 0;
+		visibility: hidden;
+		width: 0;
 		padding: 0;
+		margin: 0;
+		overflow: hidden;
+		pointer-events: none;
+		transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+		            transform 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+		            width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+		            padding 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+		            margin 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+		            visibility 0.25s;
+		transform: scale(0.8);
+		flex-shrink: 0;
 	}
-	.search .hashtag-toggle-btn:hover {
-		border-color: #3b6e4f;
-		background: #e8f3eb;
-		box-shadow: 0 1px 0 rgba(59, 110, 79, 0.2);
-		color: #3b6e4f;
+	.search-container.focused .search button {
+		opacity: 1;
+		visibility: visible;
+		width: auto;
+		padding: 0.5rem 0.95rem;
+		pointer-events: auto;
+		transform: scale(1);
 	}
-	.search .hashtag-toggle-btn:active {
-		transform: translateY(1px);
+
+	.hashtag-cloud-wrapper {
+		max-height: 0;
+		opacity: 0;
+		transform: translateY(-8px);
+		overflow: hidden;
+		transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+		            opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+		            transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+		            margin-top 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+		margin-top: 0;
+		pointer-events: none;
 	}
-	.search .hashtag-toggle-btn :global(svg) {
-		transition: transform 0.2s ease;
-	}
-	.search .hashtag-toggle-btn:hover :global(svg) {
-		transform: scale(1.15);
+	.hashtag-cloud-wrapper.open {
+		max-height: 300px;
+		opacity: 1;
+		transform: translateY(0);
+		margin-top: 0.45rem;
+		pointer-events: auto;
 	}
 
 	.post-route-btn {

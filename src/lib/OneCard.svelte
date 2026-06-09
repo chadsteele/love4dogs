@@ -10,6 +10,7 @@
 	} from "lucide-svelte"
 	import {siBluesky} from "simple-icons"
 	import TagPills from "$lib/TagPills.svelte"
+	import ImageLayout from "$lib/ImageLayout.svelte"
 	import AuthorRow from "$lib/AuthorRow.svelte"
 	import DateTime from "$lib/DateTime.svelte"
 	import {formatDisplayAddress} from "$lib/addressFormat"
@@ -532,6 +533,15 @@
 	const cardDescription = $derived(getCardDescription())
 	const primaryImage = $derived(getPrimaryImage())
 	const profilePic = $derived(getProfilePic())
+	const postImages = $derived.by(() => {
+		if (postType === "profile") {
+			return primaryImage ? [primaryImage] : [];
+		}
+		if (Array.isArray(post?.images) && post.images.length > 0) {
+			return post.images.map(img => normalizeImageUrl(img));
+		}
+		return primaryImage ? [primaryImage] : [];
+	})
 	const resolvedTags = $derived(resolvePostTags(post))
 	const hasTestTag = $derived(resolvedTags.includes("test"))
 	const postType = $derived(
@@ -735,6 +745,12 @@
 	.one-card:hover {
 		transform: translateY(-2px);
 		box-shadow: 0 4px 16px rgba(46, 28, 12, 0.12);
+	}
+
+	.card-image-layout {
+		position: relative;
+		width: 100%;
+		overflow: hidden;
 	}
 
 	.card-image {

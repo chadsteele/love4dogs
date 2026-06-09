@@ -302,6 +302,62 @@ function isReplyPost(item) {
 	return Boolean(item?.reply || record?.reply?.parent?.uri || record?.reply?.root?.uri);
 }
 
+function hasChatTag(post) {
+	if (!post) return false;
+	const record = post.record || {};
+	const tags = [
+		...(Array.isArray(post.tags) ? post.tags : []),
+		...(Array.isArray(record.tags) ? record.tags : [])
+	].map(t => String(t || '').trim().toLowerCase());
+	
+	if (tags.includes('chat')) return true;
+
+	const alts = [];
+
+	// 1. Mapped post imageAlts
+	if (Array.isArray(post.imageAlts)) {
+		for (const alt of post.imageAlts) {
+			if (alt) alts.push(String(alt));
+		}
+	}
+
+	// 2. Mapped post video alt
+	if (post.video && typeof post.video === 'object') {
+		if (post.video.alt) alts.push(String(post.video.alt));
+	}
+
+	// 3. Raw post embeds
+	const embed = post.embed || record.embed;
+	if (embed) {
+		const media = embed.$type === 'app.bsky.embed.recordWithMedia#view' || embed.$type === 'app.bsky.embed.recordWithMedia'
+			? embed.media
+			: embed;
+		const images = media?.$type === 'app.bsky.embed.images#view' || media?.$type === 'app.bsky.embed.images'
+			? media.images || []
+			: [];
+		for (const image of images) {
+			if (image?.alt) alts.push(String(image.alt));
+		}
+		if ((media?.$type === 'app.bsky.embed.video#view' || media?.$type === 'app.bsky.embed.video') && media.alt) {
+			alts.push(String(media.alt));
+		}
+	}
+
+	// 4. Check for JSON serialized payloads containing tags or context
+	for (const alt of alts) {
+		if (alt.includes('"chat"') || alt.includes('"context"')) {
+			try {
+				const parsed = JSON.parse(alt);
+				if (parsed && (parsed.tags?.includes('chat') || (parsed.context !== undefined && parsed.context !== null))) {
+					return true;
+				}
+			} catch {}
+		}
+	}
+
+	return false;
+}
+
 async function xrpcGet(pathAndQuery, options) {
 	const preferredHost = String(options?.preferredHost || '').trim();
 	const hostOrder = preferredHost
@@ -432,9 +488,10 @@ export async function GET({ url }) {
 	const cursor = url.searchParams.get('cursor')?.trim() || '';
 	const cursorHost = url.searchParams.get('cursorHost')?.trim() || '';
 	const forceRefresh = url.searchParams.get('refresh') === '1';
+	const isChatRequest = url.searchParams.get('chat') === '1';
 
 	const cleanedQuery = query.replace(/\bnear\s+me\b/gi, '').trim().replace(/\s+/g, ' ');
-	const cacheKey = `bsky:feed:${cleanedQuery}:${sort}:${limit}:${cursor}:${cursorHost}`;
+	const cacheKey = `bsky:feed:${cleanedQuery}:${sort}:${limit}:${cursor}:${cursorHost}:${isChatRequest ? 'chat' : 'post'}`;
 
 	const cached = await getPost(cacheKey);
 	if (cached && !forceRefresh) {
@@ -519,6 +576,13 @@ export async function GET({ url }) {
 		let posts = (searchJson.posts || [])
 			.filter((post) => !isReplyPost(post) && extractPostIdentity({ post }))
 			.map((post) => mapPost({ post }));
+
+		if (isChatRequest) {
+			posts = posts.filter(post => hasChatTag(post));
+		} else {
+			posts = posts.filter(post => !hasChatTag(post));
+		}
+
 		posts = dedupePosts(posts);
 		posts = await hydratePostComments(posts);
 
@@ -578,7 +642,13 @@ export async function GET({ url }) {
 	);
 	const commonRecentTags = countTopTags(feedItems, 20);
 
-	let posts = dedupePosts(feedItems.map(mapPost));
+	let posts = feedItems.map(mapPost);
+	if (isChatRequest) {
+		posts = posts.filter(post => hasChatTag(post));
+	} else {
+		posts = posts.filter(post => !hasChatTag(post));
+	}
+	posts = dedupePosts(posts);
 	posts = await hydratePostComments(posts);
 
 	const responseData = {

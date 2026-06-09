@@ -7,7 +7,7 @@
 	import ProfilePostHeader from "$lib/ProfilePostHeader.svelte"
 	import AuthorRow from "$lib/AuthorRow.svelte"
 	import {deriveBundleCreatedAtMs} from "$lib/dateTime"
-	import {CircleAlert as NoticeIcon, User, EllipsisVertical as SettingsIcon, Pencil, Eye, EyeOff, UserX, UserCheck, Flag, Key, Trash2} from "lucide-svelte"
+	import {CircleAlert as NoticeIcon, User, Ellipsis as SettingsIcon, Pencil, Eye, EyeOff, UserX, UserCheck, Flag, Key, Trash2} from "lucide-svelte"
 	import {readSearchTerm, writeSearchTerm} from "$lib/searchStore"
 	import { getProfile, setProfile, getAllPosts, setPost, getSetting, setSetting, deletePost } from "$lib/db"
 	import {listStoredProfiles, getCurrentProfileUuid} from "$lib/profileRegistry"

@@ -121,6 +121,62 @@ function isReplyPost(item) {
 	return Boolean(item?.reply || record?.reply?.parent?.uri || record?.reply?.root?.uri);
 }
 
+function hasChatTag(post) {
+	if (!post) return false;
+	const record = post.record || {};
+	const tags = [
+		...(Array.isArray(post.tags) ? post.tags : []),
+		...(Array.isArray(record.tags) ? record.tags : [])
+	].map(t => String(t || '').trim().toLowerCase());
+	
+	if (tags.includes('chat')) return true;
+
+	const alts = [];
+
+	// 1. Mapped post imageAlts
+	if (Array.isArray(post.imageAlts)) {
+		for (const alt of post.imageAlts) {
+			if (alt) alts.push(String(alt));
+		}
+	}
+
+	// 2. Mapped post video alt
+	if (post.video && typeof post.video === 'object') {
+		if (post.video.alt) alts.push(String(post.video.alt));
+	}
+
+	// 3. Raw post embeds
+	const embed = post.embed || record.embed;
+	if (embed) {
+		const media = embed.$type === 'app.bsky.embed.recordWithMedia#view' || embed.$type === 'app.bsky.embed.recordWithMedia'
+			? embed.media
+			: embed;
+		const images = media?.$type === 'app.bsky.embed.images#view' || media?.$type === 'app.bsky.embed.images'
+			? media.images || []
+			: [];
+		for (const image of images) {
+			if (image?.alt) alts.push(String(image.alt));
+		}
+		if ((media?.$type === 'app.bsky.embed.video#view' || media?.$type === 'app.bsky.embed.video') && media.alt) {
+			alts.push(String(media.alt));
+		}
+	}
+
+	// 4. Check for JSON serialized payloads containing tags or context
+	for (const alt of alts) {
+		if (alt.includes('"chat"') || alt.includes('"context"')) {
+			try {
+				const parsed = JSON.parse(alt);
+				if (parsed && (parsed.tags?.includes('chat') || (parsed.context !== undefined && parsed.context !== null))) {
+					return true;
+				}
+			} catch {}
+		}
+	}
+
+	return false;
+}
+
 function mapPost(post) {
 	const record = post?.record || {};
 	const images = [];
@@ -337,7 +393,13 @@ function tryAddMappedPost({ postLike, approximate, posts, seen, pageStats, autho
 		return;
 	}
 
-	const mapped = mapPost(postLike.post ? postLike.post : postLike);
+	const postObj = postLike.post ? postLike.post : postLike;
+	if (hasChatTag(postObj)) {
+		pageStats.skippedChat = (pageStats.skippedChat || 0) + 1;
+		return;
+	}
+
+	const mapped = mapPost(postObj);
 	const uuid = extractUuidFromMappedPost(mapped);
 	if (!uuid) {
 		pageStats.skippedNoUuid = (pageStats.skippedNoUuid || 0) + 1;
@@ -544,8 +606,8 @@ async function collectFromAuthorFeed({ author, approximate, posts, seen, allFail
 		const found = Array.isArray(json.feed) ? json.feed : [];
 
 		for (const item of found) {
-			const post = item?.post;
 			if (!post || !post.uri || allSeenUris.has(post.uri) || isReplyPost(item)) continue;
+			if (hasChatTag(post)) continue;
 			allSeenUris.add(post.uri);
 			// Extract all approximate hashes found in this post's text/facets
 			// We store ALL approximate hashes so any hash cell can match

@@ -2,11 +2,23 @@
 	import { onMount } from "svelte";
 	import { page } from "$app/state";
 	import { generateUuid } from "$lib/uuid.js";
-	import { getProfile, setPost } from "$lib/db.js";
+	import {
+		getProfile,
+		getPost,
+		setPost,
+		enqueueSync,
+		getSyncQueue,
+		deleteSyncItem,
+		updateSyncItem,
+		getOfflineImage,
+		setOfflineImage,
+		deleteOfflineImage
+	} from "$lib/db.js";
 	import { listStoredProfiles, getCurrentProfileUuid } from "$lib/profileRegistry.js";
 	import { buildCompressedTimestamp, parseTimestampMs, formatRelativeDateTime } from "$lib/dateTime.js";
 	import { MessageSquare, Image, X, Reply, RefreshCw, Send, AlertTriangle, CornerDownRight, ArrowUpRight } from "lucide-svelte";
 	import { goto } from "$app/navigation";
+	import ImageLayout from "$lib/ImageLayout.svelte";
 
 	// Props
 	let { context } = $props();
@@ -27,8 +39,8 @@
 
 	// Form input state
 	let commentText = $state("");
-	let attachedImage = $state(null); // File object
-	let attachedImagePreview = $state(""); // object URL preview
+	let attachedImages = $state([]); // Array of File objects
+	let attachedImagePreviews = $state([]); // Array of object URL previews
 	let replyingToComment = $state(null); // Comment object
 
 	const charLimit = 300;
@@ -88,15 +100,19 @@
 
 	async function loadAuthorProfiles(uuids) {
 		const uniqueUuids = [...new Set(uuids.filter(Boolean))];
+		const newDetails = {};
 		const promises = uniqueUuids.map(async (uuid) => {
 			if (authorProfiles[uuid]) return;
 			const details = await getProfileDetails(uuid);
-			authorProfiles = {
-				...authorProfiles,
-				[uuid]: details
-			};
+			newDetails[uuid] = details;
 		});
 		await Promise.all(promises);
+		if (Object.keys(newDetails).length > 0) {
+			authorProfiles = {
+				...authorProfiles,
+				...newDetails
+			};
+		}
 	}
 
 	// Dynamic calculation of missing priors
@@ -114,14 +130,15 @@
 		const commentMap = new Map();
 		const roots = [];
 
-		const sorted = [...comments].sort((a, b) => {
-			const timeA = parseTimestampMs(a.stamp, { allowBase36: true }) || 0;
-			const timeB = parseTimestampMs(b.stamp, { allowBase36: true }) || 0;
-			return timeA - timeB;
-		});
+		const sorted = comments
+			.map(c => ({ ...c, replies: [] }))
+			.sort((a, b) => {
+				const timeA = parseTimestampMs(a.stamp, { allowBase36: true }) || 0;
+				const timeB = parseTimestampMs(b.stamp, { allowBase36: true }) || 0;
+				return timeA - timeB;
+			});
 
 		for (const c of sorted) {
-			c.replies = [];
 			commentMap.set(c.uuid, c);
 		}
 
@@ -136,10 +153,173 @@
 		return roots;
 	});
 
+	// Module-level sync lock initialization
+	if (globalThis.__love4dogsSyncQueueProcessing === undefined) {
+		globalThis.__love4dogsSyncQueueProcessing = false;
+	}
+
+	async function mergeSyncQueueComments(existingComments) {
+		try {
+			const queue = await getSyncQueue();
+			const contextQueue = queue.filter(item => item.context === context);
+			if (contextQueue.length === 0) return existingComments;
+
+			const existingUuids = new Set(existingComments.map(c => c.uuid));
+			const merged = [...existingComments];
+
+			for (const item of contextQueue) {
+				if (!existingUuids.has(item.uuid)) {
+					const syncComment = {
+						uuid: item.uuid,
+						context: item.context,
+						prior: item.prior,
+						stamp: item.stamp,
+						author: item.author,
+						text: item.text,
+						img: item.imageUuids && item.imageUuids.length > 0 ? `/offline-media/${item.imageUuids[0]}` : null,
+						imgs: item.imageUuids ? item.imageUuids.map(id => `/offline-media/${id}`) : null
+					};
+					merged.push(syncComment);
+				}
+			}
+			return merged;
+		} catch (err) {
+			console.warn("Failed to merge sync queue comments:", err);
+			return existingComments;
+		}
+	}
+
+	async function processQueueItem(item) {
+		let resolvedBlobs = [];
+		let uploadedImgUrls = [];
+
+		// 1. Upload images if any
+		if (item.imageUuids && item.imageUuids.length > 0) {
+			for (const imgUuid of item.imageUuids) {
+				const blob = await getOfflineImage(imgUuid);
+				if (!blob) {
+					throw new Error(`Offline image ${imgUuid} not found`);
+				}
+				const fd = new FormData();
+				fd.append("mode", "upload-media");
+				fd.append("file", blob);
+				const uploadRes = await fetch("/api/post", { method: "POST", body: fd });
+				if (!uploadRes.ok) {
+					const errData = await uploadRes.json().catch(() => ({}));
+					throw new Error(errData.error || `Image upload failed for ${imgUuid}`);
+				}
+				const uploadData = await uploadRes.json();
+				resolvedBlobs.push(uploadData.blob);
+				uploadedImgUrls.push(uploadData.url);
+			}
+		} else {
+			// Fallback: use author's profilePic as carrier, but don't set it in alt JSON img field
+			const details = await getProfileDetails(item.author);
+			const profilePicUrl = details?.profilePic || "";
+			const fallbackBlob = await resolveCarrierBlob(profilePicUrl);
+			resolvedBlobs = [fallbackBlob];
+		}
+
+		// 2. Construct altPayload
+		const altPayload = {
+			uuid: item.uuid,
+			context: item.context,
+			prior: item.prior,
+			stamp: item.stamp,
+			author: item.author,
+			text: item.text,
+			img: uploadedImgUrls.length > 0 ? uploadedImgUrls[0] : null,
+			imgs: uploadedImgUrls.length > 0 ? uploadedImgUrls : null
+		};
+
+		// 3. Post to API
+		const postFd = new FormData();
+		postFd.append("text", item.text);
+		postFd.append("tags", JSON.stringify(["chat", item.context]));
+
+		const uploadedMedia = [];
+		for (let i = 0; i < resolvedBlobs.length; i++) {
+			uploadedMedia.push({
+				kind: "image",
+				blob: resolvedBlobs[i],
+				alt: i === 0 ? JSON.stringify(altPayload) : `Attachment ${i + 1}`
+			});
+		}
+		postFd.append("uploadedMedia", JSON.stringify(uploadedMedia));
+
+		const postRes = await fetch("/api/post", { method: "POST", body: postFd });
+		if (!postRes.ok) {
+			const errData = await postRes.json().catch(() => ({}));
+			throw new Error(errData.error || "Failed to publish comment to Bluesky");
+		}
+	}
+
+	async function startQueueProcessor() {
+		if (globalThis.__love4dogsSyncQueueProcessing) return;
+		globalThis.__love4dogsSyncQueueProcessing = true;
+		console.log("[Sync Queue] Background queue processor started.");
+		try {
+			while (true) {
+				const queue = await getSyncQueue();
+				// Filter queue items that are pending or failed and have retryCount < 10
+				const nextItem = queue.find(item => item.status !== 'syncing' && (item.retryCount || 0) < 10);
+				if (!nextItem) {
+					break;
+				}
+
+				// Mark as syncing in IndexedDB
+				nextItem.status = 'syncing';
+				await updateSyncItem(nextItem.id, nextItem);
+
+				let success = false;
+				try {
+					console.log(`[Sync Queue] Processing queue item ${nextItem.id} (attempt ${nextItem.retryCount + 1}/10)...`);
+					await processQueueItem(nextItem);
+					success = true;
+				} catch (err) {
+					console.error(`[Sync Queue] Queue item ${nextItem.id} failed:`, err);
+				}
+
+				if (success) {
+					console.log(`[Sync Queue] Queue item ${nextItem.id} completed successfully.`);
+					await deleteSyncItem(nextItem.id);
+					if (nextItem.imageUuids) {
+						for (const imgUuid of nextItem.imageUuids) {
+							await deleteOfflineImage(imgUuid);
+						}
+					}
+					// Trigger a background refresh to pull down indexed comments from Bluesky
+					fetchComments().catch(() => {});
+				} else {
+					nextItem.retryCount = (nextItem.retryCount || 0) + 1;
+					nextItem.status = 'pending';
+					await updateSyncItem(nextItem.id, nextItem);
+
+					if (nextItem.retryCount >= 10) {
+						console.warn(`[Sync Queue] Queue item ${nextItem.id} exceeded max retries. Discarding.`);
+						await deleteSyncItem(nextItem.id);
+						if (nextItem.imageUuids) {
+							for (const imgUuid of nextItem.imageUuids) {
+								await deleteOfflineImage(imgUuid);
+							}
+						}
+					} else {
+						console.log(`[Sync Queue] Waiting 10 seconds before next retry of item ${nextItem.id}...`);
+						await new Promise(resolve => setTimeout(resolve, 10000));
+					}
+				}
+			}
+		} finally {
+			globalThis.__love4dogsSyncQueueProcessing = false;
+			console.log("[Sync Queue] Background queue processor finished.");
+		}
+	}
+
 	// Initial loading & profile checks
 	onMount(async () => {
 		await loadSessionProfile();
 		await fetchComments();
+		startQueueProcessor().catch(err => console.error("Error starting queue processor", err));
 	});
 
 	async function loadSessionProfile() {
@@ -155,11 +335,40 @@
 	}
 
 	async function fetchComments() {
-		loading = true;
+		const currentCacheKey = `bsky:feed:${context}:latest:20::`;
 		error = "";
+		let cacheLoaded = false;
+
+		// 1. Try to load from local IndexedDB cache first
 		try {
-			// Fetch 20 most recent comments, refresh cache
-			const res = await fetch(`/api/feed?query=${encodeURIComponent(context)}&limit=20&refresh=1`);
+			const cachedData = await getPost(currentCacheKey);
+			if (cachedData && Array.isArray(cachedData.posts)) {
+				const fetched = [];
+				for (const post of cachedData.posts) {
+					if (post.imageAlts && post.imageAlts.length > 0) {
+						try {
+							const payload = JSON.parse(post.imageAlts[0]);
+							if (payload && payload.uuid && payload.context === context && payload.author) {
+								fetched.push(payload);
+							}
+						} catch {}
+					}
+				}
+				comments = await mergeSyncQueueComments(fetched);
+				// Load profiles for these comments immediately
+				const authorUuids = comments.map(c => c.author);
+				await loadAuthorProfiles(authorUuids);
+				// Hide skeleton loader immediately since cache loaded successfully
+				loading = false;
+				cacheLoaded = true;
+			}
+		} catch (err) {
+			console.warn("Failed to load comments from local cache:", err);
+		}
+
+		// 2. Fetch latest comments from the SvelteKit API (network)
+		try {
+			const res = await fetch(`/api/feed?query=${encodeURIComponent(context)}&limit=20&refresh=1&chat=1`);
 			if (!res.ok) throw new Error("Failed to load comments feed");
 			const data = await res.json();
 			const posts = data?.posts || [];
@@ -176,12 +385,42 @@
 				}
 			}
 
-			comments = fetched;
+			// Merge local pending comments that haven't been indexed by Bluesky yet (within last 2 minutes)
+			const fetchedUuids = new Set(fetched.map(c => c.uuid));
+			const nowMs = Date.now();
+			const localPending = comments.filter(c => {
+				if (fetchedUuids.has(c.uuid)) return false;
+				if (c.author !== currentProfileUuid) return false;
+				const stampMs = parseTimestampMs(c.stamp, { allowBase36: true }) || 0;
+				return (nowMs - stampMs) < 2 * 60 * 1000;
+			});
+
+			const mergedComments = [...fetched, ...localPending];
+			comments = await mergeSyncQueueComments(mergedComments);
+
+			// Also merge local pending posts into the database cache data
+			const cachedData = cacheLoaded ? await getPost(currentCacheKey) : null;
+			const cachedPosts = cachedData?.posts || [];
+			const fetchedUris = new Set(posts.map(p => p.uri));
+			const fetchedDisplayKeys = new Set(posts.map(p => p.displayKey));
+			const localPendingPosts = cachedPosts.filter(p => {
+				if (p.cid !== "local-pending") return false;
+				if (fetchedUris.has(p.uri) || fetchedDisplayKeys.has(p.displayKey)) return false;
+				const createdAtMs = Date.parse(p.createdAt) || 0;
+				return (nowMs - createdAtMs) < 2 * 60 * 1000;
+			});
+
+			data.posts = [...posts, ...localPendingPosts];
+			await setPost(currentCacheKey, data);
+
 			// Load profiles for these comment authors
 			const authorUuids = comments.map(c => c.author);
 			await loadAuthorProfiles(authorUuids);
 		} catch (err) {
-			error = err.message || "Unable to load comments.";
+			// Only show error if we don't have any comments loaded from cache
+			if (comments.length === 0) {
+				error = err.message || "Unable to load comments.";
+			}
 		} finally {
 			loading = false;
 		}
@@ -189,7 +428,7 @@
 
 	async function fetchCommentByUuid(uuid) {
 		try {
-			const res = await fetch(`/api/feed?query=${encodeURIComponent(uuid)}`);
+			const res = await fetch(`/api/feed?query=${encodeURIComponent(uuid)}&chat=1`);
 			if (res.ok) {
 				const data = await res.json();
 				const posts = data?.posts || [];
@@ -231,29 +470,43 @@
 
 	// Handle Image attachment
 	function handleFileChange(event) {
-		const file = event.target.files?.[0];
-		if (!file) return;
+		const files = Array.from(event.target.files || []);
+		if (files.length === 0) return;
 
-		if (!file.type.startsWith("image/")) {
-			postError = "Please select an image file.";
-			return;
-		}
-		if (file.size > 2 * 1024 * 1024) {
-			postError = "Image must be 2 MB or smaller.";
+		const remaining = 4 - attachedImages.length;
+		if (remaining <= 0) {
+			postError = "You can attach up to 4 images.";
 			return;
 		}
 
-		attachedImage = file;
-		if (attachedImagePreview) URL.revokeObjectURL(attachedImagePreview);
-		attachedImagePreview = URL.createObjectURL(file);
+		const toAdd = files.slice(0, remaining);
+		for (const file of toAdd) {
+			if (!file.type.startsWith("image/")) {
+				postError = "Please select image files only.";
+				continue;
+			}
+			if (file.size > 2 * 1024 * 1024) {
+				postError = "Each image must be 2 MB or smaller.";
+				continue;
+			}
+			attachedImages = [...attachedImages, file];
+			attachedImagePreviews = [...attachedImagePreviews, URL.createObjectURL(file)];
+		}
 		postError = "";
+		event.target.value = "";
 	}
 
-	function removeAttachment() {
-		attachedImage = null;
-		if (attachedImagePreview) {
-			URL.revokeObjectURL(attachedImagePreview);
-			attachedImagePreview = "";
+	function removeAttachment(index) {
+		if (index === undefined) {
+			for (const preview of attachedImagePreviews) {
+				URL.revokeObjectURL(preview);
+			}
+			attachedImages = [];
+			attachedImagePreviews = [];
+		} else {
+			URL.revokeObjectURL(attachedImagePreviews[index]);
+			attachedImages = attachedImages.filter((_, i) => i !== index);
+			attachedImagePreviews = attachedImagePreviews.filter((_, i) => i !== index);
 		}
 	}
 
@@ -300,57 +553,92 @@
 		postError = "";
 
 		try {
-			let resolvedBlob = null;
-			let uploadedImgUrl = null;
+			const chatUuid = generateUuid();
+			const stamp = buildCompressedTimestamp(Date.now());
 
-			if (attachedImage) {
-				// Upload custom attached image
-				const fd = new FormData();
-				fd.append("mode", "upload-media");
-				fd.append("file", attachedImage);
-				const uploadRes = await fetch("/api/post", { method: "POST", body: fd });
-				if (!uploadRes.ok) {
-					const errData = await uploadRes.json().catch(() => ({}));
-					throw new Error(errData.error || "Image upload failed");
-				}
-				const uploadData = await uploadRes.json();
-				resolvedBlob = uploadData.blob;
-				uploadedImgUrl = uploadData.url;
-			} else {
-				// Fallback: use author's profilePic as carrier, but don't set it in alt JSON img field
-				const profilePicUrl = currentProfile?.profilePic || "";
-				resolvedBlob = await resolveCarrierBlob(profilePicUrl);
+			// Save attached images to offlineImages
+			const imageUuids = [];
+			const localImgUrls = [];
+			for (const file of attachedImages) {
+				const imgUuid = generateUuid();
+				await setOfflineImage(imgUuid, file);
+				imageUuids.push(imgUuid);
+				localImgUrls.push(`/offline-media/${imgUuid}`);
 			}
 
-			// Construct payload exactly as required
-			const chatUuid = generateUuid();
+			const syncItem = {
+				uuid: chatUuid,
+				context: context,
+				prior: replyingToComment ? replyingToComment.uuid : "",
+				stamp: stamp,
+				author: currentProfileUuid,
+				text: commentText.trim(),
+				imageUuids: imageUuids,
+				retryCount: 0,
+				status: 'pending'
+			};
+
+			await enqueueSync(syncItem);
+
+			// Construct payload for optimistic UI update
 			const altPayload = {
 				uuid: chatUuid,
 				context: context,
 				prior: replyingToComment ? replyingToComment.uuid : "",
-				stamp: buildCompressedTimestamp(Date.now()),
+				stamp: stamp,
 				author: currentProfileUuid,
 				text: commentText.trim(),
-				img: attachedImage ? uploadedImgUrl : null // Keep img null/empty if using fallback carrier
+				img: localImgUrls.length > 0 ? localImgUrls[0] : null, // Keep single img field for compatibility
+				imgs: localImgUrls.length > 0 ? localImgUrls : null  // Array of up to 4 images
 			};
 
-			const postFd = new FormData();
-			// Keep post text clean and do not append tags to post text
-			postFd.append("text", commentText.trim());
-			// Pass tags to help Bluesky index this post with context UUID
-			postFd.append("tags", JSON.stringify(["chat", context]));
-			postFd.append("uploadedMedia", JSON.stringify([
-				{
-					kind: "image",
-					blob: resolvedBlob,
-					alt: JSON.stringify(altPayload)
-				}
-			]));
+			// Optimistic Update: Add current author's details to local cache immediately
+			if (currentProfileUuid && currentProfile) {
+				authorProfiles = {
+					...authorProfiles,
+					[currentProfileUuid]: currentProfile
+				};
+			}
 
-			const postRes = await fetch("/api/post", { method: "POST", body: postFd });
-			if (!postRes.ok) {
-				const errData = await postRes.json().catch(() => ({}));
-				throw new Error(errData.error || "Failed to publish comment to Bluesky");
+			// Add the new comment locally to comments array immediately
+			comments = [...comments, altPayload];
+
+			// Cache the comment in IndexedDB so it persists across views
+			try {
+				const currentCacheKey = `bsky:feed:${context}:latest:20::`;
+				const cachedData = await getPost(currentCacheKey) || {
+					account: "love4dogs.club",
+					posts: [],
+					cursor: null,
+					cursorHost: null,
+					commonRecentTags: []
+				};
+
+				const newMappedPost = {
+					uri: `at://did:plc:local/app.bsky.feed.post/${chatUuid}`,
+					displayKey: chatUuid,
+					cid: "local-pending",
+					text: commentText.trim(),
+					author: {
+						did: currentProfileUuid,
+						handle: currentProfile?.name || "anonymous",
+						displayName: currentProfile?.name || "Anonymous",
+						avatar: currentProfile?.profilePic || ""
+					},
+					createdAt: new Date().toISOString(),
+					images: localImgUrls.length > 0 ? [...localImgUrls] : [],
+					imageAlts: [JSON.stringify(altPayload)],
+					tags: ["chat", context],
+					replyCount: 0,
+					repostCount: 0,
+					likeCount: 0,
+					comments: []
+				};
+
+				cachedData.posts = [newMappedPost, ...(cachedData.posts || [])];
+				await setPost(currentCacheKey, cachedData);
+			} catch (cacheErr) {
+				console.warn("Failed to update comments in local database cache:", cacheErr);
 			}
 
 			// Cleanup form and reply states
@@ -358,10 +646,10 @@
 			replyingToComment = null;
 			removeAttachment();
 
-			// Reload discussion comments
-			await fetchComments();
+			// Trigger the background queue processing without awaiting it
+			startQueueProcessor().catch(err => console.error("Error running queue processor", err));
 		} catch (err) {
-			postError = err.message || "An unexpected error occurred.";
+			postError = err.message || "An unexpected error occurred while saving locally.";
 		} finally {
 			posting = false;
 		}
@@ -471,12 +759,16 @@
 						disabled={posting}
 					></textarea>
 
-					{#if attachedImagePreview}
-						<div class="preview-container">
-							<img src={attachedImagePreview} alt="Attached preview" />
-							<button type="button" class="remove-preview-btn" onclick={removeAttachment} aria-label="Remove image">
-								<X size={14} />
-							</button>
+					{#if attachedImagePreviews.length > 0}
+						<div class="previews-container">
+							{#each attachedImagePreviews as preview, index}
+								<div class="preview-container">
+									<img src={preview} alt="Attached preview {index + 1}" />
+									<button type="button" class="remove-preview-btn" onclick={() => removeAttachment(index)} aria-label="Remove image">
+										<X size={14} />
+									</button>
+								</div>
+							{/each}
 						</div>
 					{/if}
 				</div>
@@ -487,9 +779,9 @@
 
 				<div class="editor-footer">
 					<div class="footer-left">
-						<label class="attach-btn" class:disabled={posting} title="Attach an image">
+						<label class="attach-btn" class:disabled={posting} title="Attach images (up to 4)">
 							<Image size={18} />
-							<input type="file" accept="image/*" onchange={handleFileChange} disabled={posting} class="hidden-input" />
+							<input type="file" accept="image/*" multiple onchange={handleFileChange} disabled={posting} class="hidden-input" />
 						</label>
 						<span class="char-counter" class:warning={charsRemaining <= 30}>
 							{charsRemaining}
@@ -531,9 +823,13 @@
 					<div class="comment-text">
 						{c.text}
 					</div>
-					{#if c.img}
+					{#if c.imgs && c.imgs.length > 0}
 						<div class="comment-attachment">
-							<img src={c.img} alt="Comment attachment" loading="lazy" />
+							<ImageLayout images={c.imgs} alt="Comment attachment" />
+						</div>
+					{:else if c.img}
+						<div class="comment-attachment">
+							<ImageLayout images={[c.img]} alt="Comment attachment" />
 						</div>
 					{/if}
 					<div class="comment-actions">
@@ -683,6 +979,7 @@
 		padding: 0.85rem 1rem;
 		box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02);
 		transition: border-color 0.2s;
+		width:fit-content;
 	}
 
 	.comment-card:hover {
@@ -751,14 +1048,15 @@
 		margin-top: 0.5rem;
 		border-radius: 8px;
 		overflow: hidden;
-		max-width: min(100%, 360px);
+		width: 360px;
+		max-width: 100%;
 		box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
 	}
 
 	.comment-attachment img {
 		display: block;
-		width: 100%;
-		height: auto;
+		width:auto;
+		height: 100px;
 	}
 
 	.comment-actions {
@@ -939,21 +1237,30 @@
 		box-sizing: border-box;
 	}
 
+	.previews-container {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		padding: 0.5rem;
+		background: rgba(0, 0, 0, 0.02);
+		border-top: 1px solid rgba(96, 71, 49, 0.1);
+	}
+
 	.preview-container {
 		display: inline-block;
 		position: relative;
-		margin: 0.5rem;
 		border-radius: 6px;
 		overflow: hidden;
 		border: 1px solid #d7c8b6;
-		max-width: 120px;
-		max-height: 120px;
+		width: 80px;
+		height: 80px;
 	}
 
 	.preview-container img {
 		display: block;
-		max-width: 100%;
-		height: auto;
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
 	}
 
 	.remove-preview-btn {
