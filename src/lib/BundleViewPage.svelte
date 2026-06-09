@@ -395,6 +395,62 @@
 			const slug = String(page.params?.slug || "")
 			const slugPath = slug ? `/${slug}` : ""
 
+			// Check if the UUID is actually a comment with a context
+			let commentContext = null
+			try {
+				// 1. Check local IndexedDB first
+				const cachedPosts = await getAllPosts()
+				for (const p of cachedPosts) {
+					if (p.posts && Array.isArray(p.posts)) {
+						for (const post of p.posts) {
+							if (post.imageAlts && post.imageAlts.length > 0) {
+								try {
+									const payload = JSON.parse(post.imageAlts[0])
+									if (payload && payload.uuid === uuid && payload.context) {
+										commentContext = payload.context
+										break
+									}
+								} catch {}
+							}
+						}
+					}
+					if (commentContext) break
+				}
+
+				// 2. If not found locally, fetch from feed API
+				if (!commentContext) {
+					const res = await fetch(`/api/feed?query=${encodeURIComponent(uuid)}&chat=1`)
+					if (res.ok) {
+						const data = await res.json()
+						const posts = data?.posts || []
+						for (const post of posts) {
+							if (post.imageAlts && post.imageAlts.length > 0) {
+								try {
+									const payload = JSON.parse(post.imageAlts[0])
+									if (payload && payload.uuid === uuid && payload.context) {
+										commentContext = payload.context
+										break
+									}
+								} catch {}
+							}
+						}
+					}
+				}
+			} catch (e) {
+				console.error("Error checking if uuid is comment:", e)
+			}
+
+			if (commentContext) {
+				const currentHash = typeof window !== "undefined" ? window.location.hash : ""
+				const targetHash = currentHash || `#${uuid}`
+				return goto(
+					`/${type}/view/${encodeURIComponent(commentContext)}${slugPath}${targetHash}`,
+					{
+						replaceState: true,
+					},
+				)
+			}
+
 			if (isProfile) {
 				const sessionBundle = readSessionBundle(uuid)
 				if (sessionBundle) {
@@ -460,8 +516,9 @@
 				editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`
 				// Route if data doesn't have profile tag
 				if (!bundleHasProfileData(bundle, jsonData)) {
+					const hash = typeof window !== "undefined" ? window.location.hash : ""
 					return goto(
-						`/post/view/${encodeURIComponent(uuid)}${slugPath}`,
+						`/post/view/${encodeURIComponent(uuid)}${slugPath}${hash}`,
 						{
 							replaceState: true,
 						},
@@ -491,8 +548,9 @@
 				await setPost(jsonData.uri || uuid, jsonData)
 				// Route if data has profile tag
 				if (bundleHasProfileData(bundle, jsonData)) {
+					const hash = typeof window !== "undefined" ? window.location.hash : ""
 					return goto(
-						`/profile/view/${encodeURIComponent(uuid)}${slugPath}`,
+						`/profile/view/${encodeURIComponent(uuid)}${slugPath}${hash}`,
 						{
 							replaceState: true,
 						},

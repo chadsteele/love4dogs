@@ -319,6 +319,59 @@
 	onMount(async () => {
 		await loadSessionProfile();
 		await fetchComments();
+		
+		// Handle automatic comment loading and scroll-to
+		const targetUuid = typeof window !== "undefined" && window.location.hash ? window.location.hash.slice(1) : "";
+		if (targetUuid) {
+			let scrolled = false;
+			const scrollTimer = setTimeout(() => {
+				if (!scrolled) {
+					scrolled = true;
+					const discussionEl = document.getElementById("discussion");
+					if (discussionEl) {
+						discussionEl.scrollIntoView({ behavior: "smooth", block: "start" });
+					}
+				}
+			}, 5000);
+
+			try {
+				// 1. Fetch target comment if not present in comments array
+				let targetComment = comments.find(c => c.uuid === targetUuid);
+				if (!targetComment) {
+					targetComment = await fetchCommentByUuid(targetUuid);
+					if (targetComment) {
+						comments = [...comments, targetComment];
+						await loadAuthorProfiles([targetComment.author]);
+					}
+				}
+
+				// 2. Resolve missing priors automatically up to 5 levels deep
+				let attempts = 0;
+				while (uniqueMissingPriors.length > 0 && attempts < 5) {
+					await handleFetchPriors();
+					attempts++;
+				}
+
+				// 3. Wait a moment for Svelte to render the comment node, then scroll
+				setTimeout(() => {
+					if (!scrolled) {
+						const commentEl = document.getElementById(`comment-${targetUuid}`);
+						if (commentEl) {
+							scrolled = true;
+							clearTimeout(scrollTimer);
+							commentEl.scrollIntoView({ behavior: "smooth", block: "center" });
+							commentEl.classList.add("highlighted-comment");
+							setTimeout(() => {
+								commentEl.classList.remove("highlighted-comment");
+							}, 3000);
+						}
+					}
+				}, 100);
+			} catch (err) {
+				console.error("Error auto-loading/scrolling to target comment:", err);
+			}
+		}
+
 		startQueueProcessor().catch(err => console.error("Error starting queue processor", err));
 	});
 
@@ -665,7 +718,7 @@
 	}
 </script>
 
-<div class="chat-section">
+<div id="discussion" class="chat-section">
 	<div class="chat-header">
 		<div class="chat-title-row">
 			<MessageSquare class="icon-green" size={24} />
@@ -805,7 +858,7 @@
 
 <!-- Recursive Snippet for Threaded Comments -->
 {#snippet commentNode(c)}
-	<div class="comment-card-wrapper">
+	<div class="comment-card-wrapper" id="comment-{c.uuid}">
 		<div class="comment-card">
 			<div class="comment-layout">
 				<a href="/profile/view/{c.author}" class="avatar-link">
@@ -1410,5 +1463,21 @@
 		0% { opacity: 0.6; }
 		50% { opacity: 0.9; }
 		100% { opacity: 0.6; }
+	}
+
+	@keyframes highlight-pulse {
+		0% {
+			background-color: rgba(59, 110, 79, 0.2);
+			box-shadow: 0 0 0 4px rgba(59, 110, 79, 0.15);
+		}
+		100% {
+			background-color: transparent;
+			box-shadow: none;
+		}
+	}
+
+	.comment-card-wrapper.highlighted-comment > .comment-card {
+		animation: highlight-pulse 2.5s ease-out;
+		border-color: rgba(59, 110, 79, 0.5) !important;
 	}
 </style>

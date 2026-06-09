@@ -1166,7 +1166,8 @@ export async function POST({ request }) {
 			}
 		}
 
-		const textWithTags = buildTextWithVisibleTags(rawText, finalTags);
+		const isChat = finalTags.map(t => String(t || '').toLowerCase()).includes('chat');
+		const textWithTags = isChat ? rawText : buildTextWithVisibleTags(rawText, finalTags);
 		const finalTextLength = [...textWithTags].length;
 		if (finalTextLength > 300) {
 			return new Response(
