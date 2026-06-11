@@ -381,20 +381,51 @@
 	const hasTestTag = $derived(displayTags.includes("test"));
 	const activeSearchTokens = $derived(new Set(getSearchTokens(searchTerm)));
 
+
 	// ── data loading ───────────────────────────────────────────────────────────
 	onMount(async () => {
 		if (window.location.hash) {
 			const targetId = window.location.hash;
-			let retries = 40;
-			let timer = setInterval(() => {
-				retries--;
-				const element = document.querySelector(targetId);
-				if (element) {
-					clearInterval(timer);
-					element.scrollIntoView({ behavior: "smooth" });
-				}
-				if (retries <= 0) clearInterval(timer);
-			}, 500);
+			let element = null;
+			try {
+				element = document.querySelector(targetId);
+			} catch {
+				// Invalid CSS selector — skip scroll
+			}
+
+			const scrollToTarget = (el) => {
+				const observer = new IntersectionObserver(
+					(entries, obs) => {
+						if (entries[0].isIntersecting) {
+							obs.disconnect();
+						} else {
+							el.scrollIntoView({ behavior: "smooth" });
+						}
+					},
+					{ threshold: 0.1 },
+				);
+				observer.observe(el);
+			};
+
+			if (element) {
+				scrollToTarget(element);
+			} else {
+				// Element not yet in DOM — wait for it via MutationObserver
+				const mutation = new MutationObserver(() => {
+					let el = null;
+					try {
+						el = document.querySelector(targetId);
+					} catch {
+						mutation.disconnect();
+						return;
+					}
+					if (el) {
+						mutation.disconnect();
+						scrollToTarget(el);
+					}
+				});
+				mutation.observe(document.body, { childList: true, subtree: true });
+			}
 		}
 
 		//---
