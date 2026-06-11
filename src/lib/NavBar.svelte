@@ -931,11 +931,7 @@
 			font-size: 0;
 		}
 
-		.edit-profile-btn::before {
-			content: "✎";
-			font-size: 1.2rem;
-			line-height: 1;
-		}
+	
 	}
 
 	@media (max-width: 480px) {

@@ -685,7 +685,7 @@
 
 	<a
 		class="post-footer"
-		href={bskyUrl(post.uri)}
+		href={cardViewHref.split("#")[0]+"#discussion"}
 		target="_blank"
 		rel="noopener noreferrer"
 		onclick={(e) => e.stopPropagation()}
@@ -734,7 +734,7 @@
 			<div class="comment-compose-disabled" aria-hidden="true">
 				<div class="comment-input-disabled">
 					Be the first to comment
-					<span class="bluesky-icon" aria-hidden="true">{@html siBluesky.svg}</span>
+					
 				</div>
 				<div class="comment-submit-disabled">Submit</div>
 			</div>
@@ -973,19 +973,6 @@
 		font-size: 0.82rem;
 	}
 
-	.bluesky-icon {
-		display: inline-flex;
-		align-items: center;
-		margin-left: 0.3em;
-		flex: 0 0 auto;
-	}
-
-	.bluesky-icon :global(svg) {
-		width: 0.95em;
-		height: 0.95em;
-		display: block;
-		flex: 0 0 auto;
-	}
 
 	.comment-input-disabled :global(svg) {
 		width: 1em;

@@ -1,58 +1,81 @@
 <script>
-	import {onMount} from "svelte"
-	import {page} from "$app/state"
-	import {goto} from "$app/navigation"
-	import NavBar from "$lib/NavBar.svelte"
-	import Linkify from "$lib/Linkify.svelte"
-	import ProfilePostHeader from "$lib/ProfilePostHeader.svelte"
-	import AuthorRow from "$lib/AuthorRow.svelte"
-	import {deriveBundleCreatedAtMs} from "$lib/dateTime"
-	import {CircleAlert as NoticeIcon, User, Ellipsis as SettingsIcon, Pencil, Eye, EyeOff, UserX, UserCheck, Flag, Key, Trash2} from "lucide-svelte"
-	import {readSearchTerm, writeSearchTerm} from "$lib/searchStore"
-	import { getProfile, setProfile, getAllPosts, setPost, getSetting, setSetting, deletePost } from "$lib/db"
-	import {listStoredProfiles, getCurrentProfileUuid} from "$lib/profileRegistry"
-	import {isLocalHost, removeApproxPostFromCache} from "$lib/utils"
-	import {formatDisplayAddress} from "$lib/addressFormat"
-	import Chat from "$lib/Chat.svelte"
+	import { onMount } from "svelte";
+	import { page } from "$app/state";
+	import { goto } from "$app/navigation";
+	import NavBar from "$lib/NavBar.svelte";
+	import Linkify from "$lib/Linkify.svelte";
+	import ProfilePostHeader from "$lib/ProfilePostHeader.svelte";
+	import AuthorRow from "$lib/AuthorRow.svelte";
+	import { deriveBundleCreatedAtMs } from "$lib/dateTime";
+	import {
+		CircleAlert as NoticeIcon,
+		User,
+		Ellipsis as SettingsIcon,
+		Pencil,
+		Eye,
+		EyeOff,
+		UserX,
+		UserCheck,
+		Flag,
+		Key,
+		Trash2,
+	} from "lucide-svelte";
+	import { readSearchTerm, writeSearchTerm } from "$lib/searchStore";
+	import {
+		getProfile,
+		setProfile,
+		getAllPosts,
+		setPost,
+		getSetting,
+		setSetting,
+		deletePost,
+	} from "$lib/db";
+	import {
+		listStoredProfiles,
+		getCurrentProfileUuid,
+	} from "$lib/profileRegistry";
+	import { isLocalHost, removeApproxPostFromCache } from "$lib/utils";
+	import { formatDisplayAddress } from "$lib/addressFormat";
+	import Chat from "$lib/Chat.svelte";
 
 	// ── props ──────────────────────────────────────────────────────────────────
-	let {type = "post"} = $props()
-	const isProfile = $derived(type === "profile")
+	let { type = "post" } = $props();
+	const isProfile = $derived(type === "profile");
 
 	// ── profile-only cache constants ───────────────────────────────────────────
-	const PROFILE_VIEW_CACHE_PREFIX = "love4dogs.profile-view-cache"
-	const PROFILE_VIEW_CACHE_TTL_MS = 5 * 60 * 1000
-	const SESSION_BUNDLE_CACHE_PREFIX = "love4dogs.bundle-session"
+	const PROFILE_VIEW_CACHE_PREFIX = "love4dogs.profile-view-cache";
+	const PROFILE_VIEW_CACHE_TTL_MS = 5 * 60 * 1000;
+	const SESSION_BUNDLE_CACHE_PREFIX = "love4dogs.bundle-session";
 
 	// ── reactive state ─────────────────────────────────────────────────────────
-	let currentView = $state("feed")
-	let loading = $state(true)
-	let error = $state("")
-	let jsonData = $state(null)
-	let derivedCreatedAtMs = $state(0)
-	let editProfileUrl = $state("")
-	let localProfiles = $state([])
-	let blockedUuids = $state([])
-	let blockedAuthors = $state([])
-	let menuOpen = $state(false)
-	let menuEl = $state(null)
-	let toastMessage = $state("")
-	let toastType = $state("success")
-	let chunkUris = $state([])
-	let searchTerm = $state("")
+	let currentView = $state("feed");
+	let loading = $state(true);
+	let error = $state("");
+	let jsonData = $state(null);
+	let derivedCreatedAtMs = $state(0);
+	let editProfileUrl = $state("");
+	let localProfiles = $state([]);
+	let blockedUuids = $state([]);
+	let blockedAuthors = $state([]);
+	let menuOpen = $state(false);
+	let menuEl = $state(null);
+	let toastMessage = $state("");
+	let toastType = $state("success");
+	let chunkUris = $state([]);
+	let searchTerm = $state("");
 
 	function setView(view = "feed") {
-		currentView = String(view || "feed")
+		currentView = String(view || "feed");
 	}
 
 	function asUrl(value) {
-		return typeof value === "string" ? value : ""
+		return typeof value === "string" ? value : "";
 	}
 
 	function normalizeSearchTerm(value = "") {
 		return String(value || "")
 			.trim()
-			.replace(/\s+/g, " ")
+			.replace(/\s+/g, " ");
 	}
 
 	function normalizeTagToken(value = "") {
@@ -60,24 +83,26 @@
 			.trim()
 			.toLowerCase()
 			.replace(/^#/, "")
-			.replace(/\s+/g, " ")
+			.replace(/\s+/g, " ");
 	}
 
 	function collectTagTokens(...sources) {
-		const tokens = []
+		const tokens = [];
 		for (const source of sources) {
-			if (!source) continue
-			const candidates = Array.isArray(source) ? source : [source]
+			if (!source) continue;
+			const candidates = Array.isArray(source) ? source : [source];
 			for (const candidate of candidates) {
-				if (!candidate || typeof candidate !== "object") continue
-				const raw = Array.isArray(candidate?.tags) ? candidate.tags : []
+				if (!candidate || typeof candidate !== "object") continue;
+				const raw = Array.isArray(candidate?.tags)
+					? candidate.tags
+					: [];
 				for (const entry of raw) {
-					const token = normalizeTagToken(entry)
-					if (token) tokens.push(token)
+					const token = normalizeTagToken(entry);
+					if (token) tokens.push(token);
 				}
 			}
 		}
-		return [...new Set(tokens)]
+		return [...new Set(tokens)];
 	}
 
 	function isProfileData(data = {}) {
@@ -85,8 +110,8 @@
 			data,
 			data?.primary,
 			data?.combined?.primary,
-		)
-		return tags.includes("profile")
+		);
+		return tags.includes("profile");
 	}
 
 	function bundleHasProfileData(bundle = {}, primary = {}) {
@@ -94,119 +119,119 @@
 			primary,
 			bundle?.combined?.primary,
 			Array.isArray(bundle?.posts) ? bundle.posts : [],
-		)
-		return tags.includes("profile")
+		);
+		return tags.includes("profile");
 	}
 
 	function getCorrectPathType(data = {}) {
-		return isProfileData(data) ? "profile" : "post"
+		return isProfileData(data) ? "profile" : "post";
 	}
 
 	function collectDisplayTags(data = {}) {
-		const raw = Array.isArray(data?.tags) ? data.tags : []
-		const seen = new Set()
-		const tags = []
+		const raw = Array.isArray(data?.tags) ? data.tags : [];
+		const seen = new Set();
+		const tags = [];
 		for (const entry of raw) {
-			const token = normalizeTagToken(entry)
-			if (!token || seen.has(token)) continue
-			seen.add(token)
-			tags.push(token)
-			if (tags.length >= 20) break
+			const token = normalizeTagToken(entry);
+			if (!token || seen.has(token)) continue;
+			seen.add(token);
+			tags.push(token);
+			if (tags.length >= 20) break;
 		}
-		return tags
+		return tags;
 	}
 
 	function getSearchTokens(value = "") {
 		return normalizeSearchTerm(value)
 			.split(" ")
 			.map((entry) => normalizeTagToken(entry))
-			.filter(Boolean)
+			.filter(Boolean);
 	}
 
 	function toggleSearchTag(tag = "") {
-		const token = normalizeTagToken(tag)
-		if (!token) return
-		const next = [...getSearchTokens(searchTerm)]
-		const index = next.indexOf(token)
+		const token = normalizeTagToken(tag);
+		if (!token) return;
+		const next = [...getSearchTokens(searchTerm)];
+		const index = next.indexOf(token);
 		if (index >= 0) {
-			next.splice(index, 1)
+			next.splice(index, 1);
 		} else {
-			next.push(token)
+			next.push(token);
 		}
-		searchTerm = next.join(" ")
+		searchTerm = next.join(" ");
 		// Note: This intentionally only updates searchTerm; it does NOT trigger a search
 	}
 
 	// ── media helpers ──────────────────────────────────────────────────────────
 	function cleanMediaAlt(value = "") {
-		const raw = String(value || "").trim()
-		if (!raw) return ""
-		if (raw.startsWith("{") || raw.startsWith("[")) return ""
-		return raw
+		const raw = String(value || "").trim();
+		if (!raw) return "";
+		if (raw.startsWith("{") || raw.startsWith("[")) return "";
+		return raw;
 	}
 
 	function collectBundleMedia(bundle = {}) {
-		const posts = Array.isArray(bundle?.posts) ? bundle.posts : []
-		const images = []
-		const videos = []
-		const seenImages = new Set()
-		const seenVideos = new Set()
+		const posts = Array.isArray(bundle?.posts) ? bundle.posts : [];
+		const images = [];
+		const videos = [];
+		const seenImages = new Set();
+		const seenVideos = new Set();
 		for (const entry of posts) {
-			const post = entry?.post || entry || {}
-			const embedView = post?.embed
+			const post = entry?.post || entry || {};
+			const embedView = post?.embed;
 			const mediaView =
 				embedView?.$type === "app.bsky.embed.recordWithMedia#view"
 					? embedView.media
-					: embedView
+					: embedView;
 			if (mediaView?.$type === "app.bsky.embed.images#view") {
 				for (const image of mediaView.images || []) {
 					const src = String(
 						image?.fullsize || image?.thumb || "",
-					).trim()
-					if (!src || seenImages.has(src)) continue
-					seenImages.add(src)
-					images.push({src, alt: cleanMediaAlt(image?.alt || "")})
+					).trim();
+					if (!src || seenImages.has(src)) continue;
+					seenImages.add(src);
+					images.push({ src, alt: cleanMediaAlt(image?.alt || "") });
 				}
 			}
 			if (mediaView?.$type === "app.bsky.embed.video#view") {
-				const playlist = String(mediaView?.playlist || "").trim()
-				if (!playlist || seenVideos.has(playlist)) continue
-				seenVideos.add(playlist)
+				const playlist = String(mediaView?.playlist || "").trim();
+				if (!playlist || seenVideos.has(playlist)) continue;
+				seenVideos.add(playlist);
 				videos.push({
 					src: playlist,
 					poster: String(mediaView?.thumbnail || "").trim(),
 					alt: cleanMediaAlt(mediaView?.alt || ""),
-				})
+				});
 			}
 		}
-		return {images, videos}
+		return { images, videos };
 	}
 
 	function extractAuthorFromBundle(bundle = {}) {
-		const posts = Array.isArray(bundle?.posts) ? bundle.posts : []
+		const posts = Array.isArray(bundle?.posts) ? bundle.posts : [];
 		for (const entry of posts) {
-			const post = entry?.post || entry || {}
-			const author = post?.author || {}
+			const post = entry?.post || entry || {};
+			const author = post?.author || {};
 			const authorName = String(
 				author?.displayName || author?.handle || "",
-			).trim()
+			).trim();
 			const authorAvatar = String(
 				author?.avatar || author?.avatarUrl || "",
-			).trim()
-			if (authorName || authorAvatar) return {authorName, authorAvatar}
+			).trim();
+			if (authorName || authorAvatar) return { authorName, authorAvatar };
 		}
-		return {authorName: "", authorAvatar: ""}
+		return { authorName: "", authorAvatar: "" };
 	}
 
 	function bodyHtmlContainsMedia(html = "") {
-		return /<(img|video|iframe)\b/i.test(String(html || ""))
+		return /<(img|video|iframe)\b/i.test(String(html || ""));
 	}
 
 	function buildMapHref(data = {}) {
-		const lat = Number(data?.location?.lat)
-		const lon = Number(data?.location?.lon)
+		const lat = Number(data?.location?.lat);
+		const lon = Number(data?.location?.lon);
 		if (Number.isFinite(lat) && Number.isFinite(lon)) {
-			return `https://maps.google.com/maps?q=${encodeURIComponent(`${lat},${lon}`)}&z=15`
+			return `https://maps.google.com/maps?q=${encodeURIComponent(`${lat},${lon}`)}&z=15`;
 		}
 		const fullAddress = formatDisplayAddress({
 			address: data?.address,
@@ -214,152 +239,171 @@
 			state: data?.state || data?.location?.state,
 			zip: data?.zip || data?.location?.zip,
 			country: data?.country || data?.location?.country,
-		})
-		if (!fullAddress) return ""
-		return `https://maps.google.com/maps?q=${encodeURIComponent(fullAddress)}&z=15`
+		});
+		if (!fullAddress) return "";
+		return `https://maps.google.com/maps?q=${encodeURIComponent(fullAddress)}&z=15`;
 	}
 
 	// ── profile-only: chunk URI helpers ───────────────────────────────────────
 	function parseChunkAltPayload(alt = "") {
-		const source = String(alt || "").trim()
-		if (!source) return null
+		const source = String(alt || "").trim();
+		if (!source) return null;
 		try {
-			const parsed = JSON.parse(source)
-			if (!parsed || typeof parsed !== "object") return null
-			if (!Number.isFinite(Number(parsed?.i))) return null
-			if (!Object.prototype.hasOwnProperty.call(parsed, "h")) return null
-			return parsed
+			const parsed = JSON.parse(source);
+			if (!parsed || typeof parsed !== "object") return null;
+			if (!Number.isFinite(Number(parsed?.i))) return null;
+			if (!Object.prototype.hasOwnProperty.call(parsed, "h")) return null;
+			return parsed;
 		} catch {
-			return null
+			return null;
 		}
 	}
 
 	function collectChunkUrisFromPosts(posts = [], targetUuid = "") {
-		const expectedUuid = String(targetUuid || "").trim()
-		const uris = []
+		const expectedUuid = String(targetUuid || "").trim();
+		const uris = [];
 		for (const post of Array.isArray(posts) ? posts : []) {
-			const uri = String(post?.uri || "").trim()
-			if (!uri || uris.includes(uri)) continue
-			const embed = post?.embed
+			const uri = String(post?.uri || "").trim();
+			if (!uri || uris.includes(uri)) continue;
+			const embed = post?.embed;
 			const media =
 				embed?.$type === "app.bsky.embed.recordWithMedia#view"
 					? embed.media
-					: embed
+					: embed;
 			const images =
 				media?.$type === "app.bsky.embed.images#view"
 					? media.images || []
-					: []
-			let isChunk = false
+					: [];
+			let isChunk = false;
 			for (const image of images) {
-				const payload = parseChunkAltPayload(image?.alt || "")
-				if (!payload) continue
+				const payload = parseChunkAltPayload(image?.alt || "");
+				if (!payload) continue;
 				const payloadUuid = String(
 					payload?.u || payload?.uuid || "",
-				).trim()
-				if (expectedUuid && payloadUuid !== expectedUuid) continue
-				isChunk = true
-				break
+				).trim();
+				if (expectedUuid && payloadUuid !== expectedUuid) continue;
+				isChunk = true;
+				break;
 			}
-			if (isChunk) uris.push(uri)
+			if (isChunk) uris.push(uri);
 		}
-		return uris
+		return uris;
 	}
 
 	function atUriToBskyUrl(uri = "") {
 		const match = String(uri || "")
 			.trim()
-			.match(/^at:\/\/([^/]+)\/app\.bsky\.feed\.post\/([^/?#]+)$/i)
-		if (!match) return ""
-		return `https://bsky.app/profile/${encodeURIComponent(match[1])}/post/${encodeURIComponent(match[2])}`
+			.match(/^at:\/\/([^/]+)\/app\.bsky\.feed\.post\/([^/?#]+)$/i);
+		if (!match) return "";
+		return `https://bsky.app/profile/${encodeURIComponent(match[1])}/post/${encodeURIComponent(match[2])}`;
 	}
 
 	function downloadChunkUris() {
-		if (!chunkUris.length) return
+		if (!chunkUris.length) return;
 		const blob = new Blob([`${chunkUris.join("\n")}\n`], {
 			type: "text/plain;charset=utf-8",
-		})
-		const url = URL.createObjectURL(blob)
-		const anchor = document.createElement("a")
-		anchor.href = url
-		anchor.download = `love4dogs-chunks-${page.params?.uuid || "bundle"}.txt`
-		anchor.click()
-		URL.revokeObjectURL(url)
+		});
+		const url = URL.createObjectURL(blob);
+		const anchor = document.createElement("a");
+		anchor.href = url;
+		anchor.download = `love4dogs-chunks-${page.params?.uuid || "bundle"}.txt`;
+		anchor.click();
+		URL.revokeObjectURL(url);
 	}
 
 	// ── profile-only: local/session cache helpers ──────────────────────────────
 	function readSessionBundle(targetUuid) {
-		if (typeof sessionStorage === "undefined") return null
+		if (typeof sessionStorage === "undefined") return null;
 		try {
 			return JSON.parse(
 				sessionStorage.getItem(
 					`${SESSION_BUNDLE_CACHE_PREFIX}:${targetUuid}`,
 				) || "null",
-			)
+			);
 		} catch {
-			return null
+			return null;
 		}
 	}
 
 	function writeSessionBundle(targetUuid, bundle) {
-		if (typeof sessionStorage === "undefined" || !bundle) return
+		if (typeof sessionStorage === "undefined" || !bundle) return;
 		try {
 			sessionStorage.setItem(
 				`${SESSION_BUNDLE_CACHE_PREFIX}:${targetUuid}`,
 				JSON.stringify(bundle),
-			)
+			);
 		} catch {}
 	}
 
 	async function readLocalProfile(targetUuid) {
 		try {
-			const parsed = await getProfile(targetUuid)
+			const parsed = await getProfile(targetUuid);
 			if (!parsed?.cachedAt || !parsed?.data) {
-				return null
+				return null;
 			}
 			if (Date.now() - parsed.cachedAt > PROFILE_VIEW_CACHE_TTL_MS) {
-				return null
+				return null;
 			}
-			return parsed.data
+			return parsed.data;
 		} catch {
-			return null
+			return null;
 		}
 	}
 
 	async function writeLocalProfile(targetUuid, data) {
 		try {
-			await setProfile(targetUuid, {cachedAt: Date.now(), data})
+			await setProfile(targetUuid, { cachedAt: Date.now(), data });
 		} catch {}
 	}
 
 	// ── derived values ─────────────────────────────────────────────────────────
-	const uuid = $derived(String(page.params?.uuid || "").trim())
+	const uuid = $derived(String(page.params?.uuid || "").trim());
 	const authorId = $derived(
 		String(jsonData?.authorid || jsonData?.authorId || "").trim(),
-	)
+	);
 	const targetAuthorId = $derived(
-		String(jsonData?.authorid || jsonData?.authorId || (isProfile ? uuid : "")).trim(),
-	)
+		String(
+			jsonData?.authorid || jsonData?.authorId || (isProfile ? uuid : ""),
+		).trim(),
+	);
 	const isAuthor = $derived(
-		localProfiles.some((p) => p.uuid === (isProfile ? uuid : targetAuthorId))
-	)
+		localProfiles.some(
+			(p) => p.uuid === (isProfile ? uuid : targetAuthorId),
+		),
+	);
 	const authorSearchHref = $derived(
 		authorId
 			? `/search/${encodeURIComponent("uuid")}/${encodeURIComponent(authorId)}`
 			: "",
-	)
-	const mapHref = $derived(buildMapHref(jsonData))
-	const displayTags = $derived(collectDisplayTags(jsonData || {}))
-	const hasTestTag = $derived(displayTags.includes("test"))
-	const activeSearchTokens = $derived(new Set(getSearchTokens(searchTerm)))
+	);
+	const mapHref = $derived(buildMapHref(jsonData));
+	const displayTags = $derived(collectDisplayTags(jsonData || {}));
+	const hasTestTag = $derived(displayTags.includes("test"));
+	const activeSearchTokens = $derived(new Set(getSearchTokens(searchTerm)));
 
 	// ── data loading ───────────────────────────────────────────────────────────
 	onMount(async () => {
+		if (window.location.hash) {
+			const targetId = window.location.hash;
+			let retries = 40;
+			let timer = setInterval(() => {
+				retries--;
+				const element = document.querySelector(targetId);
+				if (element) {
+					clearInterval(timer);
+					element.scrollIntoView({ behavior: "smooth" });
+				}
+				if (retries <= 0) clearInterval(timer);
+			}, 500);
+		}
+
+		//---
 		try {
-			localProfiles = await listStoredProfiles()
-			blockedUuids = await getSetting("love4dogs.blocked-uuids", [])
-			blockedAuthors = await getSetting("love4dogs.blocked-authors", [])
+			localProfiles = await listStoredProfiles();
+			blockedUuids = await getSetting("love4dogs.blocked-uuids", []);
+			blockedAuthors = await getSetting("love4dogs.blocked-authors", []);
 		} catch (e) {
-			console.error("Failed to load moderation settings:", e)
+			console.error("Failed to load moderation settings:", e);
 		}
 
 		try {
@@ -372,64 +416,78 @@
 							.split("/")
 							.map((segment) => decodeURIComponent(segment || ""))
 							.join(" ")
-					: ""
+					: "";
 				const qParam = new URLSearchParams(window.location.search).get(
 					"q",
-				)
+				);
 				// Priority: URL terms > query param > localStorage > nothing
 				if (pathTerms) {
-					searchTerm = normalizeSearchTerm(pathTerms)
+					searchTerm = normalizeSearchTerm(pathTerms);
 				} else if (qParam) {
-					searchTerm = normalizeSearchTerm(qParam)
+					searchTerm = normalizeSearchTerm(qParam);
 				} else {
-					const savedTerm = await readSearchTerm()
-					searchTerm = savedTerm || ""
+					const savedTerm = await readSearchTerm();
+					searchTerm = savedTerm || "";
 				}
 			}
 		} catch (e) {
-			console.error("Failed to read search term preference", e)
+			console.error("Failed to read search term preference", e);
 		}
 
 		try {
-			if (!uuid) throw new Error("UUID is required")
-			const slug = String(page.params?.slug || "")
-			const slugPath = slug ? `/${slug}` : ""
+			if (!uuid) throw new Error("UUID is required");
+			const slug = String(page.params?.slug || "");
+			const slugPath = slug ? `/${slug}` : "";
 
 			// Check if the UUID is actually a comment with a context
-			let commentContext = null
+			let commentContext = null;
 			try {
 				// 1. Check local IndexedDB first
-				const cachedPosts = await getAllPosts()
+				const cachedPosts = await getAllPosts();
 				for (const p of cachedPosts) {
 					if (p.posts && Array.isArray(p.posts)) {
 						for (const post of p.posts) {
 							if (post.imageAlts && post.imageAlts.length > 0) {
 								try {
-									const payload = JSON.parse(post.imageAlts[0])
-									if (payload && payload.uuid === uuid && payload.context) {
-										commentContext = payload.context
-										break
+									const payload = JSON.parse(
+										post.imageAlts[0],
+									);
+									if (
+										payload &&
+										payload.uuid === uuid &&
+										payload.context
+									) {
+										commentContext = payload.context;
+										break;
 									}
 								} catch {}
 							}
 						}
 					}
-					if (commentContext) break
+					if (commentContext) break;
 				}
 
 				// 2. If not found locally, fetch from feed API
 				if (!commentContext) {
-					const res = await fetch(`/api/feed?query=${encodeURIComponent(uuid)}&chat=1`)
+					const res = await fetch(
+						`/api/feed?query=${encodeURIComponent(uuid)}&chat=1`,
+					);
 					if (res.ok) {
-						const data = await res.json()
-						const posts = data?.posts || []
+						const data = await res.json();
+						const posts = data?.posts || [];
 						for (const post of posts) {
 							if (post.imageAlts && post.imageAlts.length > 0) {
 								try {
-									const payload = JSON.parse(post.imageAlts[0])
-									if (payload && payload.uuid === uuid && payload.context) {
-										commentContext = payload.context
-										break
+									const payload = JSON.parse(
+										post.imageAlts[0],
+									);
+									if (
+										payload &&
+										payload.uuid === uuid &&
+										payload.context
+									) {
+										commentContext = payload.context;
+										break;
 									}
 								} catch {}
 							}
@@ -437,97 +495,102 @@
 					}
 				}
 			} catch (e) {
-				console.error("Error checking if uuid is comment:", e)
+				console.error("Error checking if uuid is comment:", e);
 			}
 
 			if (commentContext) {
-				const currentHash = typeof window !== "undefined" ? window.location.hash : ""
-				const targetHash = currentHash || `#${uuid}`
+				const currentHash =
+					typeof window !== "undefined" ? window.location.hash : "";
+				const targetHash = currentHash || `#${uuid}`;
 				return goto(
 					`/${type}/view/${encodeURIComponent(commentContext)}${slugPath}${targetHash}`,
 					{
 						replaceState: true,
 					},
-				)
+				);
 			}
 
 			if (isProfile) {
-				const sessionBundle = readSessionBundle(uuid)
+				const sessionBundle = readSessionBundle(uuid);
 				if (sessionBundle) {
-					const {primary, subsequent} = sessionBundle?.combined || {}
+					const { primary, subsequent } =
+						sessionBundle?.combined || {};
 					jsonData = {
 						...(primary || {}),
 						html: Array.isArray(subsequent)
 							? subsequent.join("")
 							: "",
-					}
+					};
 					chunkUris = collectChunkUrisFromPosts(
 						Array.isArray(sessionBundle?.posts)
 							? sessionBundle.posts
 							: [],
 						uuid,
-					)
-					editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`
-					return
+					);
+					editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`;
+					return;
 				}
-				const cached = await readLocalProfile(uuid)
+				const cached = await readLocalProfile(uuid);
 				if (cached) {
-					jsonData = cached
-					editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`
-					return
+					jsonData = cached;
+					editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`;
+					return;
 				}
 			}
 
 			const response = await fetch(
 				`/api/profile-bundle?uuid=${encodeURIComponent(uuid)}`,
-			)
-			const bundle = await response.json().catch(() => ({}))
+			);
+			const bundle = await response.json().catch(() => ({}));
 			if (!response.ok) {
-				throw new Error(bundle?.error || "Failed to load data")
+				throw new Error(bundle?.error || "Failed to load data");
 			}
 
-			const {primary, subsequent} = bundle?.combined || {}
+			const { primary, subsequent } = bundle?.combined || {};
 			const htmlChunks = Array.isArray(subsequent)
 				? subsequent.join("")
-				: ""
+				: "";
 
 			if (isProfile) {
-				derivedCreatedAtMs = deriveBundleCreatedAtMs(bundle)
-				let stampValue = ""
+				derivedCreatedAtMs = deriveBundleCreatedAtMs(bundle);
+				let stampValue = "";
 				if (
 					typeof primary?.stamp === "string" &&
 					primary.stamp.trim()
 				) {
-					stampValue = primary.stamp.trim()
+					stampValue = primary.stamp.trim();
 				} else if (derivedCreatedAtMs > 0) {
-					stampValue = String(derivedCreatedAtMs)
+					stampValue = String(derivedCreatedAtMs);
 				}
 				jsonData = {
 					...(primary || {}),
 					html: htmlChunks,
 					stamp: stampValue,
-				}
-				await writeLocalProfile(uuid, jsonData)
-				writeSessionBundle(uuid, bundle)
+				};
+				await writeLocalProfile(uuid, jsonData);
+				writeSessionBundle(uuid, bundle);
 				chunkUris = collectChunkUrisFromPosts(
 					Array.isArray(bundle?.posts) ? bundle.posts : [],
 					uuid,
-				)
-				editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`
+				);
+				editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`;
 				// Route if data doesn't have profile tag
 				if (!bundleHasProfileData(bundle, jsonData)) {
-					const hash = typeof window !== "undefined" ? window.location.hash : ""
+					const hash =
+						typeof window !== "undefined"
+							? window.location.hash
+							: "";
 					return goto(
 						`/post/view/${encodeURIComponent(uuid)}${slugPath}${hash}`,
 						{
 							replaceState: true,
 						},
-					)
+					);
 				}
 			} else {
-				const media = collectBundleMedia(bundle)
-				const author = extractAuthorFromBundle(bundle)
-				derivedCreatedAtMs = deriveBundleCreatedAtMs(bundle)
+				const media = collectBundleMedia(bundle);
+				const author = extractAuthorFromBundle(bundle);
+				derivedCreatedAtMs = deriveBundleCreatedAtMs(bundle);
 				jsonData = {
 					...(primary || {}),
 					html: htmlChunks,
@@ -539,191 +602,201 @@
 					authorAvatar:
 						String(primary?.authorAvatar || "").trim() ||
 						author.authorAvatar,
-				}
+				};
 				chunkUris = collectChunkUrisFromPosts(
 					Array.isArray(bundle?.posts) ? bundle.posts : [],
 					uuid,
-				)
+				);
 				// Cache post to IndexedDB
-				await setPost(jsonData.uri || uuid, jsonData)
+				await setPost(jsonData.uri || uuid, jsonData);
 				// Route if data has profile tag
 				if (bundleHasProfileData(bundle, jsonData)) {
-					const hash = typeof window !== "undefined" ? window.location.hash : ""
+					const hash =
+						typeof window !== "undefined"
+							? window.location.hash
+							: "";
 					return goto(
 						`/profile/view/${encodeURIComponent(uuid)}${slugPath}${hash}`,
 						{
 							replaceState: true,
 						},
-					)
+					);
 				}
 			}
 		} catch (e) {
 			// Try offline cache fallback
 			try {
 				if (isProfile) {
-					const cached = await readLocalProfile(uuid)
+					const cached = await readLocalProfile(uuid);
 					if (cached) {
-						jsonData = cached
-						loading = false
-						return
+						jsonData = cached;
+						loading = false;
+						return;
 					}
 				} else {
-					const cachedPosts = await getAllPosts()
-					const cached = cachedPosts.find(p => p.uuid === uuid || p.uri === uuid)
+					const cachedPosts = await getAllPosts();
+					const cached = cachedPosts.find(
+						(p) => p.uuid === uuid || p.uri === uuid,
+					);
 					if (cached) {
-						jsonData = cached
-						loading = false
-						return
+						jsonData = cached;
+						loading = false;
+						return;
 					}
 				}
 			} catch (cacheErr) {
-				console.error("Cache fallback failed:", cacheErr)
+				console.error("Cache fallback failed:", cacheErr);
 			}
-			error = e?.message || "Failed to load"
+			error = e?.message || "Failed to load";
 		} finally {
-			loading = false
+			loading = false;
 		}
-	})
+	});
 
 	// Persist search term to localStorage whenever it changes
 	$effect(() => {
-		writeSearchTerm(searchTerm)
-	})
+		writeSearchTerm(searchTerm);
+	});
 
 	// Close moderation menu when clicking outside
 	$effect(() => {
-		if (!menuOpen) return
+		if (!menuOpen) return;
 
 		const onPointerDown = (event) => {
 			if (!menuEl?.contains(event.target)) {
-				menuOpen = false
+				menuOpen = false;
 			}
-		}
+		};
 
-		document.addEventListener("pointerdown", onPointerDown)
+		document.addEventListener("pointerdown", onPointerDown);
 		return () => {
-			document.removeEventListener("pointerdown", onPointerDown)
-		}
-	})
+			document.removeEventListener("pointerdown", onPointerDown);
+		};
+	});
 
 	async function toggleBlockUuid() {
 		try {
 			if (blockedUuids.includes(uuid)) {
-				blockedUuids = blockedUuids.filter((id) => id !== uuid)
-				await setSetting("love4dogs.blocked-uuids", blockedUuids)
-				showToast("Content unblocked.")
-				
+				blockedUuids = blockedUuids.filter((id) => id !== uuid);
+				await setSetting("love4dogs.blocked-uuids", blockedUuids);
+				showToast("Content unblocked.");
+
 				// Send DM to admin-love-4-dogs.bsky.social with unblock structured JSON
-				const fromUuid = await getCurrentProfileUuid()
+				const fromUuid = await getCurrentProfileUuid();
 				await fetch("/api/send-dm", {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({
 						from: fromUuid || "",
-						unblock: uuid
-					})
-				})
+						unblock: uuid,
+					}),
+				});
 			} else {
-				blockedUuids = [...blockedUuids, uuid]
-				await setSetting("love4dogs.blocked-uuids", blockedUuids)
-				showToast("Content blocked.")
-				
+				blockedUuids = [...blockedUuids, uuid];
+				await setSetting("love4dogs.blocked-uuids", blockedUuids);
+				showToast("Content blocked.");
+
 				// Send DM to admin-love-4-dogs.bsky.social with structured JSON
-				const fromUuid = await getCurrentProfileUuid()
+				const fromUuid = await getCurrentProfileUuid();
 				await fetch("/api/send-dm", {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({
 						from: fromUuid || "",
-						block: uuid
-					})
-				})
+						block: uuid,
+					}),
+				});
 			}
 		} catch (err) {
-			showToast("Failed to update block list.", "error")
+			showToast("Failed to update block list.", "error");
 		}
 	}
 
 	async function toggleBlockAuthor() {
-		if (!targetAuthorId) return
+		if (!targetAuthorId) return;
 		try {
 			if (blockedAuthors.includes(targetAuthorId)) {
-				blockedAuthors = blockedAuthors.filter((id) => id !== targetAuthorId)
-				await setSetting("love4dogs.blocked-authors", blockedAuthors)
-				showToast("Author unblocked.")
-				
+				blockedAuthors = blockedAuthors.filter(
+					(id) => id !== targetAuthorId,
+				);
+				await setSetting("love4dogs.blocked-authors", blockedAuthors);
+				showToast("Author unblocked.");
+
 				// Send DM to admin-love-4-dogs.bsky.social with unblock structured JSON
-				const fromUuid = await getCurrentProfileUuid()
+				const fromUuid = await getCurrentProfileUuid();
 				await fetch("/api/send-dm", {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({
 						from: fromUuid || "",
-						unblock: targetAuthorId
-					})
-				})
+						unblock: targetAuthorId,
+					}),
+				});
 			} else {
-				blockedAuthors = [...blockedAuthors, targetAuthorId]
-				await setSetting("love4dogs.blocked-authors", blockedAuthors)
-				showToast("Author blocked.")
-				
+				blockedAuthors = [...blockedAuthors, targetAuthorId];
+				await setSetting("love4dogs.blocked-authors", blockedAuthors);
+				showToast("Author blocked.");
+
 				// Send DM to admin-love-4-dogs.bsky.social with structured JSON
-				const fromUuid = await getCurrentProfileUuid()
+				const fromUuid = await getCurrentProfileUuid();
 				await fetch("/api/send-dm", {
 					method: "POST",
 					headers: { "content-type": "application/json" },
 					body: JSON.stringify({
 						from: fromUuid || "",
-						block: targetAuthorId
-					})
-				})
+						block: targetAuthorId,
+					}),
+				});
 			}
 		} catch (err) {
-			showToast("Failed to update blocked authors list.", "error")
+			showToast("Failed to update blocked authors list.", "error");
 		}
 	}
 
 	async function claimOwnership() {
 		try {
-			showToast("Sending ownership claim...")
-			const fromUuid = await getCurrentProfileUuid()
+			showToast("Sending ownership claim...");
+			const fromUuid = await getCurrentProfileUuid();
 			const res = await fetch("/api/send-dm", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
 				body: JSON.stringify({
 					from: fromUuid || "",
-					claim: uuid
-				})
-			})
+					claim: uuid,
+				}),
+			});
 			if (res.ok) {
-				showToast("Ownership claim sent to administrator.")
+				showToast("Ownership claim sent to administrator.");
 			} else {
-				throw new Error("Failed to send claim")
+				throw new Error("Failed to send claim");
 			}
 		} catch (err) {
-			showToast("Failed to send ownership claim.", "error")
+			showToast("Failed to send ownership claim.", "error");
 		}
 	}
 
 	function showToast(message, type = "success") {
-		toastMessage = message
-		toastType = type
+		toastMessage = message;
+		toastType = type;
 		setTimeout(() => {
 			if (toastMessage === message) {
-				toastMessage = ""
+				toastMessage = "";
 			}
-		}, 4000)
+		}, 4000);
 	}
 
 	async function handleDeletePost() {
-		const confirmDelete = confirm("Are you sure you want to delete this post? This will permanently remove it from both the local database and Bluesky.");
+		const confirmDelete = confirm(
+			"Are you sure you want to delete this post? This will permanently remove it from both the local database and Bluesky.",
+		);
 		if (!confirmDelete) return;
 
 		try {
 			showToast("Deleting post...");
-			
+
 			const urisToDelete = [...chunkUris];
-			const mainUri = jsonData?.uri || jsonData?.rootUri || jsonData?.atUri;
+			const mainUri =
+				jsonData?.uri || jsonData?.rootUri || jsonData?.atUri;
 			if (mainUri && !urisToDelete.includes(mainUri)) {
 				urisToDelete.push(mainUri);
 			}
@@ -735,15 +808,18 @@
 
 			for (const uri of urisToDelete) {
 				const formData = new FormData();
-				formData.append('mode', 'delete-post-uri');
-				formData.append('uri', uri);
-				const res = await fetch('/api/post', {
-					method: 'POST',
-					body: formData
+				formData.append("mode", "delete-post-uri");
+				formData.append("uri", uri);
+				const res = await fetch("/api/post", {
+					method: "POST",
+					body: formData,
 				});
 				if (!res.ok) {
 					const data = await res.json().catch(() => ({}));
-					console.warn(`Failed to delete post on Bluesky for URI ${uri}:`, data.error);
+					console.warn(
+						`Failed to delete post on Bluesky for URI ${uri}:`,
+						data.error,
+					);
 				}
 			}
 
@@ -831,7 +907,7 @@
 					type="button"
 					class="gear-btn"
 					aria-label="Moderation menu"
-					onclick={() => menuOpen = !menuOpen}
+					onclick={() => (menuOpen = !menuOpen)}
 				>
 					<SettingsIcon size={20} />
 				</button>
@@ -841,11 +917,15 @@
 							<button
 								type="button"
 								onclick={() => {
-									menuOpen = false
+									menuOpen = false;
 									if (isProfile) {
-										goto(`/profile/edit/${encodeURIComponent(uuid)}`)
+										goto(
+											`/profile/edit/${encodeURIComponent(uuid)}`,
+										);
 									} else {
-										goto(`/post/edit/${encodeURIComponent(uuid)}`)
+										goto(
+											`/post/edit/${encodeURIComponent(uuid)}`,
+										);
 									}
 								}}
 							>
@@ -856,8 +936,8 @@
 						<button
 							type="button"
 							onclick={async () => {
-								menuOpen = false
-								await toggleBlockUuid()
+								menuOpen = false;
+								await toggleBlockUuid();
 							}}
 						>
 							{#if blockedUuids.includes(uuid)}
@@ -872,8 +952,8 @@
 							<button
 								type="button"
 								onclick={async () => {
-									menuOpen = false
-									await toggleBlockAuthor()
+									menuOpen = false;
+									await toggleBlockAuthor();
 								}}
 							>
 								{#if blockedAuthors.includes(targetAuthorId)}
@@ -888,8 +968,8 @@
 						<button
 							type="button"
 							onclick={() => {
-								menuOpen = false
-								goto(`/report/${encodeURIComponent(uuid)}`)
+								menuOpen = false;
+								goto(`/report/${encodeURIComponent(uuid)}`);
 							}}
 						>
 							<Flag size={16} />
@@ -898,8 +978,8 @@
 						<button
 							type="button"
 							onclick={async () => {
-								menuOpen = false
-								await claimOwnership()
+								menuOpen = false;
+								await claimOwnership();
 							}}
 						>
 							<Key size={16} />
@@ -909,8 +989,8 @@
 							<button
 								type="button"
 								onclick={async () => {
-									menuOpen = false
-									await handleDeletePost()
+									menuOpen = false;
+									await handleDeletePost();
 								}}
 							>
 								<Trash2 size={16} />
@@ -940,9 +1020,9 @@
 									: ''}"
 								aria-pressed={activeSearchTokens.has(tag)}
 								onclick={(event) => {
-									event.preventDefault()
-									event.stopPropagation()
-									toggleSearchTag(tag)
+									event.preventDefault();
+									event.stopPropagation();
+									toggleSearchTag(tag);
 								}}
 							>
 								#{tag}
@@ -969,9 +1049,12 @@
 						? formatDisplayAddress({
 								address: jsonData.address,
 								city: jsonData.city || jsonData.location?.city,
-								state: jsonData.state || jsonData.location?.state,
+								state:
+									jsonData.state || jsonData.location?.state,
 								zip: jsonData.zip || jsonData.location?.zip,
-								country: jsonData.country || jsonData.location?.country,
+								country:
+									jsonData.country ||
+									jsonData.location?.country,
 							})
 						: null}
 					locationHref={mapHref || null}
@@ -1132,7 +1215,9 @@
 		text-align: left;
 		cursor: pointer;
 		box-sizing: border-box;
-		transition: background 0.15s ease, color 0.15s ease;
+		transition:
+			background 0.15s ease,
+			color 0.15s ease;
 	}
 
 	.moderation-dropdown button:hover {
