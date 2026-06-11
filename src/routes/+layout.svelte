@@ -140,6 +140,10 @@
 		pointer-events: none;
 	}
 
+	@media (max-width: 700px) {
+		.bg-kenburns{display:none !important;}
+	}
+
 	.bg-overlay {
 		position: fixed;
 		inset: 0;

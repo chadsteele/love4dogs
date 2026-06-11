@@ -498,6 +498,20 @@
 		box-sizing: border-box;
 	}
 
+	@media (max-width: 700px) {
+		:global(.page) {
+			padding:0 !important;
+		}
+		.topbar{
+			margin:0;
+			margin-bottom:1rem;
+			width:100%;
+			border:0;
+			border-radius:12px;
+			padding:0;
+		}
+	}
+
 	.brand {
 		display: flex;
 		align-items: center;
