@@ -384,7 +384,15 @@
 						}
 						onSearchInput(e)
 					}}
-					onsearch={onSearchInput}
+					onsearch={(e) => {
+					if (!e.currentTarget.value) {
+						// Native X button cleared the field — stay expanded, don't trigger a search
+						searchTerm = ""
+						if (searchInputEl) searchInputEl.focus()
+						return
+					}
+					onSearchInput(e)
+				}}
 					placeholder="Search"
 				/>
 				<button type="submit">Search</button>

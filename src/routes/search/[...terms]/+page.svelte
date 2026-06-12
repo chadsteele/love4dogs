@@ -327,10 +327,6 @@
 
 			if (posts.length === 0 && searchTerm.trim() !== "") {
 				showNoResultsInfo = searchTerm
-				searchTerm = ""
-				updateUrlFromSearch("")
-				await loadFeed()
-				return
 			}
 		} catch (error) {
 			if (requestId !== lastFeedRequestId) return
@@ -360,9 +356,6 @@
 
 					if (posts.length === 0 && searchTerm.trim() !== "") {
 						showNoResultsInfo = searchTerm
-						searchTerm = ""
-						updateUrlFromSearch("")
-						posts = allCached
 					}
 
 					posts.sort((a, b) => {
