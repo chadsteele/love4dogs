@@ -310,7 +310,7 @@
 					if (post.imageAlts && post.imageAlts.length > 0) {
 						try {
 							const payload = JSON.parse(post.imageAlts[0]);
-							if (payload && payload.uuid && payload.context === context && payload.author) {
+							if (payload && payload.uuid && payload.context === context) {
 								fetched.push(payload);
 							}
 						} catch {}
@@ -340,7 +340,7 @@
 				if (post.imageAlts && post.imageAlts.length > 0) {
 					try {
 						const payload = JSON.parse(post.imageAlts[0]);
-						if (payload && payload.uuid && payload.context === context && payload.author) {
+						if (payload && payload.uuid && payload.context === context) {
 							fetched.push(payload);
 						}
 					} catch {}
@@ -751,14 +751,24 @@
 	<div class="comment-card-wrapper" id="comment-{c.uuid}">
 		<div class="comment-card">
 			<div class="comment-layout">
-				<a href="/profile/view/{c.author}" class="avatar-link">
-					<img src={authorProfiles[c.author]?.profilePic || "/dog-logo.jpg"} alt={authorProfiles[c.author]?.name || "Avatar"} class="comment-avatar" />
-				</a>
+				{#if c.author}
+					<a href="/profile/view/{c.author}" class="avatar-link">
+						<img src={authorProfiles[c.author]?.profilePic || "/dog-logo.jpg"} alt={authorProfiles[c.author]?.name || "Avatar"} class="comment-avatar" />
+					</a>
+				{:else}
+					<div class="avatar-link anonymous" style="display: block;">
+						<img src="/dog-logo.jpg" alt="Anonymous Avatar" class="comment-avatar" />
+					</div>
+				{/if}
 				<div class="comment-content">
 					<div class="comment-meta">
-						<a href="/profile/view/{c.author}" class="comment-author-name">
-							{authorProfiles[c.author]?.name || "Anonymous"}
-						</a>
+						{#if c.author}
+							<a href="/profile/view/{c.author}" class="comment-author-name">
+								{authorProfiles[c.author]?.name || "Anonymous"}
+							</a>
+						{:else}
+							<span class="comment-author-name anonymous">Anonymous</span>
+						{/if}
 						<span class="comment-time">
 							{formatRelativeDateTime(parseTimestampMs(c.stamp, { allowBase36: true }), { allowBase36: true })}
 						</span>

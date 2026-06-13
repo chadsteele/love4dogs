@@ -7,7 +7,7 @@
 	import { startQueueProcessor, getProfileDetails } from "$lib/syncProcessor.js";
 	import { onMount } from "svelte";
 
-	let { count = Number((Math.random() * 5).toFixed(1)), context, cardViewHref, authorId } = $props();
+	let { count = 0, context, cardViewHref, authorId } = $props();
 
 	let showModal = $state(false);
 	let selectedRating = $state(5);
@@ -266,7 +266,7 @@
 	type="button"
 	title={isOwnPost ? "Authors cannot rate their own posts" : "Add star rating"}
 >
-	<Star size={13} />
+	<Star size={13} /> {count ? `x ${count}` : ""}
 </button>
 
 {#if showModal}
