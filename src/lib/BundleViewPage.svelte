@@ -63,6 +63,7 @@
 	let toastType = $state("success");
 	let chunkUris = $state([]);
 	let searchTerm = $state("");
+	let fetchingMore = $state(false);
 
 	function setView(view = "feed") {
 		currentView = String(view || "feed");
@@ -386,45 +387,47 @@
 	onMount(async () => {
 		if (window.location.hash) {
 			const targetId = window.location.hash;
-			let element = null;
-			try {
-				element = document.querySelector(targetId);
-			} catch {
-				// Invalid CSS selector — skip scroll
-			}
+			if (targetId !== "#discussion" && !targetId.startsWith("#comment-")) {
+				let element = null;
+				try {
+					element = document.querySelector(targetId);
+				} catch {
+					// Invalid CSS selector — skip scroll
+				}
 
-			const scrollToTarget = (el) => {
-				const observer = new IntersectionObserver(
-					(entries, obs) => {
-						if (entries[0].isIntersecting) {
-							obs.disconnect();
-						} else {
-							el.scrollIntoView({ behavior: "smooth" });
+				const scrollToTarget = (el) => {
+					const observer = new IntersectionObserver(
+						(entries, obs) => {
+							if (entries[0].isIntersecting) {
+								obs.disconnect();
+							} else {
+								el.scrollIntoView({ behavior: "smooth" });
+							}
+						},
+						{ threshold: 0.1 },
+					);
+					observer.observe(el);
+				};
+
+				if (element) {
+					scrollToTarget(element);
+				} else {
+					// Element not yet in DOM — wait for it via MutationObserver
+					const mutation = new MutationObserver(() => {
+						let el = null;
+						try {
+							el = document.querySelector(targetId);
+						} catch {
+							mutation.disconnect();
+							return;
 						}
-					},
-					{ threshold: 0.1 },
-				);
-				observer.observe(el);
-			};
-
-			if (element) {
-				scrollToTarget(element);
-			} else {
-				// Element not yet in DOM — wait for it via MutationObserver
-				const mutation = new MutationObserver(() => {
-					let el = null;
-					try {
-						el = document.querySelector(targetId);
-					} catch {
-						mutation.disconnect();
-						return;
-					}
-					if (el) {
-						mutation.disconnect();
-						scrollToTarget(el);
-					}
-				});
-				mutation.observe(document.body, { childList: true, subtree: true });
+						if (el) {
+							mutation.disconnect();
+							scrollToTarget(el);
+						}
+					});
+					mutation.observe(document.body, { childList: true, subtree: true });
+				}
 			}
 		}
 
@@ -541,6 +544,7 @@
 				);
 			}
 
+			let hasLocal = false;
 			if (isProfile) {
 				const sessionBundle = readSessionBundle(uuid);
 				if (sessionBundle) {
@@ -559,100 +563,129 @@
 						uuid,
 					);
 					editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`;
-					return;
-				}
-				const cached = await readLocalProfile(uuid);
-				if (cached) {
-					jsonData = cached;
-					editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`;
-					return;
-				}
-			}
-
-			const response = await fetch(
-				`/api/profile-bundle?uuid=${encodeURIComponent(uuid)}`,
-			);
-			const bundle = await response.json().catch(() => ({}));
-			if (!response.ok) {
-				throw new Error(bundle?.error || "Failed to load data");
-			}
-
-			const { primary, subsequent } = bundle?.combined || {};
-			const htmlChunks = Array.isArray(subsequent)
-				? subsequent.join("")
-				: "";
-
-			if (isProfile) {
-				derivedCreatedAtMs = deriveBundleCreatedAtMs(bundle);
-				let stampValue = "";
-				if (
-					typeof primary?.stamp === "string" &&
-					primary.stamp.trim()
-				) {
-					stampValue = primary.stamp.trim();
-				} else if (derivedCreatedAtMs > 0) {
-					stampValue = String(derivedCreatedAtMs);
-				}
-				jsonData = {
-					...(primary || {}),
-					html: htmlChunks,
-					stamp: stampValue,
-				};
-				await writeLocalProfile(uuid, jsonData);
-				writeSessionBundle(uuid, bundle);
-				chunkUris = collectChunkUrisFromPosts(
-					Array.isArray(bundle?.posts) ? bundle.posts : [],
-					uuid,
-				);
-				editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`;
-				// Route if data doesn't have profile tag
-				if (!bundleHasProfileData(bundle, jsonData)) {
-					const hash =
-						typeof window !== "undefined"
-							? window.location.hash
-							: "";
-					return goto(
-						`/post/view/${encodeURIComponent(uuid)}${slugPath}${hash}`,
-						{
-							replaceState: true,
-						},
-					);
+					hasLocal = true;
+				} else {
+					const cached = await readLocalProfile(uuid);
+					if (cached) {
+						jsonData = cached;
+						editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`;
+						hasLocal = true;
+					}
 				}
 			} else {
-				const media = collectBundleMedia(bundle);
-				const author = extractAuthorFromBundle(bundle);
-				derivedCreatedAtMs = deriveBundleCreatedAtMs(bundle);
-				jsonData = {
-					...(primary || {}),
-					html: htmlChunks,
-					images: media.images,
-					videos: media.videos,
-					authorName:
-						String(primary?.authorName || "").trim() ||
-						author.authorName,
-					authorAvatar:
-						String(primary?.authorAvatar || "").trim() ||
-						author.authorAvatar,
-				};
-				chunkUris = collectChunkUrisFromPosts(
-					Array.isArray(bundle?.posts) ? bundle.posts : [],
-					uuid,
+				const cachedPosts = await getAllPosts();
+				const cached = cachedPosts.find(
+					(p) => p.uuid === uuid || p.uri === uuid,
 				);
-				// Cache post to IndexedDB
-				await setPost(jsonData.uri || uuid, jsonData);
-				// Route if data has profile tag
-				if (bundleHasProfileData(bundle, jsonData)) {
-					const hash =
-						typeof window !== "undefined"
-							? window.location.hash
-							: "";
-					return goto(
-						`/profile/view/${encodeURIComponent(uuid)}${slugPath}${hash}`,
-						{
-							replaceState: true,
-						},
-					);
+				if (cached) {
+					jsonData = cached;
+					hasLocal = true;
 				}
+			}
+
+			if (hasLocal) {
+				loading = false;
+				fetchingMore = true;
+			}
+
+			const fetchBundlePromise = (async () => {
+				const response = await fetch(
+					`/api/profile-bundle?uuid=${encodeURIComponent(uuid)}`,
+				);
+				const bundle = await response.json().catch(() => ({}));
+				if (!response.ok) {
+					throw new Error(bundle?.error || "Failed to load data");
+				}
+
+				const { primary, subsequent } = bundle?.combined || {};
+				const htmlChunks = Array.isArray(subsequent)
+					? subsequent.join("")
+					: "";
+
+				if (isProfile) {
+					derivedCreatedAtMs = deriveBundleCreatedAtMs(bundle);
+					let stampValue = "";
+					if (
+						typeof primary?.stamp === "string" &&
+						primary.stamp.trim()
+					) {
+						stampValue = primary.stamp.trim();
+					} else if (derivedCreatedAtMs > 0) {
+						stampValue = String(derivedCreatedAtMs);
+					}
+					jsonData = {
+						...(primary || {}),
+						html: htmlChunks,
+						stamp: stampValue,
+					};
+					await writeLocalProfile(uuid, jsonData);
+					writeSessionBundle(uuid, bundle);
+					chunkUris = collectChunkUrisFromPosts(
+						Array.isArray(bundle?.posts) ? bundle.posts : [],
+						uuid,
+					);
+					editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`;
+					// Route if data doesn't have profile tag
+					if (!bundleHasProfileData(bundle, jsonData)) {
+						const hash =
+							typeof window !== "undefined"
+								? window.location.hash
+								: "";
+						return goto(
+							`/post/view/${encodeURIComponent(uuid)}${slugPath}${hash}`,
+							{
+								replaceState: true,
+							},
+						);
+					}
+				} else {
+					const media = collectBundleMedia(bundle);
+					const author = extractAuthorFromBundle(bundle);
+					derivedCreatedAtMs = deriveBundleCreatedAtMs(bundle);
+					jsonData = {
+						...(primary || {}),
+						html: htmlChunks,
+						images: media.images,
+						videos: media.videos,
+						authorName:
+							String(primary?.authorName || "").trim() ||
+							author.authorName,
+						authorAvatar:
+							String(primary?.authorAvatar || "").trim() ||
+							author.authorAvatar,
+					};
+					chunkUris = collectChunkUrisFromPosts(
+						Array.isArray(bundle?.posts) ? bundle.posts : [],
+						uuid,
+					);
+					// Cache post to IndexedDB
+					await setPost(jsonData.uri || uuid, jsonData);
+					// Route if data has profile tag
+					if (bundleHasProfileData(bundle, jsonData)) {
+						const hash =
+							typeof window !== "undefined"
+								? window.location.hash
+								: "";
+						return goto(
+							`/profile/view/${encodeURIComponent(uuid)}${slugPath}${hash}`,
+							{
+								replaceState: true,
+							},
+						);
+					}
+				}
+			})();
+
+			if (hasLocal) {
+				fetchBundlePromise
+					.catch((e) => {
+						console.error("Background fetch failed:", e);
+					})
+					.finally(() => {
+						fetchingMore = false;
+					});
+			} else {
+				await fetchBundlePromise;
 			}
 		} catch (e) {
 			// Try offline cache fallback
@@ -885,6 +918,12 @@
 		{editProfileUrl}
 		onSetView={setView}
 	/>
+
+	{#if fetchingMore}
+		<div class="progress-bar-container" aria-label="Loading updates in background">
+			<div class="progress-bar-shimmer"></div>
+		</div>
+	{/if}
 
 	{#if loading || (!error && !jsonData)}
 		<section
@@ -1145,6 +1184,13 @@
 				<div class="content-html">
 					{@html jsonData?.html || ""}
 				</div>
+				{#if fetchingMore}
+					<div class="skeleton-paragraphs" aria-label="Loading rest of content" style="margin-top: 1.5rem; display: flex; flex-direction: column; gap: 0.8rem;">
+						<div class="skeleton skeleton-line skeleton-line-wide"></div>
+						<div class="skeleton skeleton-line skeleton-line-wide"></div>
+						<div class="skeleton skeleton-line skeleton-line-wide" style="width: 70%;"></div>
+					</div>
+				{/if}
 			</div>
 		</section>
 
@@ -1527,6 +1573,34 @@
 	@media (max-width: 768px) {
 		.hero-body {
 			padding: 0 0.8rem 0.8rem;
+		}
+	}
+
+	/* ── progress bar ─────────────────────────────────────────────────────── */
+	.progress-bar-container {
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		height: 4px;
+		background: rgba(59, 110, 79, 0.1);
+		z-index: 2000;
+		overflow: hidden;
+	}
+
+	.progress-bar-shimmer {
+		width: 50%;
+		height: 100%;
+		background: linear-gradient(90deg, transparent, #3b6e4f, transparent);
+		animation: progress-slide 1.5s infinite ease-in-out;
+	}
+
+	@keyframes progress-slide {
+		0% {
+			transform: translateX(-100%);
+		}
+		100% {
+			transform: translateX(200%);
 		}
 	}
 </style>

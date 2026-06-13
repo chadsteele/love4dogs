@@ -8,7 +8,6 @@
 		Repeat2,
 		User,
 	} from "lucide-svelte"
-	import {siBluesky} from "simple-icons"
 	import TagPills from "$lib/TagPills.svelte"
 	import ImageLayout from "$lib/ImageLayout.svelte"
 	import AuthorRow from "$lib/AuthorRow.svelte"
@@ -221,6 +220,7 @@
 								const payload = JSON.parse(firstPost.imageAlts[0])
 								if (payload && payload.uuid && payload.context === uuid) {
 									discussionComment = {
+										uuid: payload.uuid,
 										handle: firstPost.author?.handle || "anonymous",
 										name: firstPost.author?.displayName || firstPost.author?.handle || "Anonymous",
 										avatar: firstPost.author?.avatar || "",
@@ -665,12 +665,7 @@
 		// compact
 	/>
 
-	{#if hasTestTag}
-		<div class="test-post-notice" role="note">
-			<NoticeIcon size={15} aria-hidden="true" />
-			<span>Notice: this is not a real post. It is for demonstration only.</span>
-		</div>
-	{/if}
+
 
 	<a class="card-link" href={cardViewHref} tabindex="0">
 		<div class="card-content">
@@ -683,63 +678,68 @@
 		</div>
 	</a>
 
-	<a
-		class="post-footer"
-		href={cardViewHref.split("#")[0]+"#discussion"}
-		target="_blank"
-		rel="noopener noreferrer"
-		onclick={(e) => e.stopPropagation()}
-	>
-		<div class="post-stats">
+	<div class="post-footer">
+		<a
+			class="post-stats"
+			href={`${cardViewHref}#discussion`}
+			onclick={(e) => e.stopPropagation()}
+		>
 			<span class="stat"><Heart size={13} />{post.likeCount ?? 0}</span>
-			<span class="stat"
-				><Repeat2 size={13} />{post.repostCount ?? 0}</span
-			>
-			<span class="stat"
-				><MessageCircle size={13} />{post.replyCount ?? 0}</span
-			>
+			<span class="stat"><Repeat2 size={13} />{post.repostCount ?? 0}</span>
+			<span class="stat"><MessageCircle size={13} />{post.replyCount ?? 0}</span>
 			{#if post.createdAt}
 				<span class="stat-date"><DateTime tag="span" value={post.createdAt} /></span>
 			{/if}
-		</div>
+		</a>
 		{#if discussionComment}
-			<ul class="comments-list">
-				<li class="comment">
-					{#if discussionComment.avatar}
-						<img
-							class="comment-avatar"
-							src={discussionComment.avatar}
-							alt={`@${discussionComment.handle}`}
-							loading="lazy"
+			<a
+				class="comments-link"
+				href={`${cardViewHref}#comment-${discussionComment.uuid}`}
+				onclick={(e) => e.stopPropagation()}
+			>
+				<ul class="comments-list">
+					<li class="comment">
+						{#if discussionComment.avatar}
+							<img
+								class="comment-avatar"
+								src={discussionComment.avatar}
+								alt={`@${discussionComment.handle}`}
+								loading="lazy"
 						/>
-					{:else}
-						<span
-							class="comment-avatar comment-avatar-fallback"
-							aria-hidden="true"
-						></span>
-					{/if}
-					<div class="comment-main">
-						<span class="comment-author">@{discussionComment.handle}</span>
-						<span class="comment-text">{discussionComment.text}</span>
+						{:else}
+							<span
+								class="comment-avatar comment-avatar-fallback"
+								aria-hidden="true"
+							></span>
+						{/if}
+						<div class="comment-main">
+							<span class="comment-author">@{discussionComment.handle}</span>
+							<span class="comment-text">{discussionComment.text}</span>
+						</div>
+					</li>
+				</ul>
+				<div class="comment-compose-disabled" aria-hidden="true">
+					<div class="comment-input-disabled">
+						Add your comments 
 					</div>
-				</li>
-			</ul>
-			<div class="comment-compose-disabled" aria-hidden="true">
-				<div class="comment-input-disabled">
-					Add your comments 
+					<div class="comment-submit-disabled">Submit</div>
 				</div>
-				<div class="comment-submit-disabled">Submit</div>
-			</div>
+			</a>
 		{:else}
-			<div class="comment-compose-disabled" aria-hidden="true">
-				<div class="comment-input-disabled">
-					Be the first to comment
-					
+			<a
+				class="comments-link"
+				href={`${cardViewHref}#discussion`}
+				onclick={(e) => e.stopPropagation()}
+			>
+				<div class="comment-compose-disabled" aria-hidden="true">
+					<div class="comment-input-disabled">
+						Be the first to comment
+					</div>
+					<div class="comment-submit-disabled">Submit</div>
 				</div>
-				<div class="comment-submit-disabled">Submit</div>
-			</div>
+			</a>
 		{/if}
-	</a>
+	</div>
 </div>
 
 <style>
@@ -892,8 +892,15 @@
 		margin-left: auto;
 	}
 
-	.post-footer:hover .stat {
+	.post-stats:hover .stat {
 		color: #1a4a7a;
+	}
+
+	.comments-link {
+		display: block;
+		text-decoration: none !important;
+		color: inherit !important;
+		cursor: pointer;
 	}
 
 	.comments-list {

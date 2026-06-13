@@ -321,54 +321,133 @@
 		await fetchComments();
 		
 		// Handle automatic comment loading and scroll-to
-		const targetUuid = typeof window !== "undefined" && window.location.hash ? window.location.hash.slice(1) : "";
-		if (targetUuid) {
+		const hash = typeof window !== "undefined" ? window.location.hash : "";
+		const isCommentHash = hash.startsWith("#comment-");
+		const targetUuid = isCommentHash ? hash.slice(9) : (hash && hash !== "#discussion" ? hash.slice(1) : "");
+		const hasTarget = hash === "#discussion" || isCommentHash || targetUuid;
+
+		if (hasTarget) {
+			// First smoothly scroll to the very bottom of the page and wait until it is complete
+			await new Promise((resolve) => {
+				let lastScrollY = window.scrollY;
+				let sameCount = 0;
+				let checkTimer;
+				
+				const checkScroll = () => {
+					const currentScrollY = window.scrollY;
+					const isAtBottom = window.innerHeight + currentScrollY >= document.documentElement.scrollHeight - 8;
+					if (isAtBottom) {
+						clearInterval(checkTimer);
+						resolve();
+						return;
+					}
+					
+					if (currentScrollY === lastScrollY) {
+						sameCount++;
+						if (sameCount >= 6) {
+							clearInterval(checkTimer);
+							resolve();
+							return;
+						}
+					} else {
+						sameCount = 0;
+					}
+					
+					lastScrollY = currentScrollY;
+				};
+				
+				window.scrollTo({
+					top: document.documentElement.scrollHeight,
+					behavior: "smooth"
+				});
+				
+				checkTimer = setInterval(checkScroll, 50);
+				// Absolute fallback timeout of 2.5 seconds
+				setTimeout(() => {
+					clearInterval(checkTimer);
+					resolve();
+				}, 2500);
+			});
+
 			let scrolled = false;
 			const scrollTimer = setTimeout(() => {
 				if (!scrolled) {
 					scrolled = true;
 					const discussionEl = document.getElementById("discussion");
 					if (discussionEl) {
-						discussionEl.scrollIntoView({ behavior: "smooth", block: "start" });
+						const doScroll = () => {
+							const rect = discussionEl.getBoundingClientRect();
+							const inViewport = (
+								rect.top < (window.innerHeight || document.documentElement.clientHeight) &&
+								rect.bottom > 0
+							);
+							if (!inViewport) {
+								discussionEl.scrollIntoView({ behavior: "smooth", block: "start" });
+								setTimeout(doScroll, 500);
+							}
+						};
+						doScroll();
 					}
 				}
 			}, 5000);
 
-			try {
-				// 1. Fetch target comment if not present in comments array
-				let targetComment = comments.find(c => c.uuid === targetUuid);
-				if (!targetComment) {
-					targetComment = await fetchCommentByUuid(targetUuid);
-					if (targetComment) {
-						comments = [...comments, targetComment];
-						await loadAuthorProfiles([targetComment.author]);
-					}
-				}
-
-				// 2. Resolve missing priors automatically up to 5 levels deep
-				let attempts = 0;
-				while (uniqueMissingPriors.length > 0 && attempts < 5) {
-					await handleFetchPriors();
-					attempts++;
-				}
-
-				// 3. Wait a moment for Svelte to render the comment node, then scroll
-				setTimeout(() => {
-					if (!scrolled) {
-						const commentEl = document.getElementById(`comment-${targetUuid}`);
-						if (commentEl) {
-							scrolled = true;
-							clearTimeout(scrollTimer);
-							commentEl.scrollIntoView({ behavior: "smooth", block: "center" });
-							commentEl.classList.add("highlighted-comment");
-							setTimeout(() => {
-								commentEl.classList.remove("highlighted-comment");
-							}, 3000);
+			if (targetUuid) {
+				try {
+					// 1. Fetch target comment if not present in comments array
+					let targetComment = comments.find(c => c.uuid === targetUuid);
+					if (!targetComment) {
+						targetComment = await fetchCommentByUuid(targetUuid);
+						if (targetComment) {
+							comments = [...comments, targetComment];
+							await loadAuthorProfiles([targetComment.author]);
 						}
 					}
-				}, 100);
-			} catch (err) {
-				console.error("Error auto-loading/scrolling to target comment:", err);
+
+					// 2. Resolve missing priors automatically up to 5 levels deep
+					let attempts = 0;
+					while (uniqueMissingPriors.length > 0 && attempts < 5) {
+						await handleFetchPriors();
+						attempts++;
+					}
+
+					// 3. Wait a moment for Svelte to render the comment node, then scroll
+					setTimeout(() => {
+						if (!scrolled) {
+							const commentEl = document.getElementById(`comment-${targetUuid}`);
+							if (commentEl) {
+								scrolled = true;
+								clearTimeout(scrollTimer);
+								commentEl.scrollIntoView({ behavior: "smooth", block: "center" });
+								commentEl.classList.add("highlighted-comment");
+								setTimeout(() => {
+									commentEl.classList.remove("highlighted-comment");
+								}, 3000);
+							}
+						}
+					}, 100);
+				} catch (err) {
+					console.error("Error auto-loading/scrolling to target comment:", err);
+				}
+			} else if (hash === "#discussion") {
+				// Scroll directly to discussion since no target comment UUID was parsed
+				const discussionEl = document.getElementById("discussion");
+				if (discussionEl) {
+					scrolled = true;
+					clearTimeout(scrollTimer);
+					
+					const doScroll = () => {
+						const rect = discussionEl.getBoundingClientRect();
+						const inViewport = (
+							rect.top < (window.innerHeight || document.documentElement.clientHeight) &&
+							rect.bottom > 0
+						);
+						if (!inViewport) {
+							discussionEl.scrollIntoView({ behavior: "smooth", block: "start" });
+							setTimeout(doScroll, 500);
+						}
+					};
+					doScroll();
+				}
 			}
 		}
 
