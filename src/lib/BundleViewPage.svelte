@@ -6,6 +6,7 @@
 	import Linkify from "$lib/Linkify.svelte";
 	import ProfilePostHeader from "$lib/ProfilePostHeader.svelte";
 	import AuthorRow from "$lib/AuthorRow.svelte";
+	import PostStats from "$lib/PostStats.svelte";
 	import { deriveBundleCreatedAtMs } from "$lib/dateTime";
 	import {
 		CircleAlert as NoticeIcon,
@@ -64,6 +65,58 @@
 	let chunkUris = $state([]);
 	let searchTerm = $state("");
 	let fetchingMore = $state(false);
+
+	let likeCount = $state(0);
+	let repostCount = $state(0);
+	let replyCount = $state(0);
+	let postCreatedAt = $state("");
+
+	function slugifyValue(value = "") {
+		return String(value || "")
+			.trim()
+			.toLowerCase()
+			.replace(/[^a-z0-9]+/g, "-")
+			.replace(/^-+|-+$/g, "");
+	}
+
+	const cardViewHref = $derived(
+		jsonData ? `/${type}/view/${encodeURIComponent(uuid)}/${encodeURIComponent(slugifyValue(jsonData.name || jsonData.title || jsonData.authorName || "") || uuid)}` : ""
+	);
+
+	function getOriginPost(bundle) {
+		if (!bundle || !Array.isArray(bundle.posts)) return null;
+		const mainUri = jsonData?.uri || jsonData?.rootUri || jsonData?.atUri || bundle?.originPayload?.primary?.uri;
+		let originPost = null;
+		if (mainUri) {
+			originPost = bundle.posts.find(p => p.uri === mainUri);
+		}
+		if (!originPost) {
+			originPost = bundle.posts.find(p => {
+				const text = String(p.record?.text || p.text || "");
+				if (text.includes(uuid)) return true;
+				const embed = p.embed;
+				const media = embed?.$type === "app.bsky.embed.recordWithMedia#view" ? embed.media : embed;
+				const images = media?.$type === "app.bsky.embed.images#view" ? media.images || [] : [];
+				for (const img of images) {
+					if (String(img.alt || "").includes(uuid)) return true;
+				}
+				return false;
+			});
+		}
+		if (!originPost && bundle.posts.length > 0) {
+			originPost = bundle.posts[0];
+		}
+		return originPost;
+	}
+
+	$effect(() => {
+		if (jsonData) {
+			likeCount = jsonData.likeCount ?? 0;
+			repostCount = jsonData.repostCount ?? 0;
+			replyCount = jsonData.replyCount ?? 0;
+			postCreatedAt = jsonData.createdAt ?? "";
+		}
+	});
 
 	function setView(view = "feed") {
 		currentView = String(view || "feed");
@@ -550,11 +603,16 @@
 				if (sessionBundle) {
 					const { primary, subsequent } =
 						sessionBundle?.combined || {};
+					const originPost = getOriginPost(sessionBundle);
 					jsonData = {
 						...(primary || {}),
 						html: Array.isArray(subsequent)
 							? subsequent.join("")
 							: "",
+						likeCount: originPost?.likeCount ?? 0,
+						repostCount: originPost?.repostCount ?? 0,
+						replyCount: originPost?.replyCount ?? 0,
+						createdAt: originPost?.createdAt ?? "",
 					};
 					chunkUris = collectChunkUrisFromPosts(
 						Array.isArray(sessionBundle?.posts)
@@ -613,10 +671,15 @@
 					} else if (derivedCreatedAtMs > 0) {
 						stampValue = String(derivedCreatedAtMs);
 					}
+					const originPost = getOriginPost(bundle);
 					jsonData = {
 						...(primary || {}),
 						html: htmlChunks,
 						stamp: stampValue,
+						likeCount: originPost?.likeCount ?? 0,
+						repostCount: originPost?.repostCount ?? 0,
+						replyCount: originPost?.replyCount ?? 0,
+						createdAt: originPost?.createdAt ?? "",
 					};
 					await writeLocalProfile(uuid, jsonData);
 					writeSessionBundle(uuid, bundle);
@@ -642,6 +705,7 @@
 					const media = collectBundleMedia(bundle);
 					const author = extractAuthorFromBundle(bundle);
 					derivedCreatedAtMs = deriveBundleCreatedAtMs(bundle);
+					const originPost = getOriginPost(bundle);
 					jsonData = {
 						...(primary || {}),
 						html: htmlChunks,
@@ -653,6 +717,10 @@
 						authorAvatar:
 							String(primary?.authorAvatar || "").trim() ||
 							author.authorAvatar,
+						likeCount: originPost?.likeCount ?? 0,
+						repostCount: originPost?.repostCount ?? 0,
+						replyCount: originPost?.replyCount ?? 0,
+						createdAt: originPost?.createdAt ?? "",
 					};
 					chunkUris = collectChunkUrisFromPosts(
 						Array.isArray(bundle?.posts) ? bundle.posts : [],
@@ -1129,6 +1197,17 @@
 						: null}
 					locationHref={mapHref || null}
 					hideAvatar={isProfile}
+				/>
+				<PostStats
+					{likeCount}
+					{repostCount}
+					{replyCount}
+					createdAt={postCreatedAt}
+					context={uuid}
+					cardViewHref={cardViewHref}
+					title={jsonData?.name || jsonData?.title || ""}
+					imageUrl={isProfile ? (jsonData?.profilePic || jsonData?.authorAvatar || "") : (jsonData?.images?.[0]?.src || "")}
+					authorId={targetAuthorId}
 				/>
 				{#if hasTestTag}
 					<div class="test-post-notice" role="note">

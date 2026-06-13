@@ -19,6 +19,7 @@
 	import { MessageSquare, Image, X, Reply, RefreshCw, Send, AlertTriangle, CornerDownRight, ArrowUpRight } from "lucide-svelte";
 	import { goto } from "$app/navigation";
 	import ImageLayout from "$lib/ImageLayout.svelte";
+	import { getProfileDetails, startQueueProcessor } from "$lib/syncProcessor.js";
 
 	// Props
 	let { context } = $props();
@@ -49,54 +50,7 @@
 	// Derived values for comments tree & missing priors
 	const flatComments = $derived(comments);
 	
-	// Helper to resolve profile details for a given author UUID
-	const profileCache = new Map();
-	async function getProfileDetails(authorUuid) {
-		const key = String(authorUuid || "").trim();
-		if (!key) return { name: "Anonymous", profilePic: "" };
-		if (profileCache.has(key)) return profileCache.get(key);
 
-		// 1. Check local profiles registry
-		const registryMatch = localProfiles.find(p => p.uuid === key);
-		if (registryMatch) {
-			const profile = {
-				name: registryMatch.name || "Anonymous",
-				profilePic: registryMatch.avatarUrl || ""
-			};
-			profileCache.set(key, profile);
-			return profile;
-		}
-
-		// 2. Check full profile from local store
-		const local = await getProfile(key);
-		if (local) {
-			const name = local.profileName || local.name || "Anonymous";
-			const firstImage = Array.isArray(local.profileUploadedMedia) ? local.profileUploadedMedia[0] : null;
-			const profilePic = local.profilePic || firstImage?.bskyUrl || firstImage?.url || "";
-			const profile = { name, profilePic };
-			profileCache.set(key, profile);
-			return profile;
-		}
-
-		// 3. Fallback to API fetch
-		try {
-			const res = await fetch(`/api/profile-bundle?uuid=${encodeURIComponent(key)}`);
-			if (res.ok) {
-				const bundle = await res.json();
-				const primary = bundle?.combined?.primary || {};
-				const profile = {
-					name: primary.name || "Anonymous",
-					profilePic: primary.profilePic || ""
-				};
-				profileCache.set(key, profile);
-				return profile;
-			}
-		} catch (e) {
-			console.error("Failed to load author profile details", key, e);
-		}
-
-		return { name: "Anonymous", profilePic: "" };
-	}
 
 	async function loadAuthorProfiles(uuids) {
 		const uniqueUuids = [...new Set(uuids.filter(Boolean))];
@@ -189,131 +143,7 @@
 		}
 	}
 
-	async function processQueueItem(item) {
-		let resolvedBlobs = [];
-		let uploadedImgUrls = [];
 
-		// 1. Upload images if any
-		if (item.imageUuids && item.imageUuids.length > 0) {
-			for (const imgUuid of item.imageUuids) {
-				const blob = await getOfflineImage(imgUuid);
-				if (!blob) {
-					throw new Error(`Offline image ${imgUuid} not found`);
-				}
-				const fd = new FormData();
-				fd.append("mode", "upload-media");
-				fd.append("file", blob);
-				const uploadRes = await fetch("/api/post", { method: "POST", body: fd });
-				if (!uploadRes.ok) {
-					const errData = await uploadRes.json().catch(() => ({}));
-					throw new Error(errData.error || `Image upload failed for ${imgUuid}`);
-				}
-				const uploadData = await uploadRes.json();
-				resolvedBlobs.push(uploadData.blob);
-				uploadedImgUrls.push(uploadData.url);
-			}
-		} else {
-			// Fallback: use author's profilePic as carrier, but don't set it in alt JSON img field
-			const details = await getProfileDetails(item.author);
-			const profilePicUrl = details?.profilePic || "";
-			const fallbackBlob = await resolveCarrierBlob(profilePicUrl);
-			resolvedBlobs = [fallbackBlob];
-		}
-
-		// 2. Construct altPayload
-		const altPayload = {
-			uuid: item.uuid,
-			context: item.context,
-			prior: item.prior,
-			stamp: item.stamp,
-			author: item.author,
-			text: item.text,
-			img: uploadedImgUrls.length > 0 ? uploadedImgUrls[0] : null,
-			imgs: uploadedImgUrls.length > 0 ? uploadedImgUrls : null
-		};
-
-		// 3. Post to API
-		const postFd = new FormData();
-		postFd.append("text", item.text);
-		postFd.append("tags", JSON.stringify(["chat", item.context]));
-
-		const uploadedMedia = [];
-		for (let i = 0; i < resolvedBlobs.length; i++) {
-			uploadedMedia.push({
-				kind: "image",
-				blob: resolvedBlobs[i],
-				alt: i === 0 ? JSON.stringify(altPayload) : `Attachment ${i + 1}`
-			});
-		}
-		postFd.append("uploadedMedia", JSON.stringify(uploadedMedia));
-
-		const postRes = await fetch("/api/post", { method: "POST", body: postFd });
-		if (!postRes.ok) {
-			const errData = await postRes.json().catch(() => ({}));
-			throw new Error(errData.error || "Failed to publish comment to Bluesky");
-		}
-	}
-
-	async function startQueueProcessor() {
-		if (globalThis.__love4dogsSyncQueueProcessing) return;
-		globalThis.__love4dogsSyncQueueProcessing = true;
-		console.log("[Sync Queue] Background queue processor started.");
-		try {
-			while (true) {
-				const queue = await getSyncQueue();
-				// Filter queue items that are pending or failed and have retryCount < 10
-				const nextItem = queue.find(item => item.status !== 'syncing' && (item.retryCount || 0) < 10);
-				if (!nextItem) {
-					break;
-				}
-
-				// Mark as syncing in IndexedDB
-				nextItem.status = 'syncing';
-				await updateSyncItem(nextItem.id, nextItem);
-
-				let success = false;
-				try {
-					console.log(`[Sync Queue] Processing queue item ${nextItem.id} (attempt ${nextItem.retryCount + 1}/10)...`);
-					await processQueueItem(nextItem);
-					success = true;
-				} catch (err) {
-					console.error(`[Sync Queue] Queue item ${nextItem.id} failed:`, err);
-				}
-
-				if (success) {
-					console.log(`[Sync Queue] Queue item ${nextItem.id} completed successfully.`);
-					await deleteSyncItem(nextItem.id);
-					if (nextItem.imageUuids) {
-						for (const imgUuid of nextItem.imageUuids) {
-							await deleteOfflineImage(imgUuid);
-						}
-					}
-					// Trigger a background refresh to pull down indexed comments from Bluesky
-					fetchComments().catch(() => {});
-				} else {
-					nextItem.retryCount = (nextItem.retryCount || 0) + 1;
-					nextItem.status = 'pending';
-					await updateSyncItem(nextItem.id, nextItem);
-
-					if (nextItem.retryCount >= 10) {
-						console.warn(`[Sync Queue] Queue item ${nextItem.id} exceeded max retries. Discarding.`);
-						await deleteSyncItem(nextItem.id);
-						if (nextItem.imageUuids) {
-							for (const imgUuid of nextItem.imageUuids) {
-								await deleteOfflineImage(imgUuid);
-							}
-						}
-					} else {
-						console.log(`[Sync Queue] Waiting 10 seconds before next retry of item ${nextItem.id}...`);
-						await new Promise(resolve => setTimeout(resolve, 10000));
-					}
-				}
-			}
-		} finally {
-			globalThis.__love4dogsSyncQueueProcessing = false;
-			console.log("[Sync Queue] Background queue processor finished.");
-		}
-	}
 
 	// Initial loading & profile checks
 	onMount(async () => {
@@ -451,7 +281,7 @@
 			}
 		}
 
-		startQueueProcessor().catch(err => console.error("Error starting queue processor", err));
+		startQueueProcessor(fetchComments).catch(err => console.error("Error starting queue processor", err));
 	});
 
 	async function loadSessionProfile() {
@@ -642,28 +472,7 @@
 		}
 	}
 
-	// Resolve the carrier blob reference (without re-uploading if Bsky CDN)
-	async function resolveCarrierBlob(url) {
-		const targetUrl = String(url || "").trim() || (window.location.origin + "/dog-logo.jpg");
-		const isCdn = /cdn\.bsky\.app/i.test(targetUrl);
-		const fd = new FormData();
-		if (isCdn) {
-			fd.append("mode", "resolve-cdn-blob");
-			fd.append("sourceUrl", targetUrl);
-		} else {
-			fd.append("mode", "cache-media-url");
-			fd.append("sourceUrl", targetUrl);
-		}
-		const res = await fetch("/api/post", { method: "POST", body: fd });
-		if (!res.ok) {
-			throw new Error("Failed to resolve carrier blob");
-		}
-		const data = await res.json();
-		if (!data.ok || !data.blob) {
-			throw new Error(data.error || "Failed to resolve carrier blob");
-		}
-		return data.blob;
-	}
+
 
 	// Post Comment Submission
 	async function handlePostSubmit(event) {
@@ -779,7 +588,7 @@
 			removeAttachment();
 
 			// Trigger the background queue processing without awaiting it
-			startQueueProcessor().catch(err => console.error("Error running queue processor", err));
+			startQueueProcessor(fetchComments).catch(err => console.error("Error running queue processor", err));
 		} catch (err) {
 			postError = err.message || "An unexpected error occurred while saving locally.";
 		} finally {
@@ -850,7 +659,8 @@
 	</div>
 
 	<!-- Discussion Input Form -->
-	<div id="chat-form" class="comment-editor-panel">
+	<div id="new-comment" class="comment-anchor-wrapper">
+		<div id="chat-form" class="comment-editor-panel">
 		{#if !currentProfileUuid}
 			<div class="auth-warning">
 				<AlertTriangle size={20} class="icon-warning" />
@@ -932,6 +742,7 @@
 				</div>
 			</form>
 		{/if}
+		</div>
 	</div>
 </div>
 

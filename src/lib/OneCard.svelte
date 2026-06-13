@@ -3,17 +3,14 @@
 	import {rewriteLove4DogsUrlForLocalhost} from "$lib/utils"
 	import {
 		CircleAlert as NoticeIcon,
-		Heart,
-		MessageCircle,
-		Repeat2,
 		User,
 	} from "lucide-svelte"
 	import TagPills from "$lib/TagPills.svelte"
 	import ImageLayout from "$lib/ImageLayout.svelte"
 	import AuthorRow from "$lib/AuthorRow.svelte"
-	import DateTime from "$lib/DateTime.svelte"
 	import {formatDisplayAddress} from "$lib/addressFormat"
 	import {writeSearchTerm, readSearchTerm} from "$lib/searchStore"
+	import PostStats from "$lib/PostStats.svelte"
 
 	let {post, onclick = () => {}, onTagClick = () => {}} = $props()
 	let hasHydrated = $state(false)
@@ -101,6 +98,29 @@
 		}
 
 		return extractUuidFromBundleAlt(inputPost?.video?.alt || "")
+	}
+
+	function extractAuthorIdFromBundleAlt(alt = "") {
+		for (const candidate of getAltCandidates(alt)) {
+			const directAuthorId = String(
+				candidate?.authorid || candidate?.authorId || "",
+			).trim()
+			if (directAuthorId) return directAuthorId
+		}
+
+		return ""
+	}
+
+	function resolveCardAuthorId(inputPost = {}) {
+		const directAuthorId = String(inputPost?.authorid || "").trim()
+		if (directAuthorId) return directAuthorId
+
+		for (const alt of inputPost?.imageAlts || []) {
+			const fromAlt = extractAuthorIdFromBundleAlt(alt)
+			if (fromAlt) return fromAlt
+		}
+
+		return extractAuthorIdFromBundleAlt(inputPost?.video?.alt || "")
 	}
 
 	function resolvePostTags(inputPost = {}) {
@@ -590,6 +610,11 @@
 				: "post"
 		})(),
 	)
+	const authorId = $derived(
+		postType === "profile"
+			? resolveCardUuid(post)
+			: resolveCardAuthorId(post)
+	)
 	const cardViewHref = $derived(buildCardViewPath(cardTitle, postType, post))
 	const profileDisplayName = $derived(getProfileDisplayName())
 	const authorName = $derived(
@@ -679,18 +704,17 @@
 	</a>
 
 	<div class="post-footer">
-		<a
-			class="post-stats"
-			href={`${cardViewHref}#discussion`}
-			onclick={(e) => e.stopPropagation()}
-		>
-			<span class="stat"><Heart size={13} />{post.likeCount ?? 0}</span>
-			<span class="stat"><Repeat2 size={13} />{post.repostCount ?? 0}</span>
-			<span class="stat"><MessageCircle size={13} />{post.replyCount ?? 0}</span>
-			{#if post.createdAt}
-				<span class="stat-date"><DateTime tag="span" value={post.createdAt} /></span>
-			{/if}
-		</a>
+		<PostStats
+			likeCount={post.likeCount ?? 0}
+			repostCount={post.repostCount ?? 0}
+			replyCount={post.replyCount ?? 0}
+			createdAt={post.createdAt}
+			context={resolveCardUuid(post)}
+			{cardViewHref}
+			title={cardTitle}
+			imageUrl={postType === 'profile' ? profilePic : primaryImage}
+			{authorId}
+		/>
 		{#if discussionComment}
 			<a
 				class="comments-link"
@@ -870,31 +894,6 @@
 		cursor: pointer;
 	}
 
-	.post-stats {
-		display: flex;
-		align-items: center;
-		gap: 0.65rem;
-		flex-wrap: wrap;
-		padding: 0.4rem 0;
-	}
-
-	.stat {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.25rem;
-		font-size: 0.8rem;
-		color: #6b7280;
-	}
-
-	.stat-date {
-		font-size: 0.78rem;
-		color: #9ca3af;
-		margin-left: auto;
-	}
-
-	.post-stats:hover .stat {
-		color: #1a4a7a;
-	}
 
 	.comments-link {
 		display: block;
