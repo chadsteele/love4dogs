@@ -13,8 +13,10 @@ let cachedSession = null;
 
 async function getSession() {
 	if (cachedSession?.accessJwt) return cachedSession;
-	const identifier = env.BSKY_USERNAME || env.username || env.BSKY_ADMIN_HANDLE || env.ADMIN_HANDLE || env.admin_handle;
-	const secret = env.BSKY_PASSWORD || env.password;
+	const identifier = env.BSKY_USERNAME || env.username || env.BSKY_ADMIN_HANDLE || env.ADMIN_HANDLE || env.admin_handle ||
+		(typeof process !== 'undefined' && process.env && (process.env.BSKY_USERNAME || process.env.username || process.env.BSKY_ADMIN_HANDLE || process.env.ADMIN_HANDLE || process.env.admin_handle)) || '';
+	const secret = env.BSKY_PASSWORD || env.password ||
+		(typeof process !== 'undefined' && process.env && (process.env.BSKY_PASSWORD || process.env.password)) || '';
 	if (!identifier || !secret) return null;
 	try {
 		const res = await fetch(`${BSKY_AUTH_XRPC}/com.atproto.server.createSession`, {

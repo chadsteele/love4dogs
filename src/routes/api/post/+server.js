@@ -20,8 +20,10 @@ let cachedSession = null;
 const richTextAgent = new AtpAgent({ service: BSKY_PUBLIC_SERVICE });
 
 function getCredentials() {
-	const identifier = env.BSKY_USERNAME || env.username || env.BSKY_ADMIN_HANDLE || env.ADMIN_HANDLE || env.admin_handle;
-	const secret = env.BSKY_PASSWORD || env.password;
+	const identifier = env.BSKY_USERNAME || env.username || env.BSKY_ADMIN_HANDLE || env.ADMIN_HANDLE || env.admin_handle ||
+		(typeof process !== 'undefined' && process.env && (process.env.BSKY_USERNAME || process.env.username || process.env.BSKY_ADMIN_HANDLE || process.env.ADMIN_HANDLE || process.env.admin_handle)) || '';
+	const secret = env.BSKY_PASSWORD || env.password ||
+		(typeof process !== 'undefined' && process.env && (process.env.BSKY_PASSWORD || process.env.password)) || '';
 	return { identifier, secret };
 }
 

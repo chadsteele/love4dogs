@@ -7,8 +7,10 @@ let cachedIdentifier = null;
 let cachedSecret = null;
 
 async function getAgent(forceRefresh = false) {
-	const identifier = env.BSKY_USERNAME || env.username || env.BSKY_ADMIN_HANDLE || env.ADMIN_HANDLE || env.admin_handle;
-	const secret = env.BSKY_PASSWORD || env.password;
+	const identifier = env.BSKY_USERNAME || env.username || env.BSKY_ADMIN_HANDLE || env.ADMIN_HANDLE || env.admin_handle ||
+		(typeof process !== 'undefined' && process.env && (process.env.BSKY_USERNAME || process.env.username || process.env.BSKY_ADMIN_HANDLE || process.env.ADMIN_HANDLE || process.env.admin_handle)) || '';
+	const secret = env.BSKY_PASSWORD || env.password ||
+		(typeof process !== 'undefined' && process.env && (process.env.BSKY_PASSWORD || process.env.password)) || '';
 
 	if (!identifier || !secret) {
 		throw new Error('Missing Bluesky credentials in .env');
