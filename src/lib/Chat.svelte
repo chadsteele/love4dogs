@@ -20,6 +20,7 @@
 	import { goto } from "$app/navigation";
 	import ImageLayout from "$lib/ImageLayout.svelte";
 	import { getProfileDetails, startQueueProcessor } from "$lib/syncProcessor.js";
+	import { scrollToTarget } from "$lib/autoscroll.js";
 
 	// Props
 	let { context } = $props();
@@ -157,128 +158,54 @@
 		const hasTarget = hash === "#discussion" || isCommentHash || targetUuid;
 
 		if (hasTarget) {
-			// First smoothly scroll to the very bottom of the page and wait until it is complete
-			await new Promise((resolve) => {
-				let lastScrollY = window.scrollY;
-				let sameCount = 0;
-				let checkTimer;
-				
-				const checkScroll = () => {
-					const currentScrollY = window.scrollY;
-					const isAtBottom = window.innerHeight + currentScrollY >= document.documentElement.scrollHeight - 8;
-					if (isAtBottom) {
-						clearInterval(checkTimer);
-						resolve();
-						return;
-					}
-					
-					if (currentScrollY === lastScrollY) {
-						sameCount++;
-						if (sameCount >= 6) {
-							clearInterval(checkTimer);
-							resolve();
-							return;
+			// First, scroll to the bottom of the page
+			scrollToTarget("bottom", {
+				speed: 6,
+				maxDuration: 2500,
+				onComplete: async () => {
+					if (targetUuid) {
+						try {
+							// 1. Fetch target comment if not present in comments array
+							let targetComment = comments.find(c => c.uuid === targetUuid);
+							if (!targetComment) {
+								targetComment = await fetchCommentByUuid(targetUuid);
+								if (targetComment) {
+									comments = [...comments, targetComment];
+									await loadAuthorProfiles([targetComment.author]);
+								}
+							}
+
+							// 2. Resolve missing priors automatically up to 5 levels deep
+							let attempts = 0;
+							while (uniqueMissingPriors.length > 0 && attempts < 5) {
+								await handleFetchPriors();
+								attempts++;
+							}
+
+							// 3. Scroll to target comment card (centering it) and highlight it
+							const targetSelector = `#comment-${targetUuid}`;
+							scrollToTarget(targetSelector, {
+								offset: 0,
+								maxDuration: 3000,
+								onComplete: () => {
+									const commentEl = document.getElementById(`comment-${targetUuid}`);
+									if (commentEl) {
+										commentEl.classList.add("highlighted-comment");
+										setTimeout(() => {
+											commentEl.classList.remove("highlighted-comment");
+										}, 3000);
+									}
+								}
+							});
+						} catch (err) {
+							console.error("Error auto-loading/scrolling to target comment:", err);
 						}
-					} else {
-						sameCount = 0;
+					} else if (hash === "#discussion") {
+						// Scroll directly to discussion
+						scrollToTarget("#discussion");
 					}
-					
-					lastScrollY = currentScrollY;
-				};
-				
-				window.scrollTo({
-					top: document.documentElement.scrollHeight,
-					behavior: "smooth"
-				});
-				
-				checkTimer = setInterval(checkScroll, 50);
-				// Absolute fallback timeout of 2.5 seconds
-				setTimeout(() => {
-					clearInterval(checkTimer);
-					resolve();
-				}, 2500);
+				}
 			});
-
-			let scrolled = false;
-			const scrollTimer = setTimeout(() => {
-				if (!scrolled) {
-					scrolled = true;
-					const discussionEl = document.getElementById("discussion");
-					if (discussionEl) {
-						const doScroll = () => {
-							const rect = discussionEl.getBoundingClientRect();
-							const inViewport = (
-								rect.top < (window.innerHeight || document.documentElement.clientHeight) &&
-								rect.bottom > 0
-							);
-							if (!inViewport) {
-								discussionEl.scrollIntoView({ behavior: "smooth", block: "start" });
-								setTimeout(doScroll, 500);
-							}
-						};
-						doScroll();
-					}
-				}
-			}, 5000);
-
-			if (targetUuid) {
-				try {
-					// 1. Fetch target comment if not present in comments array
-					let targetComment = comments.find(c => c.uuid === targetUuid);
-					if (!targetComment) {
-						targetComment = await fetchCommentByUuid(targetUuid);
-						if (targetComment) {
-							comments = [...comments, targetComment];
-							await loadAuthorProfiles([targetComment.author]);
-						}
-					}
-
-					// 2. Resolve missing priors automatically up to 5 levels deep
-					let attempts = 0;
-					while (uniqueMissingPriors.length > 0 && attempts < 5) {
-						await handleFetchPriors();
-						attempts++;
-					}
-
-					// 3. Wait a moment for Svelte to render the comment node, then scroll
-					setTimeout(() => {
-						if (!scrolled) {
-							const commentEl = document.getElementById(`comment-${targetUuid}`);
-							if (commentEl) {
-								scrolled = true;
-								clearTimeout(scrollTimer);
-								commentEl.scrollIntoView({ behavior: "smooth", block: "center" });
-								commentEl.classList.add("highlighted-comment");
-								setTimeout(() => {
-									commentEl.classList.remove("highlighted-comment");
-								}, 3000);
-							}
-						}
-					}, 100);
-				} catch (err) {
-					console.error("Error auto-loading/scrolling to target comment:", err);
-				}
-			} else if (hash === "#discussion") {
-				// Scroll directly to discussion since no target comment UUID was parsed
-				const discussionEl = document.getElementById("discussion");
-				if (discussionEl) {
-					scrolled = true;
-					clearTimeout(scrollTimer);
-					
-					const doScroll = () => {
-						const rect = discussionEl.getBoundingClientRect();
-						const inViewport = (
-							rect.top < (window.innerHeight || document.documentElement.clientHeight) &&
-							rect.bottom > 0
-						);
-						if (!inViewport) {
-							discussionEl.scrollIntoView({ behavior: "smooth", block: "start" });
-							setTimeout(doScroll, 500);
-						}
-					};
-					doScroll();
-				}
-			}
 		}
 
 		startQueueProcessor(fetchComments).catch(err => console.error("Error starting queue processor", err));
@@ -599,10 +526,7 @@
 	function startReply(comment) {
 		replyingToComment = comment;
 		// Scroll to reply form
-		const formEl = document.getElementById("chat-form");
-		if (formEl) {
-			formEl.scrollIntoView({ behavior: "smooth" });
-		}
+		scrollToTarget("#chat-form", { offset: -20 });
 	}
 </script>
 

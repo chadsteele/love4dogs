@@ -434,7 +434,8 @@
 			<button
 				type="button"
 				class="profile-avatar-btn"
-				onclick={goToProfileChooser}
+				// onclick={goToProfileChooser}
+				onclick={openProfileManager}
 				aria-label="Choose current profile"
 				title="Choose current profile"
 			>

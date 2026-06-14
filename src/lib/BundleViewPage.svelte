@@ -38,6 +38,7 @@
 	import { isLocalHost, removeApproxPostFromCache } from "$lib/utils";
 	import { formatDisplayAddress } from "$lib/addressFormat";
 	import Chat from "$lib/Chat.svelte";
+	import { scrollToTarget } from "$lib/autoscroll.js";
 
 	// ── props ──────────────────────────────────────────────────────────────────
 	let { type = "post" } = $props();
@@ -441,46 +442,7 @@
 		if (window.location.hash) {
 			const targetId = window.location.hash;
 			if (targetId !== "#discussion" && !targetId.startsWith("#comment-")) {
-				let element = null;
-				try {
-					element = document.querySelector(targetId);
-				} catch {
-					// Invalid CSS selector — skip scroll
-				}
-
-				const scrollToTarget = (el) => {
-					const observer = new IntersectionObserver(
-						(entries, obs) => {
-							if (entries[0].isIntersecting) {
-								obs.disconnect();
-							} else {
-								el.scrollIntoView({ behavior: "smooth" });
-							}
-						},
-						{ threshold: 0.1 },
-					);
-					observer.observe(el);
-				};
-
-				if (element) {
-					scrollToTarget(element);
-				} else {
-					// Element not yet in DOM — wait for it via MutationObserver
-					const mutation = new MutationObserver(() => {
-						let el = null;
-						try {
-							el = document.querySelector(targetId);
-						} catch {
-							mutation.disconnect();
-							return;
-						}
-						if (el) {
-							mutation.disconnect();
-							scrollToTarget(el);
-						}
-					});
-					mutation.observe(document.body, { childList: true, subtree: true });
-				}
+				scrollToTarget(targetId, { maxDuration: 4000 });
 			}
 		}
 
