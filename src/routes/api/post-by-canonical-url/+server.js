@@ -48,7 +48,7 @@ function altMatchesUuid(alt = '', uuid = '') {
 async function getSession() {
 	if (cachedSession) return cachedSession;
 
-	const identifier = env.BSKY_USERNAME || env.username;
+	const identifier = env.BSKY_USERNAME || env.username || env.BSKY_ADMIN_HANDLE || env.ADMIN_HANDLE || env.admin_handle;
 	const secret = env.BSKY_PASSWORD || env.password;
 
 	const res = await fetch(`${BSKY_XRPC}/com.atproto.server.createSession`, {

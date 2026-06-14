@@ -1013,13 +1013,7 @@
 						return false
 					}
 					if (entry.blob) return false
-					if (entry.kind === "image") {
-						const imageUrl = String(
-							entry.bskyUrl || entry.url || "",
-						)
-						if (isBskyHostedUrl(imageUrl)) return true
-					}
-					const url = String(entry.bskyUrl || entry.url || "")
+					const url = String(entry.url || "")
 					return !isBskyHostedUrl(url)
 				}).length,
 	)

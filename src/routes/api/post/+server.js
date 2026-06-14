@@ -20,7 +20,7 @@ let cachedSession = null;
 const richTextAgent = new AtpAgent({ service: BSKY_PUBLIC_SERVICE });
 
 function getCredentials() {
-	const identifier = env.BSKY_USERNAME || env.username;
+	const identifier = env.BSKY_USERNAME || env.username || env.BSKY_ADMIN_HANDLE || env.ADMIN_HANDLE || env.admin_handle;
 	const secret = env.BSKY_PASSWORD || env.password;
 	return { identifier, secret };
 }
