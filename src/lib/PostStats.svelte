@@ -57,6 +57,7 @@
 					let totalStars = 0;
 					let totalShares = 0;
 					let totalReplies = 0;
+					let ratingCommentsCount = 0;
 
 					for (const comment of comments) {
 						let commentContext = null;
@@ -79,13 +80,30 @@
 
 						// likeCount calculation:
 						// limit to 5 ⭐️s per comment, and -1 for a ☹️
-						if (text.startsWith("☹️")) {
-							totalStars -= 1;
-						} else if (text.startsWith("⭐️")) {
-							const starMatch = text.match(/^(⭐️+)/);
-							if (starMatch) {
-								const starCount = starMatch[1].length;
+						const isFrown = text.startsWith("☹️");
+						const isStar = text.startsWith("⭐️") || text.startsWith("⭐");
+
+						if (isFrown || isStar) {
+							ratingCommentsCount += 1;
+
+							if (isStar) {
+								// Count how many star characters are at the beginning of the text
+								let starCount = 0;
+								let i = 0;
+								while (i < text.length) {
+									if (text.substring(i).startsWith("⭐️")) {
+										starCount++;
+										i += 2;
+									} else if (text.substring(i).startsWith("⭐")) {
+										starCount++;
+										i += 1;
+									} else {
+										break;
+									}
+								}
 								totalStars += Math.min(starCount, 5);
+							} else if (isFrown) {
+								totalStars -= 1;
 							}
 						}
 
@@ -96,8 +114,10 @@
 						}
 					}
 
-					// likeCount is (total stars) / 5
-					const recalculatedLike = Math.max(0, totalStars / 5);
+					// likeCount is the average star count (total stars / comments with stars)
+					const recalculatedLike = ratingCommentsCount > 0
+						? Math.max(0, totalStars / ratingCommentsCount)
+						: 0;
 					
 					// Format to 1 decimal place if it has a fractional part, otherwise keep as number
 					const formattedLike = Number(recalculatedLike.toFixed(1));
