@@ -170,7 +170,7 @@
 		}
 	}
 
-	async function uploadImage(file) {
+	async function uploadImage(file, isAlreadyNormalized = false) {
 		if (typeof navigator !== "undefined" && navigator.onLine === false) {
 			const offlineId = Math.random().toString(36).slice(2, 10) + '-' + Date.now();
 			await setOfflineImage(offlineId, file);
@@ -188,11 +188,13 @@
 				offlineId: offlineId
 			};
 		}
-		const normalized = await normalizeImageForSlot(
-			file,
-			NORMALIZED_IMAGE_MAX_DIM,
-			NORMALIZED_IMAGE_MAX_DIM,
-		)
+		const normalized = isAlreadyNormalized
+			? file
+			: await normalizeImageForSlot(
+				file,
+				NORMALIZED_IMAGE_MAX_DIM,
+				NORMALIZED_IMAGE_MAX_DIM,
+			)
 		const sourceUrl = await mediaTokenFromFile(file)
 		if (!sourceUrl) {
 			throw new Error("Media origin is required for upload.")
@@ -230,7 +232,20 @@
 				NORMALIZED_IMAGE_MAX_DIM,
 				NORMALIZED_IMAGE_MAX_DIM,
 			)
-			const uploaded = await uploadImage(normalized)
+			// Seed the local normalized file info first so it's not lost if upload fails
+			profileUploadedMedia = [
+				{
+					kind: "image",
+					alt: file.name || "Profile photo",
+					blob: null,
+					file: normalized,
+					sourceName: file.name || "profile",
+					url: profilePreviewUrl,
+					bskyUrl: "",
+				},
+			]
+
+			const uploaded = await uploadImage(normalized, true)
 			const cid = uploaded.blob?.ref?.$link || uploaded.blob?.cid || ""
 			const did = String(uploaded.did || "")
 			const bskyUrl =
@@ -248,7 +263,6 @@
 				},
 			]
 		} catch (error) {
-			clearProfileImage()
 			errorMessage =
 				error?.message || "Failed to upload the profile image."
 		} finally {
@@ -271,7 +285,20 @@
 				NORMALIZED_IMAGE_MAX_DIM,
 				NORMALIZED_IMAGE_MAX_DIM,
 			)
-			const uploaded = await uploadImage(normalized)
+			// Seed the local normalized file info first so it's not lost if upload fails
+			backgroundUploadedMedia = [
+				{
+					kind: "image",
+					alt: file.name || "Profile background",
+					blob: null,
+					file: normalized,
+					sourceName: file.name || "background",
+					url: backgroundPreviewUrl,
+					bskyUrl: "",
+				},
+			]
+
+			const uploaded = await uploadImage(normalized, true)
 			const cid = uploaded.blob?.ref?.$link || uploaded.blob?.cid || ""
 			const did = String(uploaded.did || "")
 			const bskyUrl =
@@ -289,7 +316,6 @@
 				},
 			]
 		} catch (error) {
-			clearBackgroundImage()
 			errorMessage =
 				error?.message || "Failed to upload the background image."
 		} finally {
@@ -396,6 +422,11 @@
 		{#if uploadingProfile || uploadingBackground}
 			<p class="hint">
 				Uploading {uploadingProfile ? "profile" : "background"} image...
+			</p>
+		{/if}
+		{#if errorMessage}
+			<p class="hint error-hint">
+				{errorMessage}
 			</p>
 		{/if}
 	</div>
@@ -519,6 +550,11 @@
 		margin: 0;
 		font-size: 0.82rem;
 		color: #56695f;
+	}
+
+	.error-hint {
+		color: #b91c1c;
+		font-weight: 500;
 	}
 
 	@media (max-width: 700px) {

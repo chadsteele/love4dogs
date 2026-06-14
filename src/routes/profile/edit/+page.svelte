@@ -51,7 +51,7 @@
 		resolvePostTimestampMs,
 	} from "$lib/dateTime"
 	import ShowAdmin from "$lib/ShowAdmin.svelte"
-	import {enqueueSync} from "$lib/db"
+	import {enqueueSync, setOfflineImage} from "$lib/db"
 	import {
 		buildLocalImageProxyUrl,
 		collectUrlTextNodes,
@@ -1559,6 +1559,40 @@
 					}
 				}
 
+				if (entry.file) {
+					if (typeof navigator !== "undefined" && navigator.onLine === false) {
+						const offlineId = Math.random().toString(36).slice(2, 10) + '-' + Date.now()
+						await setOfflineImage(offlineId, entry.file)
+						const offlineUrl = `/offline-media/${offlineId}`
+						return {
+							...entry,
+							kind: "image",
+							alt,
+							url: offlineUrl,
+							bskyUrl: offlineUrl,
+							blob: {
+								ref: {
+									$link: offlineId
+								},
+								mimeType: entry.file.type || "image/png",
+								size: entry.file.size
+							},
+							isOfflineMedia: true,
+							offlineId: offlineId
+						}
+					}
+					debugProfile("[profile] resolvePublishImageCarrier: uploading pending local file", entry.file.name)
+					const uploaded = await uploadMediaFile(entry.file)
+					return {
+						...entry,
+						kind: "image",
+						alt,
+						blob: uploaded.blob,
+						bskyUrl: uploaded.bskyUrl || uploaded.url,
+						url: uploaded.url,
+					}
+				}
+
 				const sourceUrl = String(
 					entry.bskyUrl || entry.url || "",
 				).trim()
@@ -1624,6 +1658,13 @@
 						selectedBackgroundImage,
 						"Profile background",
 					)
+
+					if (publishProfileImage) {
+						profileUploadedMedia = [publishProfileImage]
+					}
+					if (publishBackgroundImage) {
+						backgroundUploadedMedia = [publishBackgroundImage]
+					}
 
 					await saveProfile(false)
 
@@ -1781,6 +1822,13 @@
 				selectedBackgroundImage,
 				"Profile background",
 			)
+
+			if (publishProfileImage) {
+				profileUploadedMedia = [publishProfileImage]
+			}
+			if (publishBackgroundImage) {
+				backgroundUploadedMedia = [publishBackgroundImage]
+			}
 
 			debugProfile("[profile] saving draft before publish")
 			await saveProfile(false)
