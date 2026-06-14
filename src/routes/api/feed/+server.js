@@ -263,6 +263,7 @@ function mapPost(postWrapper) {
 
 	const tagsArray = [...new Set([
 		...(Array.isArray(post?.tags) ? post.tags : []),
+		...(Array.isArray(record?.tags) ? record.tags : []),
 		...altTags,
 	]
 		.map((tag) => String(tag || '').trim().toLowerCase())
@@ -488,10 +489,10 @@ export async function GET({ url }) {
 	const cursor = url.searchParams.get('cursor')?.trim() || '';
 	const cursorHost = url.searchParams.get('cursorHost')?.trim() || '';
 	const forceRefresh = url.searchParams.get('refresh') === '1';
-	const isChatRequest = url.searchParams.get('chat') === '1';
+	const chatParam = url.searchParams.get('chat') || '0';
 
 	const cleanedQuery = query.replace(/\bnear\s+me\b/gi, '').trim().replace(/\s+/g, ' ');
-	const cacheKey = `bsky:feed:${cleanedQuery}:${sort}:${limit}:${cursor}:${cursorHost}:${isChatRequest ? 'chat' : 'post'}`;
+	const cacheKey = `bsky:feed:${cleanedQuery}:${sort}:${limit}:${cursor}:${cursorHost}:${chatParam}`;
 
 	const cached = await getPost(cacheKey);
 	if (cached && !forceRefresh) {
@@ -577,9 +578,9 @@ export async function GET({ url }) {
 			.filter((post) => !isReplyPost(post) && extractPostIdentity({ post }))
 			.map((post) => mapPost({ post }));
 
-		if (isChatRequest) {
+		if (chatParam === '1') {
 			posts = posts.filter(post => hasChatTag(post));
-		} else {
+		} else if (chatParam !== 'all') {
 			posts = posts.filter(post => !hasChatTag(post));
 		}
 
@@ -643,9 +644,9 @@ export async function GET({ url }) {
 	const commonRecentTags = countTopTags(feedItems, 20);
 
 	let posts = feedItems.map(mapPost);
-	if (isChatRequest) {
+	if (chatParam === '1') {
 		posts = posts.filter(post => hasChatTag(post));
-	} else {
+	} else if (chatParam !== 'all') {
 		posts = posts.filter(post => !hasChatTag(post));
 	}
 	posts = dedupePosts(posts);

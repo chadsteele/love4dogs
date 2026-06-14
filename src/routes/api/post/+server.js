@@ -1167,6 +1167,53 @@ export async function POST({ request }) {
 		}
 
 		const isChat = finalTags.map(t => String(t || '').toLowerCase()).includes('chat');
+
+		if (isChat) {
+			const normalizedText = String(rawText || '').trim();
+
+			// HTML validation
+			const htmlRegex = /<\/?[a-z][a-z0-9]*\b[^>]*>/i;
+			if (htmlRegex.test(normalizedText)) {
+				return new Response(JSON.stringify({ error: 'HTML tags are not allowed in comments.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+
+			// URL validation (allow only love4dogs.club domain URLs)
+			const urlRegex = /(?:https?:\/\/|www\.)\S+|[a-zA-Z0-9-]+\.(?:com|org|net|edu|gov|io|co|me|tv|info|biz|club|app|dev|xyz|dog|cat|us|uk|ca|de|fr|jp|au|cn|in)\b/gi;
+			let hasExternalUrl = false;
+			let match;
+			urlRegex.lastIndex = 0;
+			while ((match = urlRegex.exec(normalizedText)) !== null) {
+				let urlStr = match[0];
+				let testUrl = urlStr;
+				if (!/^https?:\/\//i.test(testUrl)) {
+					testUrl = 'http://' + testUrl;
+				}
+				try {
+					const parsed = new URL(testUrl);
+					const hostname = parsed.hostname.toLowerCase();
+					if (hostname !== 'love4dogs.club' && !hostname.endsWith('.love4dogs.club')) {
+						hasExternalUrl = true;
+						break;
+					}
+				} catch {
+					const domainRegex = /(?:^|[\/\.@])love4dogs\.club\b/i;
+					if (!domainRegex.test(urlStr)) {
+						hasExternalUrl = true;
+						break;
+					}
+				}
+			}
+			if (hasExternalUrl) {
+				return new Response(JSON.stringify({ error: 'External links or URLs are not allowed in comments.' }), {
+					status: 400,
+					headers: { 'content-type': 'application/json' }
+				});
+			}
+		}
+
 		const textWithTags = isChat ? rawText : buildTextWithVisibleTags(rawText, finalTags);
 		const finalTextLength = [...textWithTags].length;
 		if (finalTextLength > 300) {

@@ -21,6 +21,9 @@
 	let blockedAuthors = $state([])
 	let feedError = $state("")
 	let searchSort = $state("latest")
+	let showProfiles = $state(true)
+	let showPosts = $state(true)
+	let showComments = $state(true)
 	let loadingMore = $state(false)
 	let feedCursor = null
 	let feedCursorHost = null
@@ -187,12 +190,17 @@
 
 	function visiblePosts() {
 		const seen = new Set()
+		const seenUuids = new Set()
 		const next = []
 		for (const post of posts) {
 			const key = String(post?.displayKey || post?.uri || "").trim()
 			if (!key || seen.has(key)) continue
 
 			const postUuid = resolvePostUuid(post)
+			if (postUuid && seenUuids.has(postUuid)) {
+				continue
+			}
+
 			const authorUuid = resolvePostAuthorId(post)
 
 			const isPostBlocked = postUuid && blockedUuids.includes(postUuid)
@@ -208,7 +216,30 @@
 				}
 			}
 
+			// Parse tags to determine if it is profile, post, or comment
+			const tags = (post.tags || []).map(t => String(t || '').trim().toLowerCase())
+			let isComment = tags.includes("chat")
+
+			if (!isComment && post?.imageAlts && post.imageAlts.length > 0) {
+				try {
+					const parsed = JSON.parse(post.imageAlts[0])
+					if (parsed && parsed.uuid && parsed.context) {
+						isComment = true
+					}
+				} catch {}
+			}
+
+			const isProfile = !isComment && tags.includes("profile")
+			const isNormalPost = !isComment && !isProfile
+
+			if (isComment && !showComments) continue
+			if (isProfile && !showProfiles) continue
+			if (isNormalPost && !showPosts) continue
+
 			seen.add(key)
+			if (postUuid) {
+				seenUuids.add(postUuid)
+			}
 			next.push(post)
 		}
 		return next
@@ -297,6 +328,7 @@
 				query,
 				sort: searchSort,
 				limit: 20,
+				chat: "all",
 			})
 			if (forceFresh) {
 				params.set("refresh", "1")
@@ -396,6 +428,7 @@
 					sort: searchSort,
 					limit: 20,
 					cursor: feedCursor,
+					chat: "all",
 				})
 				if (feedCursorHost) {
 					params.set("cursorHost", String(feedCursorHost))
@@ -409,15 +442,25 @@
 				const newPosts = json.posts || []
 				
 				// Calculate how many of these posts are actually new unique visible posts
-				const existingKeys = new Set(visiblePosts().map(p => String(p.displayKey || p.uri).trim()))
+				const existingKeys = new Set()
+				const existingUuids = new Set()
+				for (const p of visiblePosts()) {
+					existingKeys.add(String(p.displayKey || p.uri).trim())
+					const u = resolvePostUuid(p)
+					if (u) existingUuids.add(u)
+				}
+				
 				let batchNewCount = 0
 				for (const post of newPosts) {
 					if (post) {
 						const key = String(post.displayKey || post.uri).trim()
-						if (key && !existingKeys.has(key)) {
-							batchNewCount++
-							existingKeys.add(key)
+						const postUuid = resolvePostUuid(post)
+						if (existingKeys.has(key) || (postUuid && existingUuids.has(postUuid))) {
+							continue
 						}
+						batchNewCount++
+						existingKeys.add(key)
+						if (postUuid) existingUuids.add(postUuid)
 					}
 				}
 
@@ -605,7 +648,7 @@
 							{/if}
 						{/if}
 					</h2>
-					<label class="sort-toggle" aria-label="Sort search results">
+					<!-- <label class="sort-toggle" aria-label="Sort search results">
 						<span class="sort-label">Most recent</span>
 						<input
 							type="checkbox"
@@ -619,7 +662,41 @@
 						/>
 						<span class="sort-slider" aria-hidden="true"></span>
 						<span class="sort-label">Most popular</span>
-					</label>
+					</label> -->
+					<div class="filter-group">
+						<span class="filter-title">Show:</span>
+						<div class="checkbox-container">
+							<label class="custom-checkbox">
+								<input type="checkbox" bind:checked={showProfiles} />
+								<span class="checkbox-box">
+									<svg class="checkmark" viewBox="0 0 24 24">
+										<path d="M4.1 12.7L9 17.6 20 6.6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+									</svg>
+								</span>
+								<span class="checkbox-label">Profiles</span>
+							</label>
+							
+							<label class="custom-checkbox">
+								<input type="checkbox" bind:checked={showPosts} />
+								<span class="checkbox-box">
+									<svg class="checkmark" viewBox="0 0 24 24">
+										<path d="M4.1 12.7L9 17.6 20 6.6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+									</svg>
+								</span>
+								<span class="checkbox-label">Posts</span>
+							</label>
+
+							<label class="custom-checkbox">
+								<input type="checkbox" bind:checked={showComments} />
+								<span class="checkbox-box">
+									<svg class="checkmark" viewBox="0 0 24 24">
+										<path d="M4.1 12.7L9 17.6 20 6.6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+									</svg>
+								</span>
+								<span class="checkbox-label">Comments</span>
+							</label>
+						</div>
+					</div>
 				</div>
 				<FeedHeaderActions
 					currentView="search"
@@ -957,6 +1034,102 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.9rem;
+	}
+
+	.filter-group {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		background: rgba(255, 255, 255, 0.6);
+		padding: 0.35rem 0.85rem;
+		border-radius: 999px;
+		border: 1px solid rgba(58, 91, 65, 0.12);
+		margin-left: 0.5rem;
+	}
+
+	.filter-title {
+		font-size: 0.75rem;
+		font-weight: 700;
+		color: #5f665f;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	.checkbox-container {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+	}
+
+	.custom-checkbox {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		cursor: pointer;
+		user-select: none;
+		font-size: 0.8rem;
+		font-weight: 600;
+		color: #5f665f;
+		transition: color 0.2s ease;
+	}
+
+	.custom-checkbox:hover {
+		color: #3b6e4f;
+	}
+
+	.custom-checkbox input {
+		position: absolute;
+		opacity: 0;
+		cursor: pointer;
+		height: 0;
+		width: 0;
+	}
+
+	.checkbox-box {
+		position: relative;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 16px;
+		height: 16px;
+		border: 2px solid rgba(58, 91, 65, 0.3);
+		border-radius: 4px;
+		background: #fff;
+		transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+	}
+
+	.custom-checkbox:active .checkbox-box {
+		transform: scale(0.9);
+	}
+
+	.custom-checkbox input:checked + .checkbox-box {
+		background: #3b6e4f;
+		border-color: #3b6e4f;
+		box-shadow: 0 2px 6px rgba(59, 110, 79, 0.25);
+		animation: checkbox-bounce 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+	}
+
+	.checkmark {
+		width: 10px;
+		height: 10px;
+		color: #fff;
+		stroke-dasharray: 24;
+		stroke-dashoffset: 24;
+		transition: stroke-dashoffset 0.2s ease 0.05s;
+	}
+
+	.custom-checkbox input:checked + .checkbox-box .checkmark {
+		stroke-dashoffset: 0;
+	}
+
+	@keyframes checkbox-bounce {
+		0%, 100% {
+			transform: scale(1);
+		}
+		50% {
+			transform: scale(1.15);
+		}
 	}
 
 	@media (max-width: 640px) {

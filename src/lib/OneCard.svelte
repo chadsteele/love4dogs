@@ -4,6 +4,7 @@
 	import {
 		CircleAlert as NoticeIcon,
 		User,
+		MessageSquare,
 	} from "lucide-svelte"
 	import TagPills from "$lib/TagPills.svelte"
 	import ImageLayout from "$lib/ImageLayout.svelte"
@@ -11,11 +12,19 @@
 	import {formatDisplayAddress} from "$lib/addressFormat"
 	import {writeSearchTerm, readSearchTerm} from "$lib/searchStore"
 	import PostStats from "$lib/PostStats.svelte"
+	import { getProfileDetails } from "$lib/syncProcessor.js"
+	import { parseTimestampMs } from "$lib/dateTime.js"
 
 	let {post, onclick = () => {}, onTagClick = () => {}} = $props()
 	let hasHydrated = $state(false)
 	let discussionComment = $state(null)
 	let loadingComment = $state(true)
+
+	let contextType = $state("post")
+	let contextSlug = $state("")
+	let contextTitle = $state("")
+	let commentAuthorName = $state("Anonymous")
+	let commentAuthorAvatar = $state("")
 	const altCandidatesCache = new Map()
 	const altRecordCache = new Map()
 	const altLocationCache = new Map()
@@ -124,7 +133,10 @@
 	}
 
 	function resolvePostTags(inputPost = {}) {
-		const directTags = Array.isArray(inputPost?.tags) ? inputPost.tags : []
+		const directTags = [
+			...(Array.isArray(inputPost?.tags) ? inputPost.tags : []),
+			...(Array.isArray(inputPost?.record?.tags) ? inputPost.record.tags : [])
+		]
 		const normalizedDirectTags = directTags
 			.map((tag) =>
 				String(tag || "")
@@ -132,6 +144,21 @@
 					.toLowerCase(),
 			)
 			.filter(Boolean)
+
+		if (normalizedDirectTags.includes("chat")) {
+			return normalizedDirectTags
+		}
+
+		for (const alt of inputPost?.imageAlts || []) {
+			try {
+				const parsed = JSON.parse(alt)
+				if (parsed && parsed.uuid && parsed.context) {
+					const altTags = extractTagsFromBundleAlt(alt)
+					return [...new Set(["chat", parsed.context, ...altTags])]
+				}
+			} catch {}
+		}
+
 		if (normalizedDirectTags.length) return normalizedDirectTags
 
 		for (const alt of inputPost?.imageAlts || []) {
@@ -223,41 +250,83 @@
 		return rewriteLove4DogsUrlForLocalhost(source)
 	}
 
-	onMount(async () => {
+	onMount(() => {
 		hasHydrated = true
-		
-		const uuid = resolveCardUuid(post)
-		if (uuid) {
-			try {
-				const res = await fetch(`/api/feed?query=${encodeURIComponent(uuid)}&limit=1&chat=1`)
-				if (res.ok) {
-					const data = await res.json()
-					const posts = data?.posts || []
-					if (posts.length > 0) {
-						const firstPost = posts[0]
-						if (firstPost.imageAlts && firstPost.imageAlts.length > 0) {
-							try {
-								const payload = JSON.parse(firstPost.imageAlts[0])
-								if (payload && payload.uuid && payload.context === uuid) {
-									discussionComment = {
-										uuid: payload.uuid,
-										handle: firstPost.author?.handle || "anonymous",
-										name: firstPost.author?.displayName || firstPost.author?.handle || "Anonymous",
-										avatar: firstPost.author?.avatar || "",
-										text: payload.text || firstPost.text || ""
-									}
+	})
+
+	$effect(() => {
+		// Reset state on change
+		commentAuthorName = "Anonymous"
+		commentAuthorAvatar = ""
+		contextType = "post"
+		contextSlug = ""
+		contextTitle = ""
+		discussionComment = null
+
+		if (postType === "comment" && commentPayload?.context) {
+			getProfileDetails(commentPayload.author).then((details) => {
+				commentAuthorName = details?.name || "Anonymous"
+				commentAuthorAvatar = details?.profilePic || ""
+			}).catch((err) => {
+				console.error("Failed to load comment author details:", err)
+			})
+
+			fetch(`/api/feed?query=${encodeURIComponent(commentPayload.context)}&limit=1`)
+				.then(res => res.ok ? res.json() : null)
+				.then(data => {
+					const contextPosts = data?.posts || []
+					if (contextPosts.length > 0) {
+						const contextPost = contextPosts[0]
+						const cTags = (contextPost.tags || []).map(t => String(t || '').trim().toLowerCase())
+						const isProfile = cTags.includes("profile")
+						contextType = isProfile ? "profile" : "post"
+						
+						let title = ""
+						if (isProfile) {
+							for (const alt of contextPost.imageAlts || []) {
+								const parsed = getRecord(alt)
+								if (parsed?.name) {
+									title = parsed.name
+									break
 								}
-							} catch {}
+							}
+						} else {
+							title = String(contextPost.text || "").split("\n")[0].trim()
 						}
+						contextTitle = title || (isProfile ? "profile" : "post")
+						contextSlug = slugifyValue(title) || commentPayload.context
 					}
-				}
-			} catch (err) {
-				console.error("Failed to load discussion comment for card:", uuid, err)
-			} finally {
-				loadingComment = false
-			}
+				}).catch((err) => {
+					console.error("Failed to fetch comment context info:", commentPayload.context, err)
+				})
 		} else {
-			loadingComment = false
+			const uuid = resolveCardUuid(post)
+			if (uuid) {
+				fetch(`/api/feed?query=${encodeURIComponent(uuid)}&limit=1&chat=1`)
+					.then(res => res.ok ? res.json() : null)
+					.then(data => {
+						const posts = data?.posts || []
+						if (posts.length > 0) {
+							const firstPost = posts[0]
+							if (firstPost.imageAlts && firstPost.imageAlts.length > 0) {
+								try {
+									const payload = JSON.parse(firstPost.imageAlts[0])
+									if (payload && payload.uuid && payload.context === uuid) {
+										discussionComment = {
+											uuid: payload.uuid,
+											handle: firstPost.author?.handle || "anonymous",
+											name: firstPost.author?.displayName || firstPost.author?.handle || "Anonymous",
+											avatar: firstPost.author?.avatar || "",
+											text: payload.text || firstPost.text || ""
+										}
+									}
+								} catch {}
+							}
+						}
+					}).catch((err) => {
+						console.error("Failed to load discussion comment for card:", uuid, err)
+					})
+			}
 		}
 	})
 
@@ -320,6 +389,16 @@
 	}
 
 	function getPrimaryImage() {
+		if (postType === "comment" && commentPayload) {
+			if (commentPayload.imgs && commentPayload.imgs.length > 0) {
+				return normalizeImageUrl(commentPayload.imgs[0])
+			}
+			if (commentPayload.img) {
+				return normalizeImageUrl(commentPayload.img)
+			}
+			return null
+		}
+
 		// Check for profile background pic first
 		for (const alt of post?.imageAlts || []) {
 			const parsed = getRecord(alt)
@@ -584,8 +663,43 @@
 		}
 	}
 
-	const cardTitle = $derived(getCardTitle())
-	const cardDescription = $derived(getCardDescription())
+	const commentPayload = $derived.by(() => {
+		if (post?.imageAlts && post.imageAlts.length > 0) {
+			try {
+				const payload = JSON.parse(post.imageAlts[0])
+				if (payload && payload.uuid && payload.context) {
+					return payload
+				}
+			} catch {}
+		}
+		return null
+	})
+
+	const cardTitle = $derived.by(() => {
+		if (postType === "comment") {
+			
+			return `comment`
+		}
+		return getCardTitle()
+	})
+
+	const cardDescription = $derived.by(() => {
+		if (postType === "comment") {
+			return commentPayload?.text || ""
+		}
+		return getCardDescription()
+	})
+
+	const commentDate = $derived.by(() => {
+		if (postType === "comment" && commentPayload?.stamp) {
+			const ms = parseTimestampMs(commentPayload.stamp, { allowBase36: true })
+			if (ms) {
+				return new Date(ms).toISOString()
+			}
+		}
+		return ""
+	})
+
 	const primaryImage = $derived(getPrimaryImage())
 	const profilePic = $derived(getProfilePic())
 	const postImages = $derived.by(() => {
@@ -600,9 +714,14 @@
 	const resolvedTags = $derived(resolvePostTags(post))
 	const hasTestTag = $derived(resolvedTags.includes("test"))
 	const postType = $derived(
-		// Use "profile" tag to identify profiles; otherwise default to "post"
 		(() => {
+			if (commentPayload) {
+				return "comment"
+			}
 			const tags = resolvedTags
+			if (tags.some((tag) => String(tag || "").toLowerCase() === "chat")) {
+				return "comment"
+			}
 			return tags.some(
 				(tag) => String(tag || "").toLowerCase() === "profile",
 			)
@@ -615,10 +734,21 @@
 			? resolveCardUuid(post)
 			: resolveCardAuthorId(post)
 	)
-	const cardViewHref = $derived(buildCardViewPath(cardTitle, postType, post))
+	const cardViewHref = $derived.by(() => {
+		if (postType === "comment" && commentPayload) {
+			const type = contextType
+			const uuid = commentPayload.context
+			const slug = contextSlug || uuid
+			return `/${type}/view/${encodeURIComponent(uuid)}/${encodeURIComponent(slug)}#comment-${commentPayload.uuid}`
+		}
+		return buildCardViewPath(cardTitle, postType, post)
+	})
 	const profileDisplayName = $derived(getProfileDisplayName())
-	const authorName = $derived(
-		postType === "profile"
+	const authorName = $derived.by(() => {
+		if (postType === "comment") {
+			return commentAuthorName || "Anonymous"
+		}
+		return postType === "profile"
 			? String(
 					profileDisplayName ||
 						post?.author?.displayName ||
@@ -627,8 +757,15 @@
 				).trim()
 			: String(
 					post?.author?.displayName || post?.author?.handle || "",
-				).trim(),
-	)
+				).trim()
+	})
+
+	const authorAvatar = $derived.by(() => {
+		if (postType === "comment") {
+			return commentAuthorAvatar || ""
+		}
+		return profilePic
+	})
 
 	const locationFields = $derived(extractLocationFields(post))
 	const locationLine = $derived(
@@ -670,23 +807,27 @@
 	})
 </script>
 
-<div class="one-card" class:animate={isInView} bind:this={cardEl}>
-	<a class="card-link" href={cardViewHref} tabindex="0">
-		{#if primaryImage}
-			<div class="card-image">
-				<img src={primaryImage} alt={cardTitle} loading="lazy" />
-			</div>
-		{/if}
-	</a>
+<div class="one-card" class:animate={isInView} class:comment-card={postType === "comment"} bind:this={cardEl}>
+	{#if postType !== "comment"}
+		<a class="card-link" href={cardViewHref} tabindex="0">
+			{#if primaryImage}
+				<div class="card-image">
+					<img src={primaryImage} alt={cardTitle} loading="lazy" />
+				</div>
+			{/if}
+		</a>
+	{/if}
 
-	<TagPills tags={resolvedTags} onTagClick={handleTagClick} />
+	{#if postType !== "comment"}
+		<TagPills tags={resolvedTags} onTagClick={handleTagClick} />
+	{/if}
 
 	<AuthorRow
-		avatar={profilePic}
+		avatar={authorAvatar}
 		name={authorName || "Anonymous"}
-		dateValue={post?.createdAt || ""}
-		location={locationLine}
-		locationHref={locationMapsHref}
+		dateValue={postType === "comment" ? commentDate : (post?.createdAt || "")}
+		location={postType === "comment" ? "" : locationLine}
+		locationHref={postType === "comment" ? "" : locationMapsHref}
 		// compact
 	/>
 
@@ -694,76 +835,90 @@
 
 	<a class="card-link" href={cardViewHref} tabindex="0">
 		<div class="card-content">
-			{#if postType !== "profile"}
+			<!-- {#if postType === "comment"}
+				<div class="comment-context-header">
+					<MessageSquare size={14} class="comment-icon" />
+					<span class="comment-context-title">{cardTitle}</span>
+				</div>
+			{/if} -->
+			{#if postType !== "profile" && postType !== "comment"}
 				<h3 class="card-title">{cardTitle}</h3>
 			{/if}
+			{#if cardDescription && postType === "comment"}
+				<p class="card-description">
+					<MessageSquare size={14} class="comment-icon" style="padding-right:1rem" /> {	cardDescription}
+				</p>
+			{:else}
 			{#if cardDescription}
 				<p class="card-description">{cardDescription}</p>
+			{/if}
 			{/if}
 		</div>
 	</a>
 
-	<div class="post-footer">
-		<PostStats
-			likeCount={post.likeCount ?? 0}
-			repostCount={post.repostCount ?? 0}
-			replyCount={post.replyCount ?? 0}
-			createdAt={post.createdAt}
-			context={resolveCardUuid(post)}
-			{cardViewHref}
-			title={cardTitle}
-			imageUrl={postType === 'profile' ? profilePic : primaryImage}
-			{authorId}
-		/>
-		{#if discussionComment}
-			<a
-				class="comments-link"
-				href={`${cardViewHref}#comment-${discussionComment.uuid}`}
-				onclick={(e) => e.stopPropagation()}
-			>
-				<ul class="comments-list">
-					<li class="comment">
-						{#if discussionComment.avatar}
-							<img
-								class="comment-avatar"
-								src={discussionComment.avatar}
-								alt={`@${discussionComment.handle}`}
-								loading="lazy"
-						/>
-						{:else}
-							<span
-								class="comment-avatar comment-avatar-fallback"
-								aria-hidden="true"
-							></span>
-						{/if}
-						<div class="comment-main">
-							<span class="comment-author">@{discussionComment.handle}</span>
-							<span class="comment-text">{discussionComment.text}</span>
+	{#if postType !== "comment"}
+		<div class="post-footer">
+			<PostStats
+				likeCount={post.likeCount ?? 0}
+				repostCount={post.repostCount ?? 0}
+				replyCount={post.replyCount ?? 0}
+				createdAt={post.createdAt}
+				context={resolveCardUuid(post)}
+				{cardViewHref}
+				title={cardTitle}
+				imageUrl={postType === 'profile' ? profilePic : primaryImage}
+				{authorId}
+			/>
+			{#if discussionComment}
+				<a
+					class="comments-link"
+					href={`${cardViewHref}#comment-${discussionComment.uuid}`}
+					onclick={(e) => e.stopPropagation()}
+				>
+					<ul class="comments-list">
+						<li class="comment">
+							{#if discussionComment.avatar}
+								<img
+									class="comment-avatar"
+									src={discussionComment.avatar}
+									alt={`@${discussionComment.handle}`}
+									loading="lazy"
+							/>
+							{:else}
+								<span
+									class="comment-avatar comment-avatar-fallback"
+									aria-hidden="true"
+								></span>
+							{/if}
+							<div class="comment-main">
+								<span class="comment-author">@{discussionComment.handle}</span>
+								<span class="comment-text">{discussionComment.text}</span>
+							</div>
+						</li>
+					</ul>
+					<div class="comment-compose-disabled" aria-hidden="true">
+						<div class="comment-input-disabled">
+							Add your comments 
 						</div>
-					</li>
-				</ul>
-				<div class="comment-compose-disabled" aria-hidden="true">
-					<div class="comment-input-disabled">
-						Add your comments 
+						<div class="comment-submit-disabled">Submit</div>
 					</div>
-					<div class="comment-submit-disabled">Submit</div>
-				</div>
-			</a>
-		{:else}
-			<a
-				class="comments-link"
-				href={`${cardViewHref}#discussion`}
-				onclick={(e) => e.stopPropagation()}
-			>
-				<div class="comment-compose-disabled" aria-hidden="true">
-					<div class="comment-input-disabled">
-						Be the first to comment
+				</a>
+			{:else}
+				<a
+					class="comments-link"
+					href={`${cardViewHref}#discussion`}
+					onclick={(e) => e.stopPropagation()}
+				>
+					<div class="comment-compose-disabled" aria-hidden="true">
+						<div class="comment-input-disabled">
+							Be the first to comment
+						</div>
+						<div class="comment-submit-disabled">Submit</div>
 					</div>
-					<div class="comment-submit-disabled">Submit</div>
-				</div>
-			</a>
-		{/if}
-	</div>
+				</a>
+			{/if}
+		</div>
+	{/if}
 </div>
 
 <style>
@@ -1001,6 +1156,32 @@
 		color: #8f998f;
 		font-size: 0.78rem;
 		font-weight: 600;
+	}
+
+	.one-card.comment-card {
+		border-left: 4px solid #3b6e4f;
+	}
+
+	.comment-context-header {
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+		margin-bottom: 0.25rem;
+		font-size: 0.75rem;
+		font-weight: 700;
+		color: #3b6e4f;
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+	}
+
+	.comment-icon {
+		flex-shrink: 0;
+	}
+
+	.comment-context-title {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	@media (max-width: 640px) {

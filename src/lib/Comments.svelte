@@ -18,7 +18,7 @@
 	href={`${cardViewHref}#new-comment`}
 	onclick={handleClick}
 >
-	<MessageCircle size={13} /> {count? `x ${count}` : ""}
+	<MessageCircle size={13} /> <sup>{count||""}</sup>
 </a>
 
 <style>
@@ -35,5 +35,12 @@
 
 	.comments:hover {
 		color: #1a4a7a;
+	}
+
+	sup {
+		font-size: 0.65rem;
+		align-self: flex-start;
+		position: relative;
+		top: -0.15em;
 	}
 </style>

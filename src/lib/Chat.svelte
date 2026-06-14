@@ -417,6 +417,72 @@
 			return;
 		}
 
+		const normalizedNewComment = commentText.trim();
+
+		// HTML validation
+		const htmlRegex = /<\/?[a-z][a-z0-9]*\b[^>]*>/i;
+		if (htmlRegex.test(normalizedNewComment)) {
+			postError = "HTML tags are not allowed in comments.";
+			return;
+		}
+
+		// URL validation (allow only love4dogs.club domain URLs)
+		const urlRegex = /(?:https?:\/\/|www\.)\S+|[a-zA-Z0-9-]+\.(?:com|org|net|edu|gov|io|co|me|tv|info|biz|club|app|dev|xyz|dog|cat|us|uk|ca|de|fr|jp|au|cn|in)\b/gi;
+		let hasExternalUrl = false;
+		let match;
+		urlRegex.lastIndex = 0;
+		while ((match = urlRegex.exec(normalizedNewComment)) !== null) {
+			let urlStr = match[0];
+			let testUrl = urlStr;
+			if (!/^https?:\/\//i.test(testUrl)) {
+				testUrl = 'http://' + testUrl;
+			}
+			try {
+				const parsed = new URL(testUrl);
+				const hostname = parsed.hostname.toLowerCase();
+				if (hostname !== 'love4dogs.club' && !hostname.endsWith('.love4dogs.club')) {
+					hasExternalUrl = true;
+					break;
+				}
+			} catch {
+				const domainRegex = /(?:^|[\/\.@])love4dogs\.club\b/i;
+				if (!domainRegex.test(urlStr)) {
+					hasExternalUrl = true;
+					break;
+				}
+			}
+		}
+		if (hasExternalUrl) {
+			postError = "External links or URLs are not allowed in comments.";
+			return;
+		}
+
+		// Duplicate comment validation (current discussion feed)
+		let lastTextInFeed = "";
+		let maxStamp = 0;
+		for (const c of comments) {
+			if (c.author === currentProfileUuid) {
+				const time = parseTimestampMs(c.stamp, { allowBase36: true }) || 0;
+				if (time > maxStamp) {
+					maxStamp = time;
+					lastTextInFeed = c.text;
+				}
+			}
+		}
+
+		if (lastTextInFeed && normalizedNewComment === lastTextInFeed.trim()) {
+			postError = "Your comment is identical to your last comment. Please type something new.";
+			return;
+		}
+
+		// Duplicate comment validation (localStorage fallback)
+		const localStorageKey = `love4dogs:lastComment:${currentProfileUuid}`;
+		const lastSavedComment = localStorage.getItem(localStorageKey);
+		if (lastSavedComment && normalizedNewComment === lastSavedComment.trim()) {
+			postError = "Your comment is identical to your last comment. Please type something new.";
+			return;
+		}
+
 		posting = true;
 		postError = "";
 
@@ -508,6 +574,9 @@
 			} catch (cacheErr) {
 				console.warn("Failed to update comments in local database cache:", cacheErr);
 			}
+
+			// Save the comment text as the last comment in localStorage
+			localStorage.setItem(`love4dogs:lastComment:${currentProfileUuid}`, normalizedNewComment);
 
 			// Cleanup form and reply states
 			commentText = "";
@@ -623,6 +692,15 @@
 						maxlength={charLimit}
 						rows="3"
 						disabled={posting}
+						onpaste={(e) => {
+							e.preventDefault();
+							postError = "Pasting is disabled. Please type your comment.";
+						}}
+						oninput={() => {
+							if (postError === "Pasting is disabled. Please type your comment.") {
+								postError = "";
+							}
+						}}
 					></textarea>
 
 					{#if attachedImagePreviews.length > 0}

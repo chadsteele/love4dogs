@@ -14,6 +14,7 @@
 	let showModal = $state(false);
 	let shareComment = $state("");
 	let copiedHtml = $state("");
+	let errorMsg = $state("");
 	let toastTimeout;
 
 	// Background share counter task
@@ -65,6 +66,7 @@
 		e.stopPropagation();
 		e.preventDefault();
 		shareComment = "";
+		errorMsg = "";
 		showModal = true;
 	}
 
@@ -72,6 +74,46 @@
 		if (e) {
 			e.stopPropagation();
 			e.preventDefault();
+		}
+
+		const normalizedComment = shareComment.trim();
+
+		// HTML validation
+		const htmlRegex = /<\/?[a-z][a-z0-9]*\b[^>]*>/i;
+		if (htmlRegex.test(normalizedComment)) {
+			errorMsg = "HTML tags are not allowed in comments.";
+			return;
+		}
+
+		// URL validation (allow only love4dogs.club domain URLs)
+		const urlRegex = /(?:https?:\/\/|www\.)\S+|[a-zA-Z0-9-]+\.(?:com|org|net|edu|gov|io|co|me|tv|info|biz|club|app|dev|xyz|dog|cat|us|uk|ca|de|fr|jp|au|cn|in)\b/gi;
+		let hasExternalUrl = false;
+		let match;
+		urlRegex.lastIndex = 0;
+		while ((match = urlRegex.exec(normalizedComment)) !== null) {
+			let urlStr = match[0];
+			let testUrl = urlStr;
+			if (!/^https?:\/\//i.test(testUrl)) {
+				testUrl = 'http://' + testUrl;
+			}
+			try {
+				const parsed = new URL(testUrl);
+				const hostname = parsed.hostname.toLowerCase();
+				if (hostname !== 'love4dogs.club' && !hostname.endsWith('.love4dogs.club')) {
+					hasExternalUrl = true;
+					break;
+				}
+			} catch {
+				const domainRegex = /(?:^|[\/\.@])love4dogs\.club\b/i;
+				if (!domainRegex.test(urlStr)) {
+					hasExternalUrl = true;
+					break;
+				}
+			}
+		}
+		if (hasExternalUrl) {
+			errorMsg = "External links or URLs are not allowed in comments.";
+			return;
 		}
 
 		showModal = false;
@@ -208,7 +250,7 @@
 	onclick={openShareModal}
 	type="button"
 >
-	<Repeat2 size={13} /> {displayCount? `x ${displayCount}` : ""}
+	<Repeat2 size={13} /> <sup>{displayCount||""}</sup> 
 </button>
 
 {#if showModal}
@@ -227,9 +269,22 @@
 						bind:value={shareComment}
 						placeholder="Why are you sharing?..."
 						maxlength="150"
+						onpaste={(e) => {
+							e.preventDefault();
+							errorMsg = "Pasting is disabled. Please type your comment.";
+						}}
+						oninput={() => {
+							if (errorMsg === "Pasting is disabled. Please type your comment.") {
+								errorMsg = "";
+							}
+						}}
 					></textarea>
 					<span class="char-count">{150 - shareComment.length} characters remaining</span>
 				</div>
+
+				{#if errorMsg}
+					<p class="error-banner">{errorMsg}</p>
+				{/if}
 				
 				<div class="modal-actions">
 					<button type="button" class="btn-cancel" onclick={() => showModal = false}>Cancel</button>
@@ -271,6 +326,13 @@
 
 	.shares:hover {
 		color: #1a4a7a;
+	}
+
+	.shares sup {
+		font-size: 0.65rem;
+		align-self: flex-start;
+		position: relative;
+		top: -0.15em;
 	}
 
 	.modal-backdrop {
@@ -459,5 +521,12 @@
 
 	.toast-preview {
 		background: #faf7f2;
+	}
+
+	.error-banner {
+		color: #8e2f21;
+		font-size: 0.84rem;
+		font-weight: 600;
+		margin-bottom: 1rem;
 	}
 </style>
