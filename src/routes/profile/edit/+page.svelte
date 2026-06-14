@@ -1,7 +1,7 @@
 <script>
 	import {onMount} from "svelte"
 	import {page} from "$app/state"
-	import {Eraser, Save, Send, X} from "lucide-svelte"
+	import {Eraser, Save, Send, X, MapPin} from "lucide-svelte"
 	import Editor from "$lib/Editor.svelte"
 	import NavBar from "$lib/NavBar.svelte"
 	import ProfileImages from "$lib/ProfileImages.svelte"
@@ -1412,28 +1412,20 @@
 			isPostEditRoute || hasProfileImage
 				? ""
 				: "Profile picture is required."
-		let locationValidationError = ""
-		if (!locationConfirmed) {
-			locationValidationError =
-				"Location is required. Please confirm your location before publishing."
-		}
 		debugProfile("[profile] validateRequiredFields", {
 			hasName: Boolean(profileName.trim()),
 			hasEmail: Boolean(email.trim()),
 			hasProfileImage: Boolean(uploadedProfileImage),
 			hasSelectedProfileImage: Boolean(selectedProfileImage),
-			locationConfirmed,
 			nameError,
 			emailError,
 			profileImageError,
 			submitProfileImageError,
-			locationValidationError,
 		})
 		return (
 			nameError ||
 			emailError ||
 			submitProfileImageError ||
-			locationValidationError ||
 			null
 		)
 	}
@@ -1535,7 +1527,7 @@
 		// Always require location confirmation before publishing.
 		if (!locationConfirmed) {
 			debugProfile("[profile] location not confirmed, showing modal")
-			locationError = ""
+			locationError = "Location is required. Please confirm your location before publishing."
 			modalLocation = modalLocation // Use existing modal location if available
 			pinMovedInModal = false
 			showLocationModal = true
@@ -2699,6 +2691,19 @@
 				}}
 				placeholder="Location is required, but exact address is not"
 			/>
+			<button
+				type="button"
+				class="verify-location-btn"
+				onclick={() => {
+					modalLocation = modalLocation
+					pinMovedInModal = false
+					showLocationModal = true
+				}}
+				title="Verify Location on Map"
+			>
+				<MapPin size={16} aria-hidden="true" />
+				<span>Verify</span>
+			</button>
 			{#if locationConfirmed}
 				<span class="address-confirmed-badge">✓ Confirmed</span>
 			{/if}
@@ -3022,6 +3027,18 @@
 		color: #24633f;
 		font-weight: 600;
 		white-space: nowrap;
+	}
+	.verify-location-btn {
+		background: #fff;
+		border: 1px solid #3b6e4f;
+		color: #3b6e4f;
+		font-weight: 500;
+		transition: all 0.2s ease;
+	}
+	.verify-location-btn:hover {
+		background: #f4fcf7;
+		border-color: #305741;
+		color: #305741;
 	}
 
 	.upload-progress-bar-wrap {
