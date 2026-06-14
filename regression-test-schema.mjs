@@ -10,6 +10,7 @@ import {
 import {
 	extractPostTypeFromTags,
 	upsertTypeTag,
+	classifyPost,
 } from './src/lib/postTypeTags.js';
 import { setPost, getPost, getAllPosts, deletePost, getSetting, setSetting } from './src/lib/db.js';
 import { formatDisplayAddress } from './src/lib/addressFormat.js';
@@ -295,6 +296,92 @@ async function runCacheWaterCleanupTests() {
 	}
 }
 
+function runPostClassificationTests() {
+	console.log('Testing classifyPost()...');
+
+	// 1. Profile classification (profileImage field present in alt json)
+	const profilePost = {
+		imageAlts: [
+			JSON.stringify({
+				uuid: 'profile-uuid-123',
+				profileImage: 'https://cdn.bsky.app/profile.jpg',
+				name: 'Buddy'
+			})
+		]
+	};
+	assertEqual(classifyPost(profilePost), 'profile', 'Classifies as profile when profileImage is in imageAlts JSON');
+
+	const profilePostVideo = {
+		video: {
+			alt: JSON.stringify({
+				uuid: 'profile-uuid-456',
+				profileImage: 'https://cdn.bsky.app/profile2.jpg'
+			})
+		}
+	};
+	assertEqual(classifyPost(profilePostVideo), 'profile', 'Classifies as profile when profileImage is in video.alt JSON');
+
+	// 2. Comment classification (context field present in alt json)
+	const commentPost = {
+		imageAlts: [
+			JSON.stringify({
+				uuid: 'comment-uuid-123',
+				context: 'post-uuid-789',
+				text: 'Cute dog!'
+			})
+		]
+	};
+	assertEqual(classifyPost(commentPost), 'comment', 'Classifies as comment when context is in imageAlts JSON');
+
+	const commentPostVideo = {
+		video: {
+			alt: JSON.stringify({
+				uuid: 'comment-uuid-456',
+				context: 'profile-uuid-abc'
+			})
+		}
+	};
+	assertEqual(classifyPost(commentPostVideo), 'comment', 'Classifies as comment when context is in video.alt JSON');
+
+	// 3. Post classification (alt json present, but no profileImage or context)
+	const standardPost = {
+		imageAlts: [
+			JSON.stringify({
+				uuid: 'post-uuid-123',
+				title: 'Fun day at the park',
+				description: 'Buddy loved chasing frisbees today!'
+			})
+		]
+	};
+	assertEqual(classifyPost(standardPost), 'post', 'Classifies as post when other fields present but no profileImage or context');
+
+	// 4. Image only CDN post (no alt json, has exactly one image, contains 🎞️ in text)
+	const cdnPost = {
+		images: ['https://cdn.bsky.app/some-dog-photo.jpg'],
+		text: 'Look at this dog 🎞️ go!'
+	};
+	assertEqual(classifyPost(cdnPost), 'image_only_cdn', 'Classifies as image_only_cdn when no alt, one image, and includes 🎞️');
+
+	// 5. Normal text post (no alt json, no images)
+	const textPost = {
+		text: 'Just a text post'
+	};
+	assertEqual(classifyPost(textPost), 'unknown', 'Classifies text-only post as unknown');
+
+	// 6. Post with normal alt text (not JSON)
+	const normalAltPost = {
+		imageAlts: ['A cute brown dog playing in grass']
+	};
+	assertEqual(classifyPost(normalAltPost), 'unknown', 'Classifies post with non-JSON alt as unknown');
+
+	// 7. Multi-image post with 🎞️ but no alt JSON
+	const multiImageCdn = {
+		images: ['https://cdn.bsky.app/1.jpg', 'https://cdn.bsky.app/2.jpg'],
+		text: 'Two dogs 🎞️'
+	};
+	assertEqual(classifyPost(multiImageCdn), 'unknown', 'Multi-image CDN post classified as unknown (requires exactly 1 image)');
+}
+
 async function main() {
 	console.log('============================================================');
 	console.log('Schema Regression Test - love4dogs');
@@ -307,6 +394,7 @@ async function main() {
 	await runDatabaseProxyTests();
 	await runDatabaseCacheTests();
 	await runCacheWaterCleanupTests();
+	runPostClassificationTests();
 
 	const summary = counts();
 	console.log('------------------------------------------------------------');

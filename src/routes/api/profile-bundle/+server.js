@@ -34,3 +34,18 @@ export async function GET({url, fetch}) {
 	}
 }
 
+export async function POST({request}) {
+	try {
+		const {uuid, bundle} = await request.json()
+		if (!uuid || !bundle) {
+			return json({error: 'uuid and bundle required'}, {status: 400})
+		}
+		const cacheKey = `bsky:profile-bundle:${uuid}`
+		await setPost(cacheKey, bundle)
+		return json({ok: true})
+	} catch (error) {
+		return json({error: error?.message || 'Failed to cache bundle'}, {status: 500})
+	}
+}
+
+

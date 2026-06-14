@@ -1,5 +1,5 @@
 <script>
-	import { onMount } from "svelte";
+	import { onMount, onDestroy } from "svelte";
 	import { page } from "$app/state";
 	import { goto } from "$app/navigation";
 	import NavBar from "$lib/NavBar.svelte";
@@ -392,16 +392,47 @@
 		} catch {}
 	}
 
+	function mapDraftProfileToViewData(draft) {
+		if (!draft) return null;
+		const name = String(draft.profileName || "").trim();
+		const description = String(draft.profileDescription || "").trim();
+		const html = String(draft.contentHtml || "");
+		
+		const profileUploadedMedia = Array.isArray(draft.profileUploadedMedia) ? draft.profileUploadedMedia : [];
+		const firstProfileImage = profileUploadedMedia[0];
+		const profilePic = firstProfileImage?.bskyUrl || firstProfileImage?.url || "";
+
+		const backgroundUploadedMedia = Array.isArray(draft.backgroundUploadedMedia) ? draft.backgroundUploadedMedia : [];
+		const firstBackgroundImage = backgroundUploadedMedia[0];
+		const backgroundPic = firstBackgroundImage?.bskyUrl || firstBackgroundImage?.url || "";
+
+		return {
+			uuid: draft.uuid,
+			name,
+			description,
+			html,
+			profilePic,
+			backgroundPic,
+			likeCount: 0,
+			repostCount: 0,
+			replyCount: 0,
+			createdAt: new Date().toISOString(),
+			stamp: String(Date.now()),
+		};
+	}
+
 	async function readLocalProfile(targetUuid) {
 		try {
 			const parsed = await getProfile(targetUuid);
-			if (!parsed?.cachedAt || !parsed?.data) {
-				return null;
+			if (!parsed) return null;
+			if (parsed.cachedAt && parsed.data) {
+				if (Date.now() - parsed.cachedAt > PROFILE_VIEW_CACHE_TTL_MS) {
+					return null;
+				}
+				return parsed.data;
 			}
-			if (Date.now() - parsed.cachedAt > PROFILE_VIEW_CACHE_TTL_MS) {
-				return null;
-			}
-			return parsed.data;
+			// Fall back to mapping a raw draft profile if we found one
+			return mapDraftProfileToViewData(parsed);
 		} catch {
 			return null;
 		}
@@ -436,8 +467,10 @@
 	const mapHref = $derived(buildMapHref(jsonData));
 	const displayTags = $derived(collectDisplayTags(jsonData || {}));
 	const hasTestTag = $derived(displayTags.includes("test"));
-	const activeSearchTokens = $derived(new Set(getSearchTokens(searchTerm)));
-
+	let isDisposed = false;
+	onDestroy(() => {
+		isDisposed = true;
+	});
 
 	// ── data loading ───────────────────────────────────────────────────────────
 	onMount(async () => {
@@ -491,8 +524,7 @@
 			const slugPath = slug ? `/${slug}` : "";
 
 			// Check if the UUID is actually a comment with a context
-			let commentContext = null;
-			try {
+			const executeCommentCheck = async () => {
 				// 1. Check local IndexedDB first
 				const cachedPosts = await getAllPosts();
 				for (const p of cachedPosts) {
@@ -508,109 +540,42 @@
 										payload.uuid === uuid &&
 										payload.context
 									) {
-										commentContext = payload.context;
-										break;
-									}
-								} catch {}
-							}
-						}
-					}
-					if (commentContext) break;
-				}
-
-				// 2. If not found locally, fetch from feed API
-				if (!commentContext) {
-					const res = await fetch(
-						`/api/feed?query=${encodeURIComponent(uuid)}&chat=1`,
-					);
-					if (res.ok) {
-						const data = await res.json();
-						const posts = data?.posts || [];
-						for (const post of posts) {
-							if (post.imageAlts && post.imageAlts.length > 0) {
-								try {
-									const payload = JSON.parse(
-										post.imageAlts[0],
-									);
-									if (
-										payload &&
-										payload.uuid === uuid &&
-										payload.context
-									) {
-										commentContext = payload.context;
-										break;
+										return payload.context;
 									}
 								} catch {}
 							}
 						}
 					}
 				}
-			} catch (e) {
-				console.error("Error checking if uuid is comment:", e);
-			}
 
-			if (commentContext) {
-				const currentHash =
-					typeof window !== "undefined" ? window.location.hash : "";
-				const targetHash = currentHash || `#${uuid}`;
-				return goto(
-					`/${type}/view/${encodeURIComponent(commentContext)}${slugPath}${targetHash}`,
-					{
-						replaceState: true,
-					},
+				// 2. Fetch from feed API
+				const res = await fetch(
+					`/api/feed?query=${encodeURIComponent(uuid)}&chat=1`,
 				);
-			}
-
-			let hasLocal = false;
-			if (isProfile) {
-				const sessionBundle = readSessionBundle(uuid);
-				if (sessionBundle) {
-					const { primary, subsequent } =
-						sessionBundle?.combined || {};
-					const originPost = getOriginPost(sessionBundle);
-					jsonData = {
-						...(primary || {}),
-						html: Array.isArray(subsequent)
-							? subsequent.join("")
-							: "",
-						likeCount: originPost?.likeCount ?? 0,
-						repostCount: originPost?.repostCount ?? 0,
-						replyCount: originPost?.replyCount ?? 0,
-						createdAt: originPost?.createdAt ?? "",
-					};
-					chunkUris = collectChunkUrisFromPosts(
-						Array.isArray(sessionBundle?.posts)
-							? sessionBundle.posts
-							: [],
-						uuid,
-					);
-					editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`;
-					hasLocal = true;
-				} else {
-					const cached = await readLocalProfile(uuid);
-					if (cached) {
-						jsonData = cached;
-						editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`;
-						hasLocal = true;
+				if (res.ok) {
+					const data = await res.json();
+					const posts = data?.posts || [];
+					for (const post of posts) {
+						if (post.imageAlts && post.imageAlts.length > 0) {
+							try {
+								const payload = JSON.parse(
+									post.imageAlts[0],
+								);
+								if (
+									payload &&
+									payload.uuid === uuid &&
+									payload.context
+								) {
+									return payload.context;
+								}
+							} catch {}
+						}
 					}
 				}
-			} else {
-				const cachedPosts = await getAllPosts();
-				const cached = cachedPosts.find(
-					(p) => p.uuid === uuid || p.uri === uuid,
-				);
-				if (cached) {
-					jsonData = cached;
-					hasLocal = true;
-				}
-			}
+				return null;
+			};
 
-			if (hasLocal) {
-				loading = false;
-				fetchingMore = true;
-			}
-
-			const fetchBundlePromise = (async () => {
+			const executeFetch = async () => {
 				const response = await fetch(
 					`/api/profile-bundle?uuid=${encodeURIComponent(uuid)}`,
 				);
@@ -706,43 +671,106 @@
 						);
 					}
 				}
-			})();
+			};
 
-			if (hasLocal) {
-				fetchBundlePromise
-					.catch((e) => {
-						console.error("Background fetch failed:", e);
-					})
-					.finally(() => {
-						fetchingMore = false;
-					});
-			} else {
-				await fetchBundlePromise;
-			}
-		} catch (e) {
-			// Try offline cache fallback
-			try {
-				if (isProfile) {
+			let hasLocal = false;
+			if (isProfile) {
+				const sessionBundle = readSessionBundle(uuid);
+				if (sessionBundle) {
+					const { primary, subsequent } =
+						sessionBundle?.combined || {};
+					const originPost = getOriginPost(sessionBundle);
+					jsonData = {
+						...(primary || {}),
+						html: Array.isArray(subsequent)
+							? subsequent.join("")
+							: "",
+						likeCount: originPost?.likeCount ?? 0,
+						repostCount: originPost?.repostCount ?? 0,
+						replyCount: originPost?.replyCount ?? 0,
+						createdAt: originPost?.createdAt ?? "",
+					};
+					chunkUris = collectChunkUrisFromPosts(
+						Array.isArray(sessionBundle?.posts)
+							? sessionBundle.posts
+							: [],
+						uuid,
+					);
+					editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`;
+					hasLocal = true;
+				} else {
 					const cached = await readLocalProfile(uuid);
 					if (cached) {
 						jsonData = cached;
-						loading = false;
-						return;
-					}
-				} else {
-					const cachedPosts = await getAllPosts();
-					const cached = cachedPosts.find(
-						(p) => p.uuid === uuid || p.uri === uuid,
-					);
-					if (cached) {
-						jsonData = cached;
-						loading = false;
-						return;
+						editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`;
+						hasLocal = true;
 					}
 				}
-			} catch (cacheErr) {
-				console.error("Cache fallback failed:", cacheErr);
+			} else {
+				const cachedPosts = await getAllPosts();
+				const cached = cachedPosts.find(
+					(p) => p.uuid === uuid || p.uri === uuid,
+				);
+				if (cached) {
+					jsonData = cached;
+					hasLocal = true;
+				}
 			}
+
+			if (hasLocal) {
+				loading = false;
+				fetchingMore = true;
+			}
+
+			let attempt = 0;
+			const maxAttempts = 30;
+
+			const runLoadSequence = async () => {
+				while (attempt < maxAttempts && !isDisposed) {
+					try {
+						// 1. Comment check
+						const commentContext = await executeCommentCheck();
+						if (commentContext) {
+							const currentHash = typeof window !== "undefined" ? window.location.hash : "";
+							const targetHash = currentHash || `#${uuid}`;
+							goto(
+								`/${type}/view/${encodeURIComponent(commentContext)}${slugPath}${targetHash}`,
+								{
+									replaceState: true,
+								},
+							);
+							return;
+						}
+
+						// 2. Fetch profile/post bundle
+						await executeFetch();
+						// If we got here, executeFetch succeeded!
+						loading = false;
+						error = "";
+						return;
+					} catch (e) {
+						console.warn(`Load attempt ${attempt + 1} failed:`, e);
+						if (!hasLocal && attempt === maxAttempts - 1) {
+							error = e?.message || "Failed to load";
+						}
+					}
+
+					attempt++;
+					if (attempt < maxAttempts && !isDisposed) {
+						await new Promise((resolve) => setTimeout(resolve, 10000));
+					}
+				}
+			};
+
+			if (hasLocal) {
+				runLoadSequence().finally(() => {
+					fetchingMore = false;
+				});
+			} else {
+				loading = true;
+				await runLoadSequence();
+			}
+		} catch (e) {
 			error = e?.message || "Failed to load";
 		} finally {
 			loading = false;

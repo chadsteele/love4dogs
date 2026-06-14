@@ -25,6 +25,8 @@
 	let contextTitle = $state("")
 	let commentAuthorName = $state("Anonymous")
 	let commentAuthorAvatar = $state("")
+	let profileDetailsName = $state("")
+	let profileDetailsPic = $state("")
 	const altCandidatesCache = new Map()
 	const altRecordCache = new Map()
 	const altLocationCache = new Map()
@@ -258,6 +260,8 @@
 		// Reset state on change
 		commentAuthorName = "Anonymous"
 		commentAuthorAvatar = ""
+		profileDetailsName = ""
+		profileDetailsPic = ""
 		contextType = "post"
 		contextSlug = ""
 		contextTitle = ""
@@ -302,6 +306,15 @@
 		} else {
 			const uuid = resolveCardUuid(post)
 			if (uuid) {
+				if (postType === "profile") {
+					getProfileDetails(uuid).then((details) => {
+						profileDetailsName = details?.name || ""
+						profileDetailsPic = details?.profilePic || ""
+					}).catch((err) => {
+						console.error("Failed to load profile details in OneCard:", err)
+					})
+				}
+
 				fetch(`/api/feed?query=${encodeURIComponent(uuid)}&limit=1&chat=1`)
 					.then(res => res.ok ? res.json() : null)
 					.then(data => {
@@ -414,7 +427,15 @@
 
 		// Fall back to first post image
 		if (Array.isArray(post?.images) && post.images.length > 0) {
-			return normalizeImageUrl(post.images[0])
+			if (postType === "profile") {
+				const profilePicUrl = profileDetailsPic || getProfilePic();
+				const nonProfileImg = post.images.find(
+					img => normalizeImageUrl(img) !== normalizeImageUrl(profilePicUrl)
+				);
+				if (nonProfileImg) return normalizeImageUrl(nonProfileImg);
+			} else {
+				return normalizeImageUrl(post.images[0])
+			}
 		}
 
 		return null
@@ -680,6 +701,9 @@
 			
 			return `comment`
 		}
+		if (postType === "profile" && profileDetailsName) {
+			return profileDetailsName
+		}
 		return getCardTitle()
 	})
 
@@ -750,7 +774,8 @@
 		}
 		return postType === "profile"
 			? String(
-					profileDisplayName ||
+					profileDetailsName ||
+						profileDisplayName ||
 						post?.author?.displayName ||
 						post?.author?.handle ||
 						"",
@@ -764,7 +789,9 @@
 		if (postType === "comment") {
 			return commentAuthorAvatar || ""
 		}
-		return profilePic
+		return postType === "profile"
+			? (profileDetailsPic || profilePic)
+			: profilePic
 	})
 
 	const locationFields = $derived(extractLocationFields(post))
@@ -841,7 +868,7 @@
 					<span class="comment-context-title">{cardTitle}</span>
 				</div>
 			{/if} -->
-			{#if postType !== "profile" && postType !== "comment"}
+			{#if postType !== "comment"}
 				<h3 class="card-title">{cardTitle}</h3>
 			{/if}
 			{#if cardDescription && postType === "comment"}

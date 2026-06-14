@@ -51,7 +51,7 @@
 		resolvePostTimestampMs,
 	} from "$lib/dateTime"
 	import ShowAdmin from "$lib/ShowAdmin.svelte"
-	import {enqueueSync, setOfflineImage} from "$lib/db"
+	import {enqueueSync, setOfflineImage, setPost, setProfile} from "$lib/db"
 	import {
 		buildLocalImageProxyUrl,
 		collectUrlTextNodes,
@@ -1950,6 +1950,7 @@
 				replyAttachmentPool: attachmentPool,
 				videoAttachments,
 				tags: isPostEditRoute ? $state.snapshot(postTags) : ["profile"],
+				primaryPayload: primaryPayloadForBundle,
 			})
 
 			const newPublishedAtUri = String(
@@ -1975,7 +1976,150 @@
 				message: publishMessage,
 				viewUrl: publishedViewUrl,
 			})
-			saveProfile(false)
+			await saveProfile(false)
+
+			// Construct mock bundle for immediate loading / server cache
+			const mockBundle = {
+				uuid,
+				posts: [
+					// primary post
+					{
+						uri: newPublishedAtUri || `at://did:plc:local/app.bsky.feed.post/${uuid}`,
+						cid: publishResult?.primaryResult?.cid || "local-pending",
+						record: {
+							text: postText,
+							createdAt: new Date().toISOString(),
+						},
+						embed: {
+							$type: "app.bsky.embed.images#view",
+							images: primaryMedia.map(m => ({
+								fullsize: m.bskyUrl || m.url || "",
+								alt: m.alt || "",
+							})),
+						},
+					},
+					// chunks posts
+					...(Array.isArray(publishResult?.chunkResults) ? publishResult.chunkResults.map((chunk, idx) => ({
+						uri: chunk?.uri || "",
+						cid: chunk?.cid || "",
+						record: {
+							text: postText,
+							createdAt: new Date().toISOString(),
+						},
+						embed: {
+							$type: "app.bsky.embed.images#view",
+							images: [
+								{
+									fullsize: "",
+									alt: JSON.stringify({
+										u: uuid,
+										i: idx + 1,
+										t: chunks.length,
+										h: chunks[idx]?.bundleFragment || "",
+									}),
+								}
+							]
+						}
+					})) : []),
+				],
+				payloads: chunks.map((chunk, idx) => ({
+					u: uuid,
+					i: idx + 1,
+					t: chunks.length,
+					h: chunk?.bundleFragment || "",
+				})),
+				originPayload: {
+					u: uuid,
+					primary: primaryPayloadForBundle,
+					chunks: Array.isArray(publishResult?.chunkResults) ? publishResult.chunkResults.map(c => c?.uri || "") : [],
+				},
+				chunkUris: Array.isArray(publishResult?.chunkResults) ? publishResult.chunkResults.map(c => c?.uri || "") : [],
+				combinedJson: combinedBundle.combinedJson,
+				combined: {
+					primary: primaryPayloadForBundle,
+					subsequent: subsequentPostsPayload,
+				},
+				fragments: combinedBundle.fragments,
+			};
+
+			// POST mock bundle to SvelteKit server API to cache it on the server
+			try {
+				await fetch("/api/profile-bundle", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ uuid, bundle: mockBundle }),
+				});
+			} catch (e) {
+				console.warn("Failed to POST profile-bundle cache to server:", e);
+			}
+
+			// Local caches
+			if (isPostEditRoute) {
+				const postImages = editorMediaList
+					.filter((entry) => entry?.kind === "image")
+					.map((entry) => {
+						const src = entry.bskyUrl || entry.url || "";
+						return { src, alt: entry.alt || "Image" };
+					});
+				const postVideos = editorMediaList
+					.filter((entry) => entry?.kind === "video")
+					.map((entry) => {
+						const src = entry.bskyUrl || entry.url || "";
+						return { src, poster: entry.poster || "", alt: entry.alt || "Video" };
+					});
+
+				const postViewData = {
+					uuid,
+					uri: newPublishedAtUri || uuid,
+					name: profileName,
+					description: profileDescription,
+					html: contentHtml,
+					images: postImages,
+					videos: postVideos,
+					tags: $state.snapshot(postTags),
+					likeCount: 0,
+					repostCount: 0,
+					replyCount: 0,
+					createdAt: new Date().toISOString(),
+					authorName: "My Profile",
+					authorAvatar: "",
+				};
+
+				await setPost(uuid, postViewData);
+				if (newPublishedAtUri) {
+					await setPost(newPublishedAtUri, postViewData);
+				}
+			} else {
+				const profileViewData = {
+					uuid,
+					name: profileName,
+					description: profileDescription,
+					html: contentHtml,
+					profilePic:
+						publishProfileImage?.bskyUrl ||
+						selectedProfileImage?.bskyUrl ||
+						selectedProfileImage?.url ||
+						"",
+					backgroundPic:
+						publishBackgroundImage?.bskyUrl ||
+						selectedBackgroundImage?.bskyUrl ||
+						selectedBackgroundImage?.url ||
+						"",
+					likeCount: 0,
+					repostCount: 0,
+					replyCount: 0,
+					createdAt: new Date().toISOString(),
+					stamp: String(Date.now()),
+				};
+
+				await setProfile(uuid, { cachedAt: Date.now(), data: profileViewData });
+
+				if (typeof sessionStorage !== "undefined") {
+					try {
+						sessionStorage.setItem(`love4dogs.bundle-session:${uuid}`, JSON.stringify(mockBundle));
+					} catch {}
+				}
+			}
 
 			if (typeof window !== "undefined") {
 				window.location.href = publishedViewUrl
