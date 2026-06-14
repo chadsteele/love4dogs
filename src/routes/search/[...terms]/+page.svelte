@@ -32,7 +32,7 @@
 	let currentView = $state("feed")
 	let automateFailed = $state(false)
 	let showNoResultsInfo = $state("")
-	let loadMoreBtn = null
+	let loadMoreBtn = $state(null)
 
 	let searchDebounceTimer = null
 	let lastFeedRequestId = 0
@@ -513,7 +513,7 @@
 		}
 	}
 
-	let lastSeenUrlTerms = $state(urlTerms)
+	let lastSeenUrlTerms = $state("")
 
 	$effect(() => {
 		const currentUrlTerms = urlTerms
@@ -525,6 +525,7 @@
 	})
 
 	onMount(async () => {
+		lastSeenUrlTerms = urlTerms
 		favoriteSearchTerms = await readFavoriteSearchTerms()
 		await refreshBlockedLists()
 
@@ -887,58 +888,6 @@
 		flex-wrap: wrap;
 	}
 
-	.sort-toggle {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.5rem;
-		margin-left: 0.35rem;
-		font-size: 0.8rem;
-		color: #5f665f;
-		user-select: none;
-	}
-
-	.sort-toggle input {
-		position: absolute;
-		opacity: 0;
-		pointer-events: none;
-	}
-
-	.sort-slider {
-		position: relative;
-		width: 38px;
-		height: 21px;
-		border-radius: 999px;
-		background: rgba(129, 129, 129, 0.36);
-		transition: background 0.16s ease;
-	}
-
-	.sort-slider::after {
-		content: "";
-		position: absolute;
-		top: 2px;
-		left: 2px;
-		width: 17px;
-		height: 17px;
-		border-radius: 50%;
-		background: #fff;
-		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
-		transition: transform 0.16s ease;
-	}
-
-	.sort-toggle input:checked + .sort-slider {
-		background: #3b6e4f;
-	}
-
-	.sort-toggle input:checked + .sort-slider::after {
-		transform: translateX(17px);
-	}
-
-	.sort-label {
-		white-space: nowrap;
-	}
-
-
-
 	.results-empty-pill {
 		margin-left: 0.35rem;
 		font-size: 0.8rem;
@@ -949,11 +898,6 @@
 	.muted {
 		color: #5f665f;
 		margin: 0.45rem 0 0.85rem;
-	}
-
-	.load-more-indicator {
-		text-align: center;
-		padding: 0.5rem 0;
 	}
 
 	.load-more-actions {

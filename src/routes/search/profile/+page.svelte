@@ -253,7 +253,7 @@
 		border-radius: 12px;
 	}
 
-	.success-icon {
+	:global(.success-icon) {
 		color: #0e9f6e;
 	}
 

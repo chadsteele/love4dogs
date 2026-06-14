@@ -851,7 +851,7 @@
 		font-weight: 700;
 	}
 
-	.icon-green {
+	:global(.icon-green) {
 		color: #3b6e4f;
 	}
 
@@ -1069,7 +1069,7 @@
 		color: #51463a;
 	}
 
-	.icon-warning {
+	:global(.icon-warning) {
 		color: #ba7a23;
 	}
 
@@ -1352,7 +1352,7 @@
 		animation: shimmer 1.4s infinite;
 	}
 
-	.spin {
+	:global(.spin) {
 		animation: spin 1s linear infinite;
 	}
 
@@ -1378,7 +1378,7 @@
 		}
 	}
 
-	.comment-card-wrapper.highlighted-comment > .comment-card {
+	.comment-card-wrapper:global(.highlighted-comment) > .comment-card {
 		animation: highlight-pulse 2.5s ease-out;
 		border-color: rgba(59, 110, 79, 0.5) !important;
 	}

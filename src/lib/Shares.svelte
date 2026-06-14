@@ -254,8 +254,25 @@
 </button>
 
 {#if showModal}
-	<div class="modal-backdrop" onclick={() => showModal = false} role="presentation">
-		<div class="modal-content" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="modal-title">
+	<div
+		class="modal-backdrop"
+		onclick={() => showModal = false}
+		onkeydown={(e) => {
+			if (e.key === "Escape") showModal = false;
+		}}
+		role="button"
+		tabindex="-1"
+		aria-label="Close modal"
+	>
+		<div
+			class="modal-content"
+			onclick={(e) => e.stopPropagation()}
+			onkeydown={(e) => e.stopPropagation()}
+			role="dialog"
+			aria-modal="true"
+			aria-labelledby="modal-title"
+			tabindex="-1"
+		>
 			<h2 id="modal-title" class="modal-heading">Share</h2>
 			
 			<form onsubmit={handleShare}>

@@ -27,7 +27,7 @@
 	let blockedAuthors = $state([])
 
 	let leaflet = null
-	let mapInstance = null
+	let mapInstance = $state(null)
 	let markerLayer = null
 	let lastLoadedViewportKey = ""
 	let requestedViewportKey = ""
@@ -60,7 +60,7 @@
 
 	let activeKeywordFilter = $state("")
 	let pauseBackgroundSearch = $state(false)
-	let lastProcessedSearchTerm = $state(searchTerm)
+	let lastProcessedSearchTerm = ""
 
 	function parseSearchTerm(term) {
 		const norm = String(term || "").trim()

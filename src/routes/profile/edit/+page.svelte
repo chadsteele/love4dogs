@@ -2941,12 +2941,6 @@
 		margin-top: 0.6rem;
 		margin-bottom: 0.8rem;
 	}
-	.post-tags-container .label {
-		font-size: 0.82rem;
-		color: #51655a;
-		margin: 0 0 0.3rem;
-		font-weight: 600;
-	}
 	.char-count {
 		margin: 0;
 		text-align: right;

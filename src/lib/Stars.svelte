@@ -310,13 +310,30 @@
 </button>
 
 {#if showModal}
-	<div class="modal-backdrop" onclick={handleCloseModal} role="presentation">
-		<div class="modal-content" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="modal-title">
+	<div
+		class="modal-backdrop"
+		onclick={handleCloseModal}
+		onkeydown={(e) => {
+			if (e.key === "Escape") handleCloseModal();
+		}}
+		role="button"
+		tabindex="-1"
+		aria-label="Close modal"
+	>
+		<div
+			class="modal-content"
+			onclick={(e) => e.stopPropagation()}
+			onkeydown={(e) => e.stopPropagation()}
+			role="dialog"
+			aria-modal="true"
+			aria-labelledby="modal-title"
+			tabindex="-1"
+		>
 			<h2 id="modal-title" class="modal-heading">Add Star Rating</h2>
 
 			<form onsubmit={handleSubmit}>
 				<div class="rating-selector-group">
-					<label class="group-label">Your Rating</label>
+					<span class="group-label">Your Rating</span>
 					<div class="stars-row">
 						<button 
 							type="button" 

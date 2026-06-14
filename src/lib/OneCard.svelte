@@ -958,12 +958,6 @@
 		box-shadow: 0 4px 16px rgba(46, 28, 12, 0.12);
 	}
 
-	.card-image-layout {
-		position: relative;
-		width: 100%;
-		overflow: hidden;
-	}
-
 	.card-image {
 		position: relative;
 		width: 100%;
@@ -1005,21 +999,6 @@
 		line-clamp: 2;
 		-webkit-box-orient: vertical;
 		overflow: hidden;
-	}
-
-	.test-post-notice {
-		margin: 0.35rem 1rem 0.2rem;
-		padding: 0.55rem 0.7rem;
-		display: flex;
-		align-items: center;
-		gap: 0.4rem;
-		border-radius: 9px;
-		border: 1px solid rgba(186, 122, 35, 0.45);
-		background: rgba(255, 220, 160, 0.35);
-		color: #6b4515;
-		font-size: 0.86rem;
-		line-height: 1.3;
-		font-weight: 600;
 	}
 
 	.card-link,
@@ -1162,26 +1141,8 @@
 		border-left: 4px solid #3b6e4f;
 	}
 
-	.comment-context-header {
-		display: flex;
-		align-items: center;
-		gap: 0.35rem;
-		margin-bottom: 0.25rem;
-		font-size: 0.75rem;
-		font-weight: 700;
-		color: #3b6e4f;
-		text-transform: uppercase;
-		letter-spacing: 0.03em;
-	}
-
-	.comment-icon {
+	:global(.comment-icon) {
 		flex-shrink: 0;
-	}
-
-	.comment-context-title {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
 
 	@media (max-width: 640px) {

@@ -16,9 +16,13 @@
 		authorId = ""
 	} = $props();
 
-	let currentLikeCount = $state(likeCount);
-	let currentRepostCount = $state(repostCount);
-	let currentReplyCount = $state(replyCount);
+	const initialLike = likeCount;
+	const initialRepost = repostCount;
+	const initialReply = replyCount;
+
+	let currentLikeCount = $state(initialLike);
+	let currentRepostCount = $state(initialRepost);
+	let currentReplyCount = $state(initialReply);
 
 	$effect(() => {
 		currentLikeCount = likeCount;

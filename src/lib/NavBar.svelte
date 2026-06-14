@@ -344,57 +344,58 @@
 		<div class="search-container" class:focused={isFocused}>
 			<form
 				class="search"
-				onclick={focusSearchInput}
 				onsubmit={(event) => {
 					event.preventDefault()
 					handleSearchSubmit()
 				}}
 			>
-				<Search size={16} />
-				{#if !isFocused}
-					<span class="search-placeholder-label">Search</span>
-				{/if}
-				<input
-					bind:this={searchInputEl}
-					type="search"
-					bind:value={searchTerm}
-					onfocus={handleFocus}
-					onblur={handleBlur}
-					oninput={(e) => {
-						const target = e.currentTarget
-						const rawValue = target.value
-						const filtered = rawValue.replace(/[^a-zA-Z0-9 ]/g, "")
-						if (rawValue !== filtered) {
-							const start = target.selectionStart
-							const end = target.selectionEnd
-							let removedBeforeCursor = 0
-							for (let i = 0; i < start; i++) {
-								if (/[^a-zA-Z0-9 ]/.test(rawValue[i])) {
-									removedBeforeCursor++
+				<label class="search-inner">
+					<Search size={16} />
+					{#if !isFocused}
+						<span class="search-placeholder-label">Search</span>
+					{/if}
+					<input
+						bind:this={searchInputEl}
+						type="search"
+						bind:value={searchTerm}
+						onfocus={handleFocus}
+						onblur={handleBlur}
+						oninput={(e) => {
+							const target = e.currentTarget
+							const rawValue = target.value
+							const filtered = rawValue.replace(/[^a-zA-Z0-9 ]/g, "")
+							if (rawValue !== filtered) {
+								const start = target.selectionStart
+								const end = target.selectionEnd
+								let removedBeforeCursor = 0
+								for (let i = 0; i < start; i++) {
+									if (/[^a-zA-Z0-9 ]/.test(rawValue[i])) {
+										removedBeforeCursor++
+									}
 								}
+								searchTerm = filtered
+								target.value = filtered
+								target.setSelectionRange(
+									start - removedBeforeCursor,
+									end - removedBeforeCursor,
+								)
+							} else {
+								searchTerm = filtered
 							}
-							searchTerm = filtered
-							target.value = filtered
-							target.setSelectionRange(
-								start - removedBeforeCursor,
-								end - removedBeforeCursor,
-							)
-						} else {
-							searchTerm = filtered
-						}
-						onSearchInput(e)
-					}}
-					onsearch={(e) => {
-					if (!e.currentTarget.value) {
-						// Native X button cleared the field — stay expanded, don't trigger a search
-						searchTerm = ""
-						if (searchInputEl) searchInputEl.focus()
-						return
-					}
-					onSearchInput(e)
-				}}
-					placeholder="Search"
-				/>
+							onSearchInput(e)
+						}}
+						onsearch={(e) => {
+							if (!e.currentTarget.value) {
+								// Native X button cleared the field — stay expanded, don't trigger a search
+								searchTerm = ""
+								if (searchInputEl) searchInputEl.focus()
+								return
+							}
+							onSearchInput(e)
+						}}
+						placeholder="Search"
+					/>
+				</label>
 				<button type="submit">Search</button>
 			</form>
 			<div class="hashtag-cloud-wrapper" class:open={isFocused}>
@@ -715,6 +716,15 @@
 		justify-content: flex-start;
 		padding: 0.4rem 0.55rem;
 		box-shadow: none;
+	}
+
+	.search-inner {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		flex: 1;
+		min-width: 0;
+		cursor: pointer;
 	}
 
 	.search-placeholder-label {

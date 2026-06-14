@@ -11,23 +11,96 @@ const ACCOUNT_HANDLE = 'love4dogs.club';
 
 let cachedSession = null;
 
+function logAuthDebug(context, identifier, secret, response, error) {
+	const envKeys = {
+		'env.BSKY_USERNAME': !!env.BSKY_USERNAME,
+		'env.username': !!env.username,
+		'env.BSKY_ADMIN_HANDLE': !!env.BSKY_ADMIN_HANDLE,
+		'env.ADMIN_HANDLE': !!env.ADMIN_HANDLE,
+		'env.admin_handle': !!env.admin_handle,
+		'process.env.BSKY_USERNAME': typeof process !== 'undefined' && !!process.env?.BSKY_USERNAME,
+		'process.env.username': typeof process !== 'undefined' && !!process.env?.username,
+		'process.env.BSKY_ADMIN_HANDLE': typeof process !== 'undefined' && !!process.env?.BSKY_ADMIN_HANDLE,
+		'process.env.ADMIN_HANDLE': typeof process !== 'undefined' && !!process.env?.ADMIN_HANDLE,
+		'process.env.admin_handle': typeof process !== 'undefined' && !!process.env?.admin_handle,
+		'env.BSKY_PASSWORD': !!env.BSKY_PASSWORD,
+		'env.password': !!env.password,
+		'process.env.BSKY_PASSWORD': typeof process !== 'undefined' && !!process.env?.BSKY_PASSWORD,
+		'process.env.password': typeof process !== 'undefined' && !!process.env?.password,
+	};
+	
+	const matchedEnv = [];
+	for (const [key, present] of Object.entries(envKeys)) {
+		if (present) matchedEnv.push(key);
+	}
+
+	const hasWhitespace = (str) => typeof str === 'string' && (str.trim() !== str);
+	const hasQuotes = (str) => typeof str === 'string' && ((str.startsWith('"') && str.endsWith('"')) || (str.startsWith("'") && str.endsWith("'")));
+
+	const info = {
+		context,
+		matchedEnv,
+		identifier: {
+			length: identifier ? identifier.length : 0,
+			hasWhitespace: hasWhitespace(identifier),
+			hasQuotes: hasQuotes(identifier),
+			valueMasked: identifier ? `${identifier.slice(0, 3)}...${identifier.slice(-3)}` : 'N/A'
+		},
+		secret: {
+			length: secret ? secret.length : 0,
+			hasWhitespace: hasWhitespace(secret),
+			hasQuotes: hasQuotes(secret),
+			valueMasked: secret ? `${secret.slice(0, 2)}...${secret.slice(-2)}` : 'N/A'
+		}
+	};
+
+	if (response) {
+		info.response = {
+			status: response.status,
+			statusText: response.statusText,
+		};
+	}
+
+	if (error) {
+		info.error = {
+			message: error.message,
+			stack: error.stack,
+		};
+	}
+
+	console.error(`[AUTH_DEBUG] ${context}:`, JSON.stringify(info, null, 2));
+}
+
 async function getSession() {
 	if (cachedSession?.accessJwt) return cachedSession;
 	const identifier = env.BSKY_USERNAME || env.username || env.BSKY_ADMIN_HANDLE || env.ADMIN_HANDLE || env.admin_handle ||
 		(typeof process !== 'undefined' && process.env && (process.env.BSKY_USERNAME || process.env.username || process.env.BSKY_ADMIN_HANDLE || process.env.ADMIN_HANDLE || process.env.admin_handle)) || '';
 	const secret = env.BSKY_PASSWORD || env.password ||
 		(typeof process !== 'undefined' && process.env && (process.env.BSKY_PASSWORD || process.env.password)) || '';
-	if (!identifier || !secret) return null;
+	if (!identifier || !secret) {
+		logAuthDebug('getSession:missing_credentials', identifier, secret, null, new Error('Missing Bluesky credentials'));
+		return null;
+	}
 	try {
 		const res = await fetch(`${BSKY_AUTH_XRPC}/com.atproto.server.createSession`, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify({ identifier, password: secret })
 		});
-		if (!res.ok) return null;
+		if (!res.ok) {
+			let bodyText = '';
+			try {
+				bodyText = await res.text();
+			} catch (e) {
+				bodyText = `Failed to read body: ${e.message}`;
+			}
+			logAuthDebug('getSession:failed_response', identifier, secret, res, new Error(`Session creation failed: ${bodyText}`));
+			return null;
+		}
 		cachedSession = await res.json();
 		return cachedSession;
-	} catch {
+	} catch (err) {
+		logAuthDebug('getSession:network_error', identifier, secret, null, err);
 		return null;
 	}
 }
