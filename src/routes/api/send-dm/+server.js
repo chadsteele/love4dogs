@@ -7,10 +7,10 @@ let cachedIdentifier = null;
 let cachedSecret = null;
 
 async function getAgent(forceRefresh = false) {
-	const identifier = env.BSKY_USERNAME || env.username || env.BSKY_ADMIN_HANDLE || env.ADMIN_HANDLE || env.admin_handle ||
-		(typeof process !== 'undefined' && process.env && (process.env.BSKY_USERNAME || process.env.username || process.env.BSKY_ADMIN_HANDLE || process.env.ADMIN_HANDLE || process.env.admin_handle)) || '';
-	const secret = env.BSKY_PASSWORD || env.password ||
-		(typeof process !== 'undefined' && process.env && (process.env.BSKY_PASSWORD || process.env.password)) || '';
+	const identifier = env.BSKY_USERNAME || env.BSKY_ADMIN_HANDLE ||
+		(typeof process !== 'undefined' && process.env && (process.env.BSKY_USERNAME || process.env.BSKY_ADMIN_HANDLE)) || '';
+	const secret = env.BSKY_PASSWORD ||
+		(typeof process !== 'undefined' && process.env && process.env.BSKY_PASSWORD) || '';
 
 	if (!identifier || !secret) {
 		throw new Error('Missing Bluesky credentials in .env');
@@ -93,7 +93,8 @@ export async function POST({ request }) {
 		let agent = await getAgent();
 
 		async function attemptSend(activeAgent) {
-			const adminHandle = env.BSKY_ADMIN_HANDLE || env.ADMIN_HANDLE || env.admin_handle;
+			const adminHandle = env.BSKY_ADMIN_HANDLE ||
+				(typeof process !== 'undefined' && process.env && process.env.BSKY_ADMIN_HANDLE) || '';
 			if (!adminHandle) {
 				throw new Error('Missing BSKY_ADMIN_HANDLE/ADMIN_HANDLE in environment variables');
 			}

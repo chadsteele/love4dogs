@@ -127,7 +127,8 @@ async function processQueueItem(item) {
 		author: item.author || null,
 		text: item.text,
 		img: uploadedImgUrls.length > 0 ? uploadedImgUrls[0] : null,
-		imgs: uploadedImgUrls.length > 0 ? uploadedImgUrls : null
+		imgs: uploadedImgUrls.length > 0 ? uploadedImgUrls : null,
+		imgHashes: item.imgHashes || []
 	};
 	if (item.share) {
 		altPayload.share = item.share;

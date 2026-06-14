@@ -132,7 +132,8 @@
 						author: item.author,
 						text: item.text,
 						img: item.imageUuids && item.imageUuids.length > 0 ? `/offline-media/${item.imageUuids[0]}` : null,
-						imgs: item.imageUuids ? item.imageUuids.map(id => `/offline-media/${id}`) : null
+						imgs: item.imageUuids ? item.imageUuids.map(id => `/offline-media/${id}`) : null,
+						imgHashes: item.imgHashes || []
 					};
 					merged.push(syncComment);
 				}
@@ -357,8 +358,20 @@
 		}
 	}
 
+	async function getFileHash(file) {
+		const slice = file.slice(0, 10240);
+		const buffer = await slice.arrayBuffer();
+		const arr = new Uint8Array(buffer);
+		let hash = 0;
+		for (let i = 0; i < arr.length; i++) {
+			hash = (hash << 5) - hash + arr[i];
+			hash |= 0;
+		}
+		return `${file.size}-${hash}`;
+	}
+
 	// Handle Image attachment
-	function handleFileChange(event) {
+	async function handleFileChange(event) {
 		const files = Array.from(event.target.files || []);
 		if (files.length === 0) return;
 
@@ -378,6 +391,40 @@
 				postError = "Each image must be 2 MB or smaller.";
 				continue;
 			}
+
+			const fileHash = await getFileHash(file);
+
+			// Check against currently attached images in the draft
+			let isDuplicate = false;
+			for (const img of attachedImages) {
+				const attachedHash = await getFileHash(img);
+				if (attachedHash === fileHash) {
+					isDuplicate = true;
+					break;
+				}
+			}
+
+			if (isDuplicate) {
+				postError = "This image is already attached.";
+				continue;
+			}
+
+			// Check against images already posted in this chat thread
+			let isAlreadyPosted = false;
+			for (const comment of comments) {
+				if (Array.isArray(comment.imgHashes)) {
+					if (comment.imgHashes.includes(fileHash)) {
+						isAlreadyPosted = true;
+						break;
+					}
+				}
+			}
+
+			if (isAlreadyPosted) {
+				postError = "This image has already been uploaded in this chat.";
+				continue;
+			}
+
 			attachedImages = [...attachedImages, file];
 			attachedImagePreviews = [...attachedImagePreviews, URL.createObjectURL(file)];
 		}
@@ -493,11 +540,13 @@
 			// Save attached images to offlineImages
 			const imageUuids = [];
 			const localImgUrls = [];
+			const imgHashes = [];
 			for (const file of attachedImages) {
 				const imgUuid = generateUuid();
 				await setOfflineImage(imgUuid, file);
 				imageUuids.push(imgUuid);
 				localImgUrls.push(`/offline-media/${imgUuid}`);
+				imgHashes.push(await getFileHash(file));
 			}
 
 			const syncItem = {
@@ -508,6 +557,7 @@
 				author: currentProfileUuid,
 				text: commentText.trim(),
 				imageUuids: imageUuids,
+				imgHashes: imgHashes,
 				retryCount: 0,
 				status: 'pending'
 			};
@@ -523,7 +573,8 @@
 				author: currentProfileUuid,
 				text: commentText.trim(),
 				img: localImgUrls.length > 0 ? localImgUrls[0] : null, // Keep single img field for compatibility
-				imgs: localImgUrls.length > 0 ? localImgUrls : null  // Array of up to 4 images
+				imgs: localImgUrls.length > 0 ? localImgUrls : null,  // Array of up to 4 images
+				imgHashes: imgHashes
 			};
 
 			// Optimistic Update: Add current author's details to local cache immediately

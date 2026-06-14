@@ -69,8 +69,8 @@ function parseArgs(argv = process.argv.slice(2)) {
 async function createAgentSession() {
 	loadDotEnv('.env');
 
-	const identifier = process.env.BSKY_USERNAME || process.env.username;
-	const password = process.env.BSKY_PASSWORD || process.env.password;
+	const identifier = process.env.BSKY_USERNAME;
+	const password = process.env.BSKY_PASSWORD;
 
 	if (!identifier || !password) {
 		throw new Error('Missing BSKY credentials. Set BSKY_USERNAME and BSKY_PASSWORD in env/.env.');
