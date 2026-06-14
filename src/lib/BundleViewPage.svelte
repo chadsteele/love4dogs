@@ -150,7 +150,9 @@
 				if (!candidate || typeof candidate !== "object") continue;
 				const raw = Array.isArray(candidate?.tags)
 					? candidate.tags
-					: [];
+					: Array.isArray(candidate?.record?.tags)
+						? candidate.record.tags
+						: [];
 				for (const entry of raw) {
 					const token = normalizeTagToken(entry);
 					if (token) tokens.push(token);

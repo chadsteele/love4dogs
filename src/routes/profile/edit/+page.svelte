@@ -1085,7 +1085,7 @@
 			  null,
 		name: profileName,
 		description: profileDescription,
-		tags: isPostEditRoute ? $state.snapshot(postTags) : [],
+		tags: isPostEditRoute ? $state.snapshot(postTags) : ["profile"],
 	})
 
 	const subsequentPostsPayload = $derived(
@@ -1674,7 +1674,7 @@
 							  null,
 						name: profileName,
 						description: profileDescription,
-						tags: isPostEditRoute ? $state.snapshot(postTags) : [],
+						tags: isPostEditRoute ? $state.snapshot(postTags) : ["profile"],
 					}
 					const subsequentPayloadForBundle = mapSubsequentPayloadForBundle(
 						subsequentPostsPayload,
@@ -1849,7 +1849,7 @@
 					null,
 				name: profileName,
 				description: profileDescription,
-				tags: isPostEditRoute ? $state.snapshot(postTags) : [],
+				tags: isPostEditRoute ? $state.snapshot(postTags) : ["profile"],
 			}
 			const combinedBundle = buildBskyCombinedPayloadBundle(
 				primaryPayloadForBundle,
@@ -1949,7 +1949,7 @@
 				primaryMedia,
 				replyAttachmentPool: attachmentPool,
 				videoAttachments,
-				tags: isPostEditRoute ? $state.snapshot(postTags) : [],
+				tags: isPostEditRoute ? $state.snapshot(postTags) : ["profile"],
 			})
 
 			const newPublishedAtUri = String(
