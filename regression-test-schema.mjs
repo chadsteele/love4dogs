@@ -188,7 +188,13 @@ async function runDatabaseCacheTests() {
 
 	// 1. Verify that setPost adds a cachedAt timestamp
 	const uri1 = 'at://test-post-1';
-	const postData1 = { uri: uri1, title: 'Post 1' };
+	const postData1 = {
+		uri: uri1,
+		title: 'Post 1',
+		authorid: 'test-profile-uuid',
+		authorName: 'Test Profile',
+		authorAvatar: 'https://cdn.bsky.app/avatar.jpg'
+	};
 	await setPost(uri1, postData1);
 
 	const stored1 = await getPost(uri1);
@@ -201,7 +207,13 @@ async function runDatabaseCacheTests() {
 	// Let's insert posts with a tiny delay so they have different cachedAt values
 	for (let i = 2; i <= 105; i++) {
 		const uri = `at://test-post-${i}`;
-		await setPost(uri, { uri, title: `Post ${i}` });
+		await setPost(uri, {
+			uri,
+			title: `Post ${i}`,
+			authorid: 'test-profile-uuid',
+			authorName: 'Test Profile',
+			authorAvatar: 'https://cdn.bsky.app/avatar.jpg'
+		});
 		await new Promise(resolve => setTimeout(resolve, 1));
 	}
 
@@ -219,14 +231,28 @@ async function runDatabaseCacheTests() {
 	console.log('  Testing 7-day TTL expiration...');
 	const uriExpired = 'at://test-post-expired';
 	const eightDaysAgo = Date.now() - (8 * 24 * 60 * 60 * 1000);
-	await setPost(uriExpired, { uri: uriExpired, title: 'Expired Post', _testCachedAt: eightDaysAgo });
+	await setPost(uriExpired, {
+		uri: uriExpired,
+		title: 'Expired Post',
+		authorid: 'test-profile-uuid',
+		authorName: 'Test Profile',
+		authorAvatar: 'https://cdn.bsky.app/avatar.jpg',
+		_testCachedAt: eightDaysAgo
+	});
 
 	// The post should be immediately filtered out/deleted on getPost
 	const retrievedExpired = await getPost(uriExpired);
 	assertEqual(retrievedExpired, null, 'Expired post is filtered out and deleted on getPost');
 
 	// And it should not show up in getAllPosts
-	await setPost(uriExpired, { uri: uriExpired, title: 'Expired Post', _testCachedAt: eightDaysAgo });
+	await setPost(uriExpired, {
+		uri: uriExpired,
+		title: 'Expired Post',
+		authorid: 'test-profile-uuid',
+		authorName: 'Test Profile',
+		authorAvatar: 'https://cdn.bsky.app/avatar.jpg',
+		_testCachedAt: eightDaysAgo
+	});
 	const postsWithExpired = await getAllPosts();
 	const foundExpired = postsWithExpired.find(p => p.uri === uriExpired);
 	assertEqual(foundExpired, undefined, 'Expired post is filtered out from getAllPosts');
@@ -255,8 +281,22 @@ async function runCacheWaterCleanupTests() {
 	await setSetting(cacheKey, testCacheData);
 
 	// Seed the posts database store
-	await setPost('at://land-post', { uri: 'at://land-post', lat: 40.7127281, lon: -74.0060152 });
-	await setPost('at://water-post', { uri: 'at://water-post', lat: 0.0, lon: 0.0 });
+	await setPost('at://land-post', {
+		uri: 'at://land-post',
+		lat: 40.7127281,
+		lon: -74.0060152,
+		authorid: 'test-profile-uuid-land',
+		authorName: 'Land Profile',
+		authorAvatar: 'https://cdn.bsky.app/avatar-land.jpg'
+	});
+	await setPost('at://water-post', {
+		uri: 'at://water-post',
+		lat: 0.0,
+		lon: 0.0,
+		authorid: 'test-profile-uuid-water',
+		authorName: 'Water Profile',
+		authorAvatar: 'https://cdn.bsky.app/avatar-water.jpg'
+	});
 
 	// Mock globalThis.fetch
 	const originalFetch = globalThis.fetch;

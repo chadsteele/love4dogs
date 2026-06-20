@@ -1,474 +1,134 @@
 <script>
-	import {onMount} from "svelte"
-	import {rewriteLove4DogsUrlForLocalhost} from "$lib/utils"
-	import {
-		CircleAlert as NoticeIcon,
-		User,
-		MessageSquare,
-	} from "lucide-svelte"
+	import { onMount } from "svelte"
+	import { rewriteLove4DogsUrlForLocalhost } from "$lib/utils"
+	import { MessageSquare } from "lucide-svelte"
 	import TagPills from "$lib/TagPills.svelte"
-	import ImageLayout from "$lib/ImageLayout.svelte"
 	import AuthorRow from "$lib/AuthorRow.svelte"
-	import {formatDisplayAddress} from "$lib/addressFormat"
-	import {writeSearchTerm, readSearchTerm} from "$lib/searchStore"
+	import { formatDisplayAddress } from "$lib/addressFormat"
+	import { writeSearchTerm, readSearchTerm } from "$lib/searchStore"
 	import PostStats from "$lib/PostStats.svelte"
 	import { getProfileDetails } from "$lib/syncProcessor.js"
 	import { parseTimestampMs } from "$lib/dateTime.js"
+	import { classifyPost } from "$lib/postTypeTags.js"
 
-	let {post, onclick = () => {}, onTagClick = () => {}} = $props()
+	let { post, onclick = () => {}, onTagClick = () => {} } = $props()
 	let hasHydrated = $state(false)
 	let discussionComment = $state(null)
-	let loadingComment = $state(true)
 
-	let contextType = $state("post")
-	let contextSlug = $state("")
-	let contextTitle = $state("")
 	let commentAuthorName = $state("Anonymous")
 	let commentAuthorAvatar = $state("")
 	let profileDetailsName = $state("")
 	let profileDetailsPic = $state("")
-	const altCandidatesCache = new Map()
-	const altRecordCache = new Map()
-	const altLocationCache = new Map()
 
-	const BSKY_HANDLE = "love4dogs.club"
+	let contextTypeState = $state("post")
+	let contextSlugState = $state("")
 
-	function getAltCandidates(alt = "") {
-		const source = String(alt || "").trim()
-		if (!source) return []
-		if (altCandidatesCache.has(source)) {
-			return altCandidatesCache.get(source)
-		}
-
-		let candidates = []
-		try {
-			const parsed = JSON.parse(source)
-			candidates = [parsed, parsed?.primary, parsed?.combined?.primary]
-
-			if (typeof parsed?.h === "string" && parsed.h.trim()) {
-				try {
-					const inner = JSON.parse(parsed.h)
-					candidates.push(
-						inner,
-						inner?.primary,
-						inner?.combined?.primary,
-					)
-				} catch {}
-			}
-		} catch {
-			candidates = []
-		}
-
-		const normalized = candidates.filter(
-			(candidate) => candidate && typeof candidate === "object",
-		)
-		altCandidatesCache.set(source, normalized)
-		return normalized
-	}
-
-	function bskyUrl(uri = "") {
-		const rkey = uri.split("/").pop()
-		return `https://bsky.app/profile/${BSKY_HANDLE}/post/${rkey}`
-	}
-
-	function extractUuidFromBundleAlt(alt = "") {
-		for (const candidate of getAltCandidates(alt)) {
-			const directUuid = String(
-				candidate?.u || candidate?.uuid || candidate?.id || "",
-			).trim()
-			if (directUuid) return directUuid
-		}
-
-		return ""
-	}
-
-	function extractTagsFromBundleAlt(alt = "") {
-		for (const candidate of getAltCandidates(alt)) {
-			const rawTags = Array.isArray(candidate?.tags) ? candidate.tags : []
-			if (rawTags.length) {
-				return rawTags
-					.map((tag) =>
-						String(tag || "")
-							.trim()
-							.toLowerCase(),
-					)
-					.filter(Boolean)
-			}
-		}
-
-		return []
-	}
-
-	function resolveCardUuid(inputPost = {}) {
-		const directUuid = String(inputPost?.uuid || "").trim()
-		if (directUuid) return directUuid
-
-		for (const alt of inputPost?.imageAlts || []) {
-			const fromAlt = extractUuidFromBundleAlt(alt)
-			if (fromAlt) return fromAlt
-		}
-
-		return extractUuidFromBundleAlt(inputPost?.video?.alt || "")
-	}
-
-	function extractAuthorIdFromBundleAlt(alt = "") {
-		for (const candidate of getAltCandidates(alt)) {
-			const directAuthorId = String(
-				candidate?.authorid || candidate?.authorId || "",
-			).trim()
-			if (directAuthorId) return directAuthorId
-		}
-
-		return ""
-	}
-
-	function resolveCardAuthorId(inputPost = {}) {
-		const directAuthorId = String(inputPost?.authorid || "").trim()
-		if (directAuthorId) return directAuthorId
-
-		for (const alt of inputPost?.imageAlts || []) {
-			const fromAlt = extractAuthorIdFromBundleAlt(alt)
-			if (fromAlt) return fromAlt
-		}
-
-		return extractAuthorIdFromBundleAlt(inputPost?.video?.alt || "")
-	}
-
-	function resolvePostTags(inputPost = {}) {
-		const directTags = [
-			...(Array.isArray(inputPost?.tags) ? inputPost.tags : []),
-			...(Array.isArray(inputPost?.record?.tags) ? inputPost.record.tags : [])
-		]
-		const normalizedDirectTags = directTags
-			.map((tag) =>
-				String(tag || "")
-					.trim()
-					.toLowerCase(),
-			)
-			.filter(Boolean)
-
-		if (normalizedDirectTags.includes("chat")) {
-			return normalizedDirectTags
-		}
-
-		for (const alt of inputPost?.imageAlts || []) {
+	// Helper to extract candidate objects from alt JSON strings or pre-parsed objects
+	function getAltCandidates(alt) {
+		if (!alt) return []
+		
+		let parsed = null
+		if (typeof alt === "object") {
+			parsed = alt
+		} else {
+			const source = String(alt).trim()
+			if (!source) return []
 			try {
-				const parsed = JSON.parse(alt)
-				if (parsed && parsed.uuid && parsed.context) {
-					const altTags = extractTagsFromBundleAlt(alt)
-					return [...new Set(["chat", parsed.context, ...altTags])]
-				}
+				parsed = JSON.parse(source)
 			} catch {}
 		}
 
-		if (normalizedDirectTags.length) return normalizedDirectTags
+		if (!parsed || typeof parsed !== "object") return []
 
-		for (const alt of inputPost?.imageAlts || []) {
-			const altTags = extractTagsFromBundleAlt(alt)
-			if (altTags.length) return altTags
+		let candidates = [parsed, parsed?.primary, parsed?.combined?.primary]
+
+		if (typeof parsed?.h === "string" && parsed.h.trim()) {
+			try {
+				const inner = JSON.parse(parsed.h)
+				candidates.push(
+					inner,
+					inner?.primary,
+					inner?.combined?.primary,
+				)
+			} catch {}
+		} else if (parsed?.h && typeof parsed.h === "object") {
+			const inner = parsed.h
+			candidates.push(
+				inner,
+				inner?.primary,
+				inner?.combined?.primary,
+			)
 		}
 
-		return extractTagsFromBundleAlt(inputPost?.video?.alt || "")
-	}
-
-	function slugifyValue(value = "") {
-		return String(value || "")
-			.trim()
-			.toLowerCase()
-			.replace(/[^a-z0-9]+/g, "-")
-			.replace(/^-+|-+$/g, "")
-	}
-
-	function buildCardViewPath(
-		fallbackTitle = "",
-		cardType = "post",
-		inputPost = {},
-	) {
-		const uuid = resolveCardUuid(inputPost)
-		if (!uuid) return ""
-
-		const pathType =
-			String(cardType || "post")
-				.trim()
-				.toLowerCase() === "profile"
-				? "profile"
-				: "post"
-		const fallbackSlug = slugifyValue(fallbackTitle) || uuid
-		const slug = fallbackSlug
-
-		return `/${pathType}/view/${encodeURIComponent(uuid)}/${encodeURIComponent(slug)}`
-	}
-
-	function getRecord(alt = "") {
-		if (!alt) return null
-		const source = String(alt || "").trim()
-		if (!source) return null
-		if (altRecordCache.has(source)) {
-			return altRecordCache.get(source)
-		}
-
-		try {
-			const candidates = getAltCandidates(source)
-			const pick = (keys = []) => {
-				for (const candidate of candidates) {
-					if (!candidate || typeof candidate !== "object") continue
-					for (const key of keys) {
-						const rawValue = candidate?.[key]
-						if (typeof rawValue !== "string") continue
-						const value = rawValue.trim()
-						if (value) return value
-					}
-				}
-				return ""
-			}
-
-			const profilePic = pick(["profilePic", "profilepic"])
-			const backgroundPic = pick(["backgroundPic", "backgroundpic"])
-			const name = pick(["name", "title", "n"])
-			const description = pick(["description", "desc"])
-
-			if (!profilePic && !backgroundPic && !name && !description)
-				return altRecordCache.set(source, null), null
-
-			const recordData = {
-				profilePic: profilePic || null,
-				backgroundPic: backgroundPic || null,
-				name: name || null,
-				description: description || null,
-			}
-			altRecordCache.set(source, recordData)
-			return recordData
-		} catch {
-			altRecordCache.set(source, null)
-			return null
-		}
-	}
-
-	function normalizeImageUrl(value = "") {
-		const source = String(value || "").trim()
-		if (!source) return ""
-		if (!/^https?:\/\//i.test(source)) return ""
-		if (!hasHydrated) return source
-		return rewriteLove4DogsUrlForLocalhost(source)
-	}
-
-	onMount(() => {
-		hasHydrated = true
-	})
-
-	$effect(() => {
-		// Reset state on change
-		commentAuthorName = "Anonymous"
-		commentAuthorAvatar = ""
-		profileDetailsName = ""
-		profileDetailsPic = ""
-		contextType = "post"
-		contextSlug = ""
-		contextTitle = ""
-		discussionComment = null
-
-		if (postType === "comment" && commentPayload?.context) {
-			getProfileDetails(commentPayload.author).then((details) => {
-				commentAuthorName = details?.name || "Anonymous"
-				commentAuthorAvatar = details?.profilePic || ""
-			}).catch((err) => {
-				console.error("Failed to load comment author details:", err)
-			})
-
-			fetch(`/api/feed?query=${encodeURIComponent(commentPayload.context)}&limit=1`)
-				.then(res => res.ok ? res.json() : null)
-				.then(data => {
-					const contextPosts = data?.posts || []
-					if (contextPosts.length > 0) {
-						const contextPost = contextPosts[0]
-						const cTags = (contextPost.tags || []).map(t => String(t || '').trim().toLowerCase())
-						const isProfile = cTags.includes("profile")
-						contextType = isProfile ? "profile" : "post"
-						
-						let title = ""
-						if (isProfile) {
-							for (const alt of contextPost.imageAlts || []) {
-								const parsed = getRecord(alt)
-								if (parsed?.name) {
-									title = parsed.name
-									break
-								}
-							}
-						} else {
-							title = String(contextPost.text || "").split("\n")[0].trim()
-						}
-						contextTitle = title || (isProfile ? "profile" : "post")
-						contextSlug = slugifyValue(title) || commentPayload.context
-					}
-				}).catch((err) => {
-					console.error("Failed to fetch comment context info:", commentPayload.context, err)
-				})
-		} else {
-			const uuid = resolveCardUuid(post)
-			if (uuid) {
-				if (postType === "profile") {
-					getProfileDetails(uuid).then((details) => {
-						profileDetailsName = details?.name || ""
-						profileDetailsPic = details?.profilePic || ""
-					}).catch((err) => {
-						console.error("Failed to load profile details in OneCard:", err)
-					})
-				}
-
-				fetch(`/api/feed?query=${encodeURIComponent(uuid)}&limit=1&chat=1`)
-					.then(res => res.ok ? res.json() : null)
-					.then(data => {
-						const posts = data?.posts || []
-						if (posts.length > 0) {
-							const firstPost = posts[0]
-							if (firstPost.imageAlts && firstPost.imageAlts.length > 0) {
-								try {
-									const payload = JSON.parse(firstPost.imageAlts[0])
-									if (payload && payload.uuid && payload.context === uuid) {
-										discussionComment = {
-											uuid: payload.uuid,
-											handle: firstPost.author?.handle || "anonymous",
-											name: firstPost.author?.displayName || firstPost.author?.handle || "Anonymous",
-											avatar: firstPost.author?.avatar || "",
-											text: payload.text || firstPost.text || ""
-										}
-									}
-								} catch {}
-							}
-						}
-					}).catch((err) => {
-						console.error("Failed to load discussion comment for card:", uuid, err)
-					})
-			}
-		}
-	})
-
-	function getCardTitle() {
-		const titleMatch = String(post?.text || "")
-			.split("\n")[0]
-			.trim()
-		if (titleMatch) return titleMatch
-
-		for (const alt of post?.imageAlts || []) {
-			const parsed = getRecord(alt)
-			if (parsed?.name) return parsed.name
-		}
-
-		const videoAlt = getRecord(post?.video?.alt || "")
-		if (videoAlt?.name) return videoAlt.name
-
-		return "Untitled"
-	}
-
-	function getCardDescription() {
-		const text = String(post?.text || "")
-		const lines = text.split("\n")
-		if (lines.length > 1) {
-			return lines.slice(1).join("\n").trim()
-		}
-
-		for (const alt of post?.imageAlts || []) {
-			const parsed = getRecord(alt)
-			if (parsed?.description) return parsed.description
-		}
-
-		const videoAlt = getRecord(post?.video?.alt || "")
-		if (videoAlt?.description) return videoAlt.description
-
-		return ""
-	}
-
-	function openCardViewInNewTab(event) {
-		if (event?.defaultPrevented) return
-		const href = cardViewHref
-		if (!href) {
-			console.warn("[OneCard] missing view href", {
-				postType,
-				postUri: post?.uri || "",
-			})
-			return
-		}
-		event?.preventDefault?.()
-		const openInNewTab = Boolean(
-			event?.metaKey || event?.ctrlKey || event?.button === 1,
+		return candidates.filter(
+			(candidate) => candidate && typeof candidate === "object",
 		)
-		if (openInNewTab) {
-			const nextTab = window.open(href, "_blank")
-			nextTab?.focus?.()
-			if (!nextTab) window.location.href = href
-			return
-		}
-		window.location.href = href
 	}
 
-	function getPrimaryImage() {
-		if (postType === "comment" && commentPayload) {
-			if (commentPayload.imgs && commentPayload.imgs.length > 0) {
-				return normalizeImageUrl(commentPayload.imgs[0])
-			}
-			if (commentPayload.img) {
-				return normalizeImageUrl(commentPayload.img)
-			}
-			return null
+	// Helper to extract all candidates from post images and videos
+	function getAllCandidates(inputPost = {}) {
+		const alts = [
+			...(Array.isArray(inputPost?.imageAlts) ? inputPost.imageAlts : []),
+			inputPost?.video?.alt
+		].filter(Boolean)
+		
+		let list = []
+		for (const alt of alts) {
+			list = list.concat(getAltCandidates(alt))
 		}
-
-		// Check for profile background pic first
-		for (const alt of post?.imageAlts || []) {
-			const parsed = getRecord(alt)
-			if (parsed?.backgroundPic) {
-				return normalizeImageUrl(parsed.backgroundPic)
-			}
-		}
-
-		const videoAlt = getRecord(post?.video?.alt || "")
-		if (videoAlt?.backgroundPic) {
-			return normalizeImageUrl(videoAlt.backgroundPic)
-		}
-
-		// Fall back to first post image
-		if (Array.isArray(post?.images) && post.images.length > 0) {
-			if (postType === "profile") {
-				const profilePicUrl = profileDetailsPic || getProfilePic();
-				const nonProfileImg = post.images.find(
-					img => normalizeImageUrl(img) !== normalizeImageUrl(profilePicUrl)
-				);
-				if (nonProfileImg) return normalizeImageUrl(nonProfileImg);
-			} else {
-				return normalizeImageUrl(post.images[0])
-			}
-		}
-
-		return null
+		return list
 	}
 
-	function getProfilePic() {
-		for (const alt of post?.imageAlts || []) {
-			const parsed = getRecord(alt)
-			if (parsed?.profilePic) {
-				return normalizeImageUrl(parsed.profilePic)
+	// Helper to pick values from candidate objects
+	function pickVal(candidates, keys) {
+		for (const c of candidates) {
+			for (const key of keys) {
+				if (c[key] !== undefined && c[key] !== null) {
+					const val = String(c[key]).trim()
+					if (val) return val
+				}
 			}
 		}
-
-		const videoAlt = getRecord(post?.video?.alt || "")
-		if (videoAlt?.profilePic) {
-			return normalizeImageUrl(videoAlt.profilePic)
-		}
-
-		return null
-	}
-
-	function getProfileDisplayName() {
-		for (const alt of post?.imageAlts || []) {
-			const parsed = getRecord(alt)
-			if (parsed?.name) return parsed.name
-		}
-
-		const videoAlt = getRecord(post?.video?.alt || "")
-		if (videoAlt?.name) return videoAlt.name
-
 		return ""
 	}
 
+	// Helper to pick tags from candidates
+	function pickTags(candidates) {
+		for (const c of candidates) {
+			if (Array.isArray(c.tags) && c.tags.length > 0) {
+				return c.tags.map(t => String(t || "").trim().toLowerCase()).filter(Boolean)
+			}
+		}
+		return []
+	}
+
+	// Helper to pick location object from candidates
+	function pickLocation(candidates) {
+		for (const c of candidates) {
+			const loc = c.location
+			if (loc && typeof loc === "object") {
+				return {
+					address: String(loc.address || loc.formattedAddress || "").trim(),
+					city: String(loc.city || "").trim(),
+					state: String(loc.state || "").trim(),
+					zip: String(loc.zip || loc.postcode || "").trim(),
+					country: String(loc.country || loc.countryName || "").trim()
+				}
+			}
+			if (c.address || c.city || c.state || c.zip || c.country) {
+				return {
+					address: String(c.address || c.formattedAddress || "").trim(),
+					city: String(c.city || "").trim(),
+					state: String(c.state || "").trim(),
+					zip: String(c.zip || c.postcode || "").trim(),
+					country: String(c.country || c.countryName || "").trim()
+				}
+			}
+		}
+		return null
+	}
+
+	// Helper to parse location details lines
 	function parseLocationDetailsLine(detailsLine = "") {
 		const parts = String(detailsLine || "")
 			.split(",")
@@ -510,124 +170,184 @@
 		}
 	}
 
-	function extractLocationFromBundleAlt(alt = "") {
-		if (!alt) return null
-		const source = String(alt || "").trim()
-		if (!source) return null
-		if (altLocationCache.has(source)) {
-			return altLocationCache.get(source)
+	// Handle tag navigation click
+	function handleTagClick(tag) {
+		const token = String(tag || "")
+			.trim()
+			.toLowerCase()
+			.replace(/^#/, "")
+		if (!token) return
+
+		const current = readSearchTerm()
+		const tokens = current
+			.split(" ")
+			.map((t) => t.trim())
+			.filter(Boolean)
+
+		const index = tokens.indexOf(token)
+		if (index >= 0) {
+			tokens.splice(index, 1)
+		} else {
+			tokens.push(token)
 		}
 
-		try {
-			const candidates = getAltCandidates(source)
-
-			const pick = (keys = []) => {
-				for (const candidate of candidates) {
-					if (!candidate || typeof candidate !== "object") continue
-					for (const key of keys) {
-						const rawValue = candidate?.[key]
-						if (typeof rawValue !== "string") continue
-						const value = rawValue.trim()
-						if (value) return value
-					}
-				}
-				return ""
-			}
-
-			const pickFromLocation = (keys = []) => {
-				for (const candidate of candidates) {
-					const location = candidate?.location
-					if (!location || typeof location !== "object") continue
-					for (const key of keys) {
-						const rawValue = location?.[key]
-						if (typeof rawValue !== "string") continue
-						const value = rawValue.trim()
-						if (value) return value
-					}
-				}
-				return ""
-			}
-
-			const address =
-				pick(["address", "formattedAddress"]) ||
-				pickFromLocation(["formattedAddress", "address"])
-			const city = pick(["city"]) || pickFromLocation(["city"])
-			const state = pick(["state"]) || pickFromLocation(["state"])
-			const zip = pick(["zip"]) || pickFromLocation(["zip", "postcode"])
-			const country =
-				pick(["country"]) ||
-				pickFromLocation(["country", "countryName"])
-
-			if (!address && !city && !state && !zip && !country) {
-				altLocationCache.set(source, null)
-				return null
-			}
-
-			const locationData = {address, city, state, zip, country}
-			altLocationCache.set(source, locationData)
-			return locationData
-		} catch {
-			altLocationCache.set(source, null)
-			return null
+		const next = tokens.join(" ")
+		writeSearchTerm(next)
+		if (onTagClick) {
+			onTagClick(token)
 		}
 	}
 
-	function extractLocationFields(inputPost = {}) {
-		const sourceLocation =
-			inputPost?.location && typeof inputPost.location === "object"
-				? inputPost.location
-				: {}
-		let bundleLocation = null
+	// Single reactive derived object representing the parsed card data
+	const card = $derived.by(() => {
+		if (!post) return null
 
-		for (const alt of inputPost?.imageAlts || []) {
-			bundleLocation = extractLocationFromBundleAlt(alt)
-			if (bundleLocation) break
+		const candidates = getAllCandidates(post)
+
+		// 1. Post Type
+		let type = "post"
+		const hasProfile = candidates.some(c => "profileImage" in c || "profilePic" in c || "profilepic" in c)
+		const hasComment = candidates.some(c => "context" in c)
+
+		if (hasProfile) {
+			type = "profile"
+		} else if (hasComment) {
+			type = "comment"
+		} else {
+			const classified = classifyPost(post)
+			if (classified === "profile") type = "profile"
+			else if (classified === "comment") type = "comment"
 		}
 
-		if (!bundleLocation) {
-			bundleLocation = extractLocationFromBundleAlt(
-				inputPost?.video?.alt || "",
-			)
+		// 2. UUID & Author ID
+		const uuid = String(post.uuid || pickVal(candidates, ["u", "uuid", "id"]) || "").trim()
+		const authorId = type === "profile" ? uuid : String(post.authorid || pickVal(candidates, ["authorid", "authorId"]) || "").trim()
+
+		// 3. Comment Payload
+		let commentPayload = null
+		if (type === "comment") {
+			const commentCand = candidates.find(c => "context" in c)
+			if (commentCand) {
+				commentPayload = commentCand
+			}
 		}
 
-		let address = String(
-			inputPost?.address ||
-				bundleLocation?.address ||
-				sourceLocation?.formattedAddress ||
-				sourceLocation?.address ||
-				"",
-		).trim()
-		let city = String(
-			inputPost?.city ||
-				bundleLocation?.city ||
-				sourceLocation?.city ||
-				"",
-		).trim()
-		let state = String(
-			inputPost?.state ||
-				bundleLocation?.state ||
-				sourceLocation?.state ||
-				"",
-		).trim()
-		let zip = String(
-			inputPost?.zip || bundleLocation?.zip || sourceLocation?.zip || "",
-		).trim()
-		let country = String(
-			inputPost?.country ||
-				bundleLocation?.country ||
-				sourceLocation?.country ||
-				"",
-		).trim()
+		// 4. Tags
+		const directTags = [
+			...(Array.isArray(post.tags) ? post.tags : []),
+			...(Array.isArray(post.record?.tags) ? post.record.tags : [])
+		].map(t => String(t || "").trim().toLowerCase()).filter(Boolean)
 
-		const text = String(inputPost?.text || "")
-		const locationMatch = text.match(
+		let resolvedTags = []
+		if (directTags.includes("chat")) {
+			resolvedTags = directTags
+		} else if (type === "comment" && commentPayload?.context) {
+			const altTags = pickTags(candidates)
+			resolvedTags = ["chat", commentPayload.context, ...altTags]
+		} else if (directTags.length > 0) {
+			resolvedTags = directTags
+		} else {
+			resolvedTags = pickTags(candidates)
+		}
+		// Ensure unique tags
+		resolvedTags = [...new Set(resolvedTags)]
+		const hasTestTag = resolvedTags.includes("test")
+
+		// 5. Image normalization helper
+		const getNormalizedUrl = (url) => {
+			const source = String(url || "").trim()
+			if (!source) return ""
+			if (!/^https?:\/\//i.test(source)) return ""
+			if (!hasHydrated) return source
+			return rewriteLove4DogsUrlForLocalhost(source)
+		}
+
+		// 6. Profile Pic & Background Pic
+		const profilePic = getNormalizedUrl(pickVal(candidates, ["profileImage", "profilePic", "profilepic"]))
+		const backgroundPic = getNormalizedUrl(pickVal(candidates, ["backgroundImage", "backgroundPic", "backgroundpic"]))
+
+		// 7. Primary Image
+		let primaryImage = null
+		if (type === "comment") {
+			if (commentPayload?.imgs && commentPayload.imgs.length > 0) {
+				primaryImage = getNormalizedUrl(commentPayload.imgs[0])
+			} else if (commentPayload?.img) {
+				primaryImage = getNormalizedUrl(commentPayload.img)
+			}
+		} else if (type === "profile") {
+			primaryImage = backgroundPic || null
+		} else {
+			if (backgroundPic) {
+				primaryImage = backgroundPic
+			} else if (Array.isArray(post.images) && post.images.length > 0) {
+				primaryImage = getNormalizedUrl(post.images[0])
+			}
+		}
+
+		// 8. Title
+		let title = ""
+		if (type === "comment") {
+			title = "comment"
+		} else if (type === "profile") {
+			// Title of profile card is its description (lines[1]), or fallback to alt JSON description
+			const text = String(post.text || "").trim()
+			const lines = text.split("\n").map(l => l.trim()).filter(Boolean)
+			const rawTitle = lines[1] || ""
+			title = rawTitle.replace(/#\w+/g, "").trim()
+			if (!title) {
+				title = pickVal(candidates, ["description", "desc"])
+			}
+		} else {
+			// Title of standard card is lines[0]
+			const text = String(post.text || "").trim()
+			const lines = text.split("\n").map(l => l.trim()).filter(Boolean)
+			const rawTitle = lines[0] || ""
+			title = rawTitle.replace(/#\w+/g, "").trim()
+			if (!title) {
+				title = pickVal(candidates, ["name", "title", "n"])
+			}
+		}
+
+		// 9. Description (removes hashtags and title line contents)
+		let description = ""
+		if (type === "comment") {
+			description = commentPayload?.text || ""
+		} else if (type === "profile") {
+			const text = String(post.text || "").trim()
+			if (text) {
+				const lines = text.split("\n").map(l => l.trim()).filter(Boolean)
+				if (lines.length > 2) {
+					description = lines.slice(2).join("\n").replace(/#\w+/g, "").trim()
+				}
+			}
+		} else {
+			const text = String(post.text || "").trim()
+			if (text) {
+				const lines = text.split("\n").map(l => l.trim()).filter(Boolean)
+				if (lines.length > 1) {
+					description = lines.slice(1).join("\n").replace(/#\w+/g, "").trim()
+				}
+			} else {
+				description = pickVal(candidates, ["description", "desc"]).replace(/#\w+/g, "").trim()
+			}
+		}
+
+		// 10. Location
+		const locObj = pickLocation(candidates) || {}
+		let address = String(post.address || locObj.address || "").trim()
+		let city = String(post.city || locObj.city || "").trim()
+		let state = String(post.state || locObj.state || "").trim()
+		let zip = String(post.zip || locObj.zip || "").trim()
+		let country = String(post.country || locObj.country || "").trim()
+
+		// Regex location from text content
+		const textContent = String(post.text || "")
+		const locationMatch = textContent.match(
 			/(?:^|\n)📍\s+[^\n]+\n([^\n]+)(?:\n([^\n]+))?/,
 		)
-
 		if (locationMatch) {
 			const firstLine = String(locationMatch[1] || "").trim()
 			const secondLine = String(locationMatch[2] || "").trim()
-
 			if (secondLine) {
 				if (!address) address = firstLine
 				const parsed = parseLocationDetailsLine(secondLine)
@@ -644,171 +364,221 @@
 			}
 		}
 
-		return {
-			address,
-			city,
-			state,
-			zip,
-			country,
+		const locationLine = formatDisplayAddress({ address, city, state, zip, country })
+		const locationMapsHref = locationLine
+			? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(locationLine)}`
+			: ""
+
+		// 11. Slug and Href
+		const slugifyValue = (val = "") => {
+			return String(val || "")
+				.trim()
+				.toLowerCase()
+				.replace(/[^a-z0-9]+/g, "-")
+				.replace(/^-+|-+$/g, "")
 		}
-	}
 
-	function handleTagClick(tag) {
-		// Toggle tag in search term, directly updating localStorage
-		const token = String(tag || "")
-			.trim()
-			.toLowerCase()
-			.replace(/^#/, "")
-		if (!token) return
+		const buildCardViewPath = (fallbackTitle, cardType) => {
+			if (!uuid) return ""
+			const pathType = cardType === "profile" ? "profile" : "post"
+			const slug = slugifyValue(fallbackTitle) || uuid
+			return `/${pathType}/view/${encodeURIComponent(uuid)}/${encodeURIComponent(slug)}`
+		}
 
-		// Read current search term from localStorage
-		const current = readSearchTerm()
-		const tokens = current
-			.split(" ")
-			.map((t) => t.trim())
-			.filter(Boolean)
-
-		// Toggle the token in/out
-		const index = tokens.indexOf(token)
-		if (index >= 0) {
-			tokens.splice(index, 1)
+		let cardViewHref = ""
+		if (type === "comment" && commentPayload) {
+			cardViewHref = `/${contextTypeState}/view/${encodeURIComponent(commentPayload.context)}/${encodeURIComponent(contextSlugState || commentPayload.context)}#comment-${commentPayload.uuid}`
 		} else {
-			tokens.push(token)
+			cardViewHref = buildCardViewPath(title, type)
 		}
 
-		// Write back to localStorage and call parent callback if provided
-		const next = tokens.join(" ")
-		writeSearchTerm(next)
-		if (onTagClick) {
-			onTagClick(token)
-		}
-	}
-
-	const commentPayload = $derived.by(() => {
-		if (post?.imageAlts && post.imageAlts.length > 0) {
-			try {
-				const payload = JSON.parse(post.imageAlts[0])
-				if (payload && payload.uuid && payload.context) {
-					return payload
-				}
-			} catch {}
-		}
-		return null
-	})
-
-	const cardTitle = $derived.by(() => {
-		if (postType === "comment") {
-			
-			return `comment`
-		}
-		if (postType === "profile" && profileDetailsName) {
-			return profileDetailsName
-		}
-		return getCardTitle()
-	})
-
-	const cardDescription = $derived.by(() => {
-		if (postType === "comment") {
-			return commentPayload?.text || ""
-		}
-		return getCardDescription()
-	})
-
-	const commentDate = $derived.by(() => {
-		if (postType === "comment" && commentPayload?.stamp) {
+		// 12. Comment Date
+		let commentDate = ""
+		if (type === "comment" && commentPayload?.stamp) {
 			const ms = parseTimestampMs(commentPayload.stamp, { allowBase36: true })
 			if (ms) {
-				return new Date(ms).toISOString()
+				commentDate = new Date(ms).toISOString()
 			}
 		}
-		return ""
+
+		// Profile Name derivation
+		let profileName = pickVal(candidates, ["name", "title"])
+		if (type === "profile" && !profileName) {
+			const text = String(post.text || "").trim()
+			const lines = text.split("\n").map(l => l.trim()).filter(Boolean)
+			profileName = lines[0] || ""
+		}
+
+		const record = {
+			postType: type,
+			uuid,
+			authorId,
+			commentPayload,
+			tags: resolvedTags,
+			hasTestTag,
+			profilePic,
+			backgroundPic,
+			primaryImage,
+			title,
+			profileName,
+			description,
+			locationLine,
+			locationMapsHref,
+			cardViewHref,
+			commentDate
+		}
+
+		if (type === "profile"){
+			if (!record.profilePic && record.primaryImage){
+				record.profilePic = record.primaryImage;
+				record.primaryImage = "";
+			}
+			if (record.profileName) {
+				if (!record.description && record.title && record.title !== record.profileName) {
+					record.description = record.title;
+				}
+				record.title = record.profileName;
+			} else if (record.title) {
+				record.profileName = record.title;
+			}
+			if (!record.title && record.description){
+				const lines = record.description.split("\n");
+				record.title = lines[0];
+				record.description = lines.slice(1).join("\n");
+			}
+		}
+
+		// Print the consolidated JSON parsed record
+		console.log("Parsed Card Record:", JSON.stringify(record, null, 2))
+
+		return record
 	})
 
-	const primaryImage = $derived(getPrimaryImage())
-	const profilePic = $derived(getProfilePic())
-	const postImages = $derived.by(() => {
-		if (postType === "profile") {
-			return primaryImage ? [primaryImage] : [];
-		}
-		if (Array.isArray(post?.images) && post.images.length > 0) {
-			return post.images.map(img => normalizeImageUrl(img));
-		}
-		return primaryImage ? [primaryImage] : [];
-	})
-	const resolvedTags = $derived(resolvePostTags(post))
-	const hasTestTag = $derived(resolvedTags.includes("test"))
-	const postType = $derived(
-		(() => {
-			if (commentPayload) {
-				return "comment"
-			}
-			const tags = resolvedTags
-			if (tags.some((tag) => String(tag || "").toLowerCase() === "chat")) {
-				return "comment"
-			}
-			return tags.some(
-				(tag) => String(tag || "").toLowerCase() === "profile",
-			)
-				? "profile"
-				: "post"
-		})(),
-	)
-	const authorId = $derived(
-		postType === "profile"
-			? resolveCardUuid(post)
-			: resolveCardAuthorId(post)
-	)
-	const cardViewHref = $derived.by(() => {
-		if (postType === "comment" && commentPayload) {
-			const type = contextType
-			const uuid = commentPayload.context
-			const slug = contextSlug || uuid
-			return `/${type}/view/${encodeURIComponent(uuid)}/${encodeURIComponent(slug)}#comment-${commentPayload.uuid}`
-		}
-		return buildCardViewPath(cardTitle, postType, post)
-	})
-	const profileDisplayName = $derived(getProfileDisplayName())
 	const authorName = $derived.by(() => {
-		if (postType === "comment") {
+		if (card?.postType === "comment") {
 			return commentAuthorName || "Anonymous"
 		}
-		return postType === "profile"
-			? String(
-					profileDetailsName ||
-						profileDisplayName ||
-						post?.author?.displayName ||
-						post?.author?.handle ||
-						"",
-				).trim()
-			: String(
-					post?.author?.displayName || post?.author?.handle || "",
-				).trim()
+		if (card?.postType === "profile") {
+			return profileDetailsName || card.profileName || post?.author?.displayName || post?.author?.handle || "Anonymous"
+		}
+		return profileDetailsName || post?.author?.displayName || post?.author?.handle || "Anonymous"
 	})
 
 	const authorAvatar = $derived.by(() => {
-		if (postType === "comment") {
+		if (card?.postType === "comment") {
 			return commentAuthorAvatar || ""
 		}
-		return postType === "profile"
-			? (profileDetailsPic || profilePic)
-			: profilePic
+		if (card?.postType === "profile") {
+			return profileDetailsPic || card.profilePic || post?.author?.avatar || ""
+		}
+		return profileDetailsPic || post?.author?.avatar || ""
 	})
 
-	const locationFields = $derived(extractLocationFields(post))
-	const locationLine = $derived(
-		formatDisplayAddress({
-			address: locationFields.address,
-			city: locationFields.city,
-			state: locationFields.state,
-			zip: locationFields.zip,
-			country: locationFields.country,
-		})
-	)
-	const locationMapsHref = $derived(
-		locationLine
-			? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(locationLine)}`
-			: "",
-	)
+	onMount(() => {
+		hasHydrated = true
+	})
+
+	$effect(() => {
+		commentAuthorName = "Anonymous"
+		commentAuthorAvatar = ""
+		profileDetailsName = ""
+		profileDetailsPic = ""
+		contextTypeState = "post"
+		contextSlugState = ""
+		discussionComment = null
+
+		const type = card?.postType
+		const uuid = card?.uuid
+		const authorId = card?.authorId
+		const commentPayload = card?.commentPayload
+
+		if (type === "comment" && commentPayload?.context) {
+			getProfileDetails(commentPayload.author).then((details) => {
+				commentAuthorName = details?.name || "Anonymous"
+				commentAuthorAvatar = details?.profilePic || ""
+			}).catch((err) => {
+				console.error("Failed to load comment author details:", err)
+			})
+
+			fetch(`/api/feed?query=${encodeURIComponent(commentPayload.context)}&limit=1`)
+				.then(res => res.ok ? res.json() : null)
+				.then(data => {
+					const contextPosts = data?.posts || []
+					if (contextPosts.length > 0) {
+						const contextPost = contextPosts[0]
+						const cTags = (contextPost.tags || []).map(t => String(t || '').trim().toLowerCase())
+						const isProfile = cTags.includes("profile")
+						contextTypeState = isProfile ? "profile" : "post"
+						
+						let title = ""
+						if (isProfile) {
+							const alts = [
+								...(Array.isArray(contextPost.imageAlts) ? contextPost.imageAlts : []),
+								contextPost.video?.alt
+							].filter(Boolean)
+							for (const alt of alts) {
+								try {
+									const parsed = JSON.parse(alt)
+									const name = parsed?.name || parsed?.primary?.name || parsed?.combined?.primary?.name
+									if (name) {
+										title = name
+										break
+									}
+								} catch {}
+							}
+						} else {
+							title = String(contextPost.text || "").split("\n")[0].trim()
+						}
+						const slugifyValue = (val = "") => {
+							return String(val || "")
+								.trim()
+								.toLowerCase()
+								.replace(/[^a-z0-9]+/g, "-")
+								.replace(/^-+|-+$/g, "")
+						}
+						contextSlugState = slugifyValue(title) || commentPayload.context
+					}
+				}).catch((err) => {
+					console.error("Failed to fetch comment context info:", commentPayload.context, err)
+				})
+		} else {
+			if (authorId) {
+				getProfileDetails(authorId).then((details) => {
+					profileDetailsName = details?.name || ""
+					profileDetailsPic = details?.profilePic || ""
+				}).catch((err) => {
+					console.error("Failed to load profile details in OneCard:", err)
+				})
+			}
+
+			if (uuid) {
+				fetch(`/api/feed?query=${encodeURIComponent(uuid)}&limit=1&chat=1`)
+					.then(res => res.ok ? res.json() : null)
+					.then(data => {
+						const posts = data?.posts || []
+						if (posts.length > 0) {
+							const firstPost = posts[0]
+							if (firstPost.imageAlts && firstPost.imageAlts.length > 0) {
+								try {
+									const payload = JSON.parse(firstPost.imageAlts[0])
+									if (payload && payload.uuid && payload.context === uuid) {
+										discussionComment = {
+											uuid: payload.uuid,
+											handle: firstPost.author?.handle || "anonymous",
+											name: firstPost.author?.displayName || firstPost.author?.handle || "Anonymous",
+											avatar: firstPost.author?.avatar || "",
+											text: payload.text || firstPost.text || ""
+										}
+									}
+								} catch {}
+							}
+						}
+					}).catch((err) => {
+						console.error("Failed to load discussion comment for card:", uuid, err)
+					})
+			}
+		}
+	})
 
 	let isInView = $state(false)
 	let cardEl = $state(null)
@@ -834,72 +604,62 @@
 	})
 </script>
 
-<div class="one-card" class:animate={isInView} class:comment-card={postType === "comment"} bind:this={cardEl}>
-	{#if postType !== "comment"}
-		<a class="card-link" href={cardViewHref} tabindex="0">
-			{#if primaryImage}
+<div class="one-card" class:animate={isInView} class:comment-card={card?.postType === "comment"} bind:this={cardEl}>
+	{#if card?.postType !== "comment"}
+		<a class="card-link" href={card?.cardViewHref} tabindex="0">
+			{#if card?.primaryImage}
 				<div class="card-image">
-					<img src={primaryImage} alt={cardTitle} loading="lazy" />
+					<img src={card.primaryImage} alt={card.title} loading="lazy" />
 				</div>
 			{/if}
 		</a>
 	{/if}
 
-	{#if postType !== "comment"}
-		<TagPills tags={resolvedTags} onTagClick={handleTagClick} />
+	{#if card?.postType !== "comment"}
+		<TagPills tags={card?.tags} onTagClick={handleTagClick} />
 	{/if}
 
 	<AuthorRow
 		avatar={authorAvatar}
 		name={authorName || "Anonymous"}
-		dateValue={postType === "comment" ? commentDate : (post?.createdAt || "")}
-		location={postType === "comment" ? "" : locationLine}
-		locationHref={postType === "comment" ? "" : locationMapsHref}
-		// compact
+		dateValue={card?.postType === "comment" ? card.commentDate : (post?.createdAt || "")}
+		location={card?.postType === "comment" ? "" : card?.locationLine}
+		locationHref={card?.postType === "comment" ? "" : card?.locationMapsHref}
 	/>
 
-
-
-	<a class="card-link" href={cardViewHref} tabindex="0">
+	<a class="card-link" href={card?.cardViewHref} tabindex="0">
 		<div class="card-content">
-			<!-- {#if postType === "comment"}
-				<div class="comment-context-header">
-					<MessageSquare size={14} class="comment-icon" />
-					<span class="comment-context-title">{cardTitle}</span>
-				</div>
-			{/if} -->
-			{#if postType !== "comment"}
-				<h3 class="card-title">{cardTitle}</h3>
+			{#if card?.postType !== "comment"}
+				<h3 class="card-title">{card?.title}</h3>
 			{/if}
-			{#if cardDescription && postType === "comment"}
+			{#if card?.description && card.postType === "comment"}
 				<p class="card-description">
-					<MessageSquare size={14} class="comment-icon" style="padding-right:1rem" /> {	cardDescription}
+					<MessageSquare size={14} class="comment-icon" style="margin-right: 0.5rem; display: inline-block; vertical-align: middle;" />
+					{card.description}
 				</p>
-			{:else}
-			{#if cardDescription}
-				<p class="card-description">{cardDescription}</p>
-			{/if}
+			{:else if card?.description}
+				<p class="card-description">{card.description}</p>
 			{/if}
 		</div>
 	</a>
 
-	{#if postType !== "comment"}
+	{#if card?.postType !== "comment"}
 		<div class="post-footer">
 			<PostStats
-				likeCount={post.likeCount ?? 0}
-				repostCount={post.repostCount ?? 0}
-				replyCount={post.replyCount ?? 0}
-				createdAt={post.createdAt}
-				context={resolveCardUuid(post)}
-				{cardViewHref}
-				title={cardTitle}
-				imageUrl={postType === 'profile' ? profilePic : primaryImage}
-				{authorId}
+				likeCount={post?.likeCount ?? 0}
+				repostCount={post?.repostCount ?? 0}
+				replyCount={post?.replyCount ?? 0}
+				createdAt={post?.createdAt}
+				context={card?.uuid}
+				cardViewHref={card?.cardViewHref}
+				title={card?.title}
+				imageUrl={card?.postType === 'profile' ? card?.profilePic : card?.primaryImage}
+				authorId={card?.authorId}
 			/>
 			{#if discussionComment}
 				<a
 					class="comments-link"
-					href={`${cardViewHref}#comment-${discussionComment.uuid}`}
+					href={`${card?.cardViewHref}#comment-${discussionComment.uuid}`}
 					onclick={(e) => e.stopPropagation()}
 				>
 					<ul class="comments-list">
@@ -933,7 +693,7 @@
 			{:else}
 				<a
 					class="comments-link"
-					href={`${cardViewHref}#discussion`}
+					href={`${card?.cardViewHref}#discussion`}
 					onclick={(e) => e.stopPropagation()}
 				>
 					<div class="comment-compose-disabled" aria-hidden="true">

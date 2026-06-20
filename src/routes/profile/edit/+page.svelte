@@ -1075,6 +1075,9 @@
 		authorid: uuid,
 		stamp: profileRecordStamp,
 		email: encryptEmailForPayload(email),
+		profileImage: isPostEditRoute
+			? null
+			: selectedProfileImage?.bskyUrl || selectedProfileImage?.url || null,
 		profilePic: isPostEditRoute
 			? null
 			: selectedProfileImage?.bskyUrl || selectedProfileImage?.url || null,
@@ -1660,6 +1663,12 @@
 						authorid: uuid,
 						stamp: profileRecordStamp,
 						email: encryptEmailForPayload(email),
+						profileImage: isPostEditRoute
+							? null
+							: publishProfileImage?.bskyUrl ||
+							  selectedProfileImage?.bskyUrl ||
+							  selectedProfileImage?.url ||
+							  null,
 						profilePic: isPostEditRoute
 							? null
 							: publishProfileImage?.bskyUrl ||
@@ -1837,6 +1846,11 @@
 				authorid: uuid,
 				stamp: profileRecordStamp,
 				email: encryptEmailForPayload(email),
+				profileImage:
+					publishProfileImage?.bskyUrl ||
+					selectedProfileImage?.bskyUrl ||
+					selectedProfileImage?.url ||
+					null,
 				profilePic:
 					publishProfileImage?.bskyUrl ||
 					selectedProfileImage?.bskyUrl ||

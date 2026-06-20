@@ -48,7 +48,12 @@ export function classifyPost(post = {}) {
 	}
 
 	if (altJson) {
-		if ('profileImage' in altJson || altJson.profileImage !== undefined) {
+		const hasProfileKeys = (obj) => {
+			if (!obj || typeof obj !== 'object') return false;
+			return ('profileImage' in obj || obj.profileImage !== undefined || 'profilePic' in obj || obj.profilePic !== undefined);
+		};
+		const isProfile = hasProfileKeys(altJson) || hasProfileKeys(altJson.primary) || hasProfileKeys(altJson.combined?.primary);
+		if (isProfile) {
 			return 'profile';
 		}
 		if ('context' in altJson || altJson.context !== undefined) {
