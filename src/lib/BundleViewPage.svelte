@@ -466,6 +466,7 @@
 	);
 	const mapHref = $derived(buildMapHref(jsonData));
 	const displayTags = $derived(collectDisplayTags(jsonData || {}));
+	const activeSearchTokens = $derived(new Set(getSearchTokens(searchTerm)));
 	const hasTestTag = $derived(displayTags.includes("test"));
 	let isDisposed = false;
 	onDestroy(() => {

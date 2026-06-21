@@ -606,6 +606,7 @@ async function collectFromAuthorFeed({ author, approximate, posts, seen, allFail
 		const found = Array.isArray(json.feed) ? json.feed : [];
 
 		for (const item of found) {
+			const post = item?.post || item;
 			if (!post || !post.uri || allSeenUris.has(post.uri) || isReplyPost(item)) continue;
 			if (hasChatTag(post)) continue;
 			allSeenUris.add(post.uri);
