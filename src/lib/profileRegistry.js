@@ -1,5 +1,6 @@
 
 import { generateUuid } from './uuid.js';
+import { parseTimestampMs } from './dateTime.js';
 
 import {
 	getSetting,
@@ -106,9 +107,27 @@ export function rebuildStoredProfileFromBundle(
 	const profileDescription = String(primary?.description || "").trim()
 	const profilePic = String(primary?.profilePic || "").trim()
 	const backgroundPic = String(primary?.backgroundPic || "").trim()
+
+	const EPOCH_OFFSET = 946684740000;
+	let pin = "";
+	if (primary?.birthdate) {
+		const birthdateVal = parseInt(primary.birthdate, 36);
+		const stampVal = primary.stamp;
+		if (birthdateVal && stampVal) {
+			const timestamp = parseTimestampMs(stampVal, { allowBase36: true });
+			if (timestamp) {
+				const decryptedPin = birthdateVal - (timestamp - EPOCH_OFFSET);
+				if (decryptedPin >= 0) {
+					pin = String(decryptedPin).padStart(6, '0');
+				}
+			}
+		}
+	}
+
 	const profile = {
 		uuid: newUuid,
 		email: String(primary?.email || "").trim(),
+		pin,
 		profileName,
 		profileDescription,
 		contentHtml: normalizedBundle.subsequent.map((entry) => String(entry || "")).join(""),

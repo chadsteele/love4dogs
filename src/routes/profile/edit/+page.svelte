@@ -49,6 +49,7 @@
 		buildCompressedTimestamp,
 		formatLocalTime,
 		resolvePostTimestampMs,
+		parseTimestampMs,
 	} from "$lib/dateTime"
 	import ShowAdmin from "$lib/ShowAdmin.svelte"
 	import {enqueueSync, setOfflineImage, setPost, setProfile} from "$lib/db"
@@ -93,6 +94,7 @@
 	const ENABLE_EDITOR_MEDIA_UPLOADS = true
 	const DEBUG_PROFILE = false
 	const POST_EDIT_PATH_PREFIX = "/post/edit/"
+	const EPOCH_OFFSET = 946684740000
 
 	const getOfflineId = (url) => {
 		if (typeof url !== 'string') return null;
@@ -103,6 +105,12 @@
 	let uuid = $state("")
 
 	let email = $state("")
+	let pin = $state("")
+	let enteredPin = $state("")
+	let isUnlocked = $state(true)
+	let touchedPin = $state(false)
+	let pinInputEl = $state(null)
+	let unlockError = $state("")
 	let profileName = $state("")
 	let profileDescription = $state("")
 	let contentHtml = $state("")
@@ -994,6 +1002,16 @@
 					: "",
 	)
 
+	const pinError = $derived(
+		isPostEditRoute
+			? ""
+			: !pin.trim()
+				? "PIN is required."
+				: !/^\d{6}$/.test(pin.trim())
+					? "PIN must be exactly 6 digits."
+					: "",
+	)
+
 	const profileImageError = $derived(
 		isPostEditRoute
 			? ""
@@ -1013,6 +1031,7 @@
 						return false
 					}
 					if (entry.blob) return false
+					if (isBskyHostedUrl(entry.bskyUrl)) return false
 					const url = String(entry.url || "")
 					return !isBskyHostedUrl(url)
 				}).length,
@@ -1064,10 +1083,26 @@
 			unresolvedEditorMediaCount > 0,
 	)
 
+	const isFormValid = $derived(
+		isPostEditRoute
+			? !nameError && locationConfirmed
+			: !nameError && !emailError && !pinError && !profileImageError && locationConfirmed
+	)
+
 	function encryptEmailForPayload(value = "") {
 		const normalized = normalizeContactInput(value)
 		if (!normalized) return ""
 		return CONTACT_LOCK_PREFIX + encryptContact(normalized)
+	}
+
+	function encryptPinForPayload(pinStr, stamp) {
+		const cleanPin = String(pinStr || "").trim()
+		if (!cleanPin || cleanPin.length !== 6 || !/^\d{6}$/.test(cleanPin)) {
+			return null
+		}
+		const timestamp = parseTimestampMs(stamp, {allowBase36: true})
+		if (!timestamp) return null
+		return (timestamp - EPOCH_OFFSET + Number(cleanPin)).toString(36)
 	}
 
 	const primaryPostPayload = $derived({
@@ -1075,6 +1110,7 @@
 		authorid: uuid,
 		stamp: profileRecordStamp,
 		email: encryptEmailForPayload(email),
+		birthdate: encryptPinForPayload(pin, profileRecordStamp),
 		profileImage: isPostEditRoute
 			? null
 			: selectedProfileImage?.bskyUrl || selectedProfileImage?.url || null,
@@ -1230,6 +1266,22 @@
 		uuid =
 			String(primary?.uuid || fallbackUuid || "") || generateShortUuid()
 		email = decodePayloadEmail(primary?.email)
+		let decryptedPin = ""
+		if (primary?.birthdate) {
+			const birthdateVal = parseInt(primary.birthdate, 36)
+			const stampVal = primary.stamp
+			if (birthdateVal && stampVal) {
+				const timestamp = parseTimestampMs(stampVal, {allowBase36: true})
+				if (timestamp) {
+					const diff = birthdateVal - (timestamp - EPOCH_OFFSET)
+					if (diff >= 0) {
+						decryptedPin = String(diff).padStart(6, '0')
+					}
+				}
+			}
+		}
+		pin = decryptedPin
+		isUnlocked = !pin
 		profileName = String(primary?.name || primary?.title || "")
 		profileDescription = String(
 			primary?.description || primary?.summary || "",
@@ -1254,6 +1306,22 @@
 	function applyViewCacheToEditor(data = {}, fallbackUuid = "") {
 		uuid = String(data?.uuid || fallbackUuid || "") || generateShortUuid()
 		email = decodePayloadEmail(data?.email)
+		let decryptedPin = String(data?.pin || "")
+		if (!decryptedPin && data?.birthdate) {
+			const birthdateVal = parseInt(data.birthdate, 36)
+			const stampVal = data.stamp
+			if (birthdateVal && stampVal) {
+				const timestamp = parseTimestampMs(stampVal, {allowBase36: true})
+				if (timestamp) {
+					const diff = birthdateVal - (timestamp - EPOCH_OFFSET)
+					if (diff >= 0) {
+						decryptedPin = String(diff).padStart(6, '0')
+					}
+				}
+			}
+		}
+		pin = decryptedPin
+		isUnlocked = !pin
 		profileName = String(data?.name || data?.title || "")
 		profileDescription = String(data?.description || data?.summary || "")
 		postTags = Array.isArray(data?.tags) ? data.tags : []
@@ -1288,6 +1356,7 @@
 			uuid,
 			existingProfileAtUri,
 			email,
+			pin,
 			profileName,
 			profileDescription,
 			contentHtml,
@@ -1375,6 +1444,8 @@
 		uuid = String(profile.uuid || "") || generateShortUuid()
 		existingProfileAtUri = String(profile.existingProfileAtUri || "").trim()
 		email = String(profile.email || "")
+		pin = String(profile.pin || "")
+		isUnlocked = !pin
 		profileName = String(profile.profileName || "")
 		profileDescription = String(profile.profileDescription || "")
 		postTags = Array.isArray(profile.tags) ? profile.tags : []
@@ -1409,6 +1480,7 @@
 			isPostEditRoute || hasProfileImage
 				? ""
 				: "Profile picture is required."
+		const submitPinError = isPostEditRoute ? "" : pinError
 		debugProfile("[profile] validateRequiredFields", {
 			hasName: Boolean(profileName.trim()),
 			hasEmail: Boolean(email.trim()),
@@ -1416,12 +1488,14 @@
 			hasSelectedProfileImage: Boolean(selectedProfileImage),
 			nameError,
 			emailError,
+			pinError,
 			profileImageError,
 			submitProfileImageError,
 		})
 		return (
 			nameError ||
 			emailError ||
+			submitPinError ||
 			submitProfileImageError ||
 			null
 		)
@@ -1437,6 +1511,7 @@
 		activateValidation()
 		if (field === "name") touchedName = true
 		if (field === "email") touchedEmail = true
+		if (field === "pin") touchedPin = true
 	}
 
 	function focusFirstInvalidField() {
@@ -1444,6 +1519,7 @@
 			profileImageError,
 			nameError,
 			emailError,
+			pinError,
 		})
 		if (!isPostEditRoute && profileImageError) {
 			debugProfile("[profile] focusing profile image section")
@@ -1459,6 +1535,11 @@
 		if (emailError) {
 			debugProfile("[profile] focusing email input")
 			emailInputEl?.focus()
+			return
+		}
+		if (pinError) {
+			debugProfile("[profile] focusing pin input")
+			pinInputEl?.focus()
 		}
 	}
 
@@ -1663,6 +1744,7 @@
 						authorid: uuid,
 						stamp: profileRecordStamp,
 						email: encryptEmailForPayload(email),
+						birthdate: encryptPinForPayload(pin, profileRecordStamp),
 						profileImage: isPostEditRoute
 							? null
 							: publishProfileImage?.bskyUrl ||
@@ -1846,6 +1928,7 @@
 				authorid: uuid,
 				stamp: profileRecordStamp,
 				email: encryptEmailForPayload(email),
+				birthdate: encryptPinForPayload(pin, profileRecordStamp),
 				profileImage:
 					publishProfileImage?.bskyUrl ||
 					selectedProfileImage?.bskyUrl ||
@@ -2051,7 +2134,7 @@
 				combinedJson: combinedBundle.combinedJson,
 				combined: {
 					primary: primaryPayloadForBundle,
-					subsequent: subsequentPostsPayload,
+					subsequent: mapSubsequentPayloadForBundle(subsequentPostsPayload),
 				},
 				fragments: combinedBundle.fragments,
 			};
@@ -2297,6 +2380,15 @@
 				return
 			}
 			window.location.href = "/"
+		}
+	}
+
+	function handleUnlock() {
+		if (enteredPin.trim() === pin.trim()) {
+			isUnlocked = true;
+			unlockError = "";
+		} else {
+			unlockError = "Incorrect PIN. Please try again.";
 		}
 	}
 
@@ -2744,7 +2836,36 @@
 	</ShowAdmin>
 
 	<section class="panel">
-		{#if !isPostEditRoute}
+		{#if !isPostEditRoute && pin && !isUnlocked}
+			<div class="lock-screen">
+				<h3>Profile Locked</h3>
+				<p class="lock-desc">This profile is protected by a PIN. Please enter the 6-digit PIN to enable editing.</p>
+				<div class="unlock-row">
+					<input
+						type="password"
+						pattern="[0-9]*"
+						inputmode="numeric"
+						maxlength="6"
+						placeholder="••••••"
+						bind:value={enteredPin}
+						onkeydown={(e) => {
+							if (e.key === "Enter") handleUnlock();
+						}}
+						class="unlock-pin-input"
+					/>
+					<button type="button" class="primary" onclick={handleUnlock}>
+						Unlock
+					</button>
+					<button type="button" onclick={cancelProfileEdit}>
+						Cancel
+					</button>
+				</div>
+				{#if unlockError}
+					<p class="field-error" style="margin-top: 0.8rem;">{unlockError}</p>
+				{/if}
+			</div>
+		{:else}
+			{#if !isPostEditRoute}
 			<div
 				bind:this={profileImageWrapEl}
 				class="profile-image-wrap"
@@ -2832,6 +2953,27 @@
 			placeholder="you@email.com"
 			showNotice={false}
 		/>
+		{#if !isPostEditRoute}
+			<label class="pin-label">
+				<span class="label">6-Digit PIN (used to authorize future edits)</span>
+				<input
+					bind:this={pinInputEl}
+					type="text"
+					pattern="[0-9]*"
+					inputmode="numeric"
+					maxlength="6"
+					bind:value={pin}
+					onfocus={activateValidation}
+					onblur={() => handleFieldBlur("pin")}
+					class:invalid-field={touchedPin && !!pinError}
+					disabled={publishing}
+					placeholder="123456"
+				/>
+			</label>
+			{#if touchedPin && pinError}
+				<p class="field-error">{pinError}</p>
+			{/if}
+		{/if}
 		<div class="address-row">
 			<input
 				class="address-input"
@@ -2877,7 +3019,7 @@
 				type="button"
 				class="primary"
 				onclick={publishToBluesky}
-				disabled={publishing || publishBlockedByMedia}
+				disabled={publishing || publishBlockedByMedia || !isFormValid}
 			>
 				<Send size={16} aria-hidden="true" />
 				<span>{publishing ? "Publishing…" : "Publish"}</span>
@@ -2911,6 +3053,7 @@
 		{/if}
 		{#if uploadError}
 			<p class="warning">{uploadError}</p>
+		{/if}
 		{/if}
 	</section>
 
@@ -3224,4 +3367,44 @@ Source - https://stackoverflow.com/a/79793317
 Posted by Debtanu Coder
 Retrieved 2026-05-08, License - CC BY-SA 4.0
 */
+	.lock-screen {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		padding: 2.5rem 1.5rem;
+		text-align: center;
+		background: rgba(255, 255, 255, 0.95);
+		border-radius: 16px;
+	}
+	.lock-screen h3 {
+		font-size: 1.5rem;
+		color: #3b5b41;
+		margin: 0 0 0.8rem;
+	}
+	.lock-desc {
+		color: #51655a;
+		max-width: 420px;
+		margin: 0 auto 1.5rem;
+		font-size: 0.95rem;
+		line-height: 1.5;
+	}
+	.unlock-row {
+		display: flex;
+		gap: 0.6rem;
+		align-items: center;
+		justify-content: center;
+		width: 100%;
+		max-width: 320px;
+	}
+	.unlock-pin-input {
+		flex: 1;
+		font-size: 1.25rem;
+		text-align: center;
+		letter-spacing: 0.25rem;
+		padding: 0.55rem;
+	}
+	.pin-label {
+		margin-top: 0.8rem;
+	}
 </style>
