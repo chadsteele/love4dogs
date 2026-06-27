@@ -1,6 +1,5 @@
 <script>
 	import {goto} from "$app/navigation"
-	import {isLocalHost} from "$lib/utils"
 	import ProfileList from "$lib/ProfileList.svelte"
 	import HashTagCloud from "$lib/HashTagCloud.svelte"
 	import {defaultHashtags} from "$lib/config"
@@ -43,8 +42,6 @@
 	let navProfiles = $state([])
 	let navCurrentUuid = $state("")
 	let profileMenuOpen = $state(false)
-	let deleteAllConfirming = $state(false)
-	let deleteAllInProgress = $state(false)
 
 	const navCurrentProfile = $derived(
 		navProfiles.find((entry) => entry?.uuid === navCurrentUuid) || null,
@@ -83,20 +80,6 @@
 			})()
 		}
 	}
- 
- 	function goToProfileChooser() {
- 		const count = navProfiles.length
- 		if (!navCurrentUuid || count === 0) {
- 			goto(buildNewProfileEditPath())
- 			return
- 		}
- 		if (count === 1) {
- 			goto(`/profile/edit/${encodeURIComponent(navCurrentUuid)}`)
- 			return
- 		}
- 		profileMenuOpen = !profileMenuOpen
- 		selectionMenuOpen = false
- 	}
  
  	async function chooseCurrentProfile(uuid = "") {
  		const next = String(uuid || "").trim()
@@ -247,12 +230,6 @@
 				isFocused = false
 			}
 		}, 200)
-	}
-
-	function focusSearchInput() {
-		if (searchInputEl) {
-			searchInputEl.focus()
-		}
 	}
 </script>
 
@@ -435,7 +412,6 @@
 			<button
 				type="button"
 				class="profile-avatar-btn"
-				// onclick={goToProfileChooser}
 				onclick={openProfileManager}
 				aria-label="Choose current profile"
 				title="Choose current profile"

@@ -56,8 +56,7 @@ export async function POST({ request }) {
 			body.from !== undefined ||
 			body.block !== undefined ||
 			body.unblock !== undefined ||
-			body.report !== undefined ||
-			body.claim !== undefined
+			body.report !== undefined
 		) {
 			const payload = {};
 			payload.from = String(body.from || '').trim();
@@ -70,8 +69,6 @@ export async function POST({ request }) {
 				payload.report = String(body.report || '').trim();
 				payload.reason = String(body.reason || '').trim();
 				payload.details = String(body.details || '').trim();
-			} else if (body.claim !== undefined) {
-				payload.claim = String(body.claim || '').trim();
 			}
 			
 			// Always add a timestamp if not present (per user requirement)

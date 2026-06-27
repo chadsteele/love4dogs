@@ -653,6 +653,7 @@
 				context={card?.uuid}
 				cardViewHref={card?.cardViewHref}
 				title={card?.title}
+				description={card?.description}
 				imageUrl={card?.postType === 'profile' ? card?.profilePic : card?.primaryImage}
 				authorId={card?.authorId}
 			/>

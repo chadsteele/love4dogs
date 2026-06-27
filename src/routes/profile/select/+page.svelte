@@ -24,7 +24,13 @@
 		if (!next) return
 		await setCurrentProfileUuid(next)
 		currentUuid = next
-		goto("/post/edit")
+	
+		goto(
+							`/profile/view/${encodeURIComponent(next)}`,
+							{
+								replaceState: true,
+							},
+						);
 	}
 
 	async function deleteProfile(uuid = "") {

@@ -12,6 +12,7 @@
 		context = "",
 		cardViewHref = "",
 		title = "",
+		description = "",
 		imageUrl = "",
 		authorId = ""
 	} = $props();
@@ -141,11 +142,8 @@
 
 <div class="post-stats" onclick={(e) => e.stopPropagation()} role="presentation">
 	<Stars count={currentLikeCount} {context} {cardViewHref} {authorId} />
-	<Shares count={currentRepostCount} {cardViewHref} {title} {imageUrl} {context} />
+	<Shares count={currentRepostCount} {cardViewHref} {title} {description} {imageUrl} {context} />
 	<Comments count={currentReplyCount} {cardViewHref} />
-	{#if createdAt}
-		<span class="stat-date"><DateTime tag="span" value={createdAt} /></span>
-	{/if}
 </div>
 
 <style>

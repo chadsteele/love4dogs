@@ -18,7 +18,6 @@
 		UserX,
 		UserCheck,
 		Flag,
-		Key,
 		Trash2,
 	} from "lucide-svelte";
 	import { readSearchTerm, writeSearchTerm } from "$lib/searchStore";
@@ -878,27 +877,7 @@
 		}
 	}
 
-	async function claimOwnership() {
-		try {
-			showToast("Sending ownership claim...");
-			const fromUuid = await getCurrentProfileUuid();
-			const res = await fetch("/api/send-dm", {
-				method: "POST",
-				headers: { "content-type": "application/json" },
-				body: JSON.stringify({
-					from: fromUuid || "",
-					claim: uuid,
-				}),
-			});
-			if (res.ok) {
-				showToast("Ownership claim sent to administrator.");
-			} else {
-				throw new Error("Failed to send claim");
-			}
-		} catch (err) {
-			showToast("Failed to send ownership claim.", "error");
-		}
-	}
+
 
 	function showToast(message, type = "success") {
 		toastMessage = message;
@@ -1106,16 +1085,7 @@
 							<Flag size={16} />
 							Report
 						</button>
-						<button
-							type="button"
-							onclick={async () => {
-								menuOpen = false;
-								await claimOwnership();
-							}}
-						>
-							<Key size={16} />
-							Claim ownership
-						</button>
+
 						{#if !isProfile && (isAuthor || isLocalHost())}
 							<button
 								type="button"
@@ -1199,6 +1169,7 @@
 					context={uuid}
 					cardViewHref={cardViewHref}
 					title={jsonData?.name || jsonData?.title || ""}
+					description={jsonData?.description || ""}
 					imageUrl={isProfile ? (jsonData?.profilePic || jsonData?.authorAvatar || "") : (jsonData?.images?.[0]?.src || "")}
 					authorId={targetAuthorId}
 				/>

@@ -15,8 +15,6 @@
 	const backgroundImageUrl = `${siteUrl}/background.jpg`
 	const aboutTitle = "About Love4Dogs"
 	const aboutParagraphs = [
-		"🛠️ WE'RE UNDER CONSTRUCTION! 🚜👷🏽",
-		"Please excuse our mess and come back soon for a better experience. In the meantime, feel free to explore the feed and share posts to help connect animals in need with loving homes.",
 		`
 		<b>Why?</b>
 		<ul>

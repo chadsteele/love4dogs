@@ -7,7 +7,7 @@
 	import { buildCompressedTimestamp } from "$lib/dateTime.js";
 	import { startQueueProcessor } from "$lib/syncProcessor.js";
 
-	let { count = 0, cardViewHref, title = "", imageUrl = "", context } = $props();
+	let { count = 0, cardViewHref, title = "", description = "", imageUrl = "", context } = $props();
 
 	let displayCount = $state(0);
 	let showToast = $state(false);
@@ -129,6 +129,7 @@
 		const htmlContent = `<div style="font-family: system-ui, -apple-system, sans-serif; max-width: 500px; border: 1px solid #ede5d8; border-radius: 12px; padding: 16px; background: #fffaf1; box-shadow: 0 4px 12px rgba(0,0,0,0.08);">` +
 			commentHtml +
 			`<h3 style="margin: 0 0 10px 0; font-size: 18px;"><a href="${absoluteUrl}" style="text-decoration: none; color: #1a4a7a; font-weight: bold;">${title}</a></h3>` +
+			(description ? `<p style="margin: 0 0 12px 0; font-size: 14px; color: #4a3e3d; line-height: 1.4;">${description}</p>` : "") +
 			(imageUrl ? `<img src="${imageUrl}" alt="${title}" style="width: 100%; max-width: 320px; border-radius: 8px; border: 1px solid #d9ccb9; object-fit: cover;" />` : "") +
 			`</div>`;
 
