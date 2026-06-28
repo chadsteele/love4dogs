@@ -1514,6 +1514,23 @@
 		if (field === "pin") touchedPin = true
 	}
 
+	function handleFormFocusOut(event) {
+		debugProfile("[profile] handleFormFocusOut", event.target)
+		activateValidation()
+		const target = event.target
+		if (target) {
+			if (target.placeholder === "Name" || target.placeholder === "Title") {
+				touchedName = true
+			}
+			if (target.classList.contains("contact-input") || target.placeholder === "you@email.com") {
+				touchedEmail = true
+			}
+			if (target.placeholder === "123456" || target.id === "pin" || target === pinInputEl) {
+				touchedPin = true
+			}
+		}
+	}
+
 	function focusFirstInvalidField() {
 		debugProfile("[profile] focusFirstInvalidField", {
 			profileImageError,
@@ -1579,6 +1596,7 @@
 		activateValidation()
 		touchedName = true
 		touchedEmail = true
+		touchedPin = true
 		const validationError = validateRequiredFields()
 		if (validationError) {
 			warnProfile("[profile] publish blocked by validation", {
@@ -1590,6 +1608,7 @@
 			publishError = validationError
 			publishMessage = ""
 			focusFirstInvalidField()
+			await saveProfile(false)
 			return
 		}
 		debugProfile("[profile] publish validation passed")
@@ -1609,6 +1628,7 @@
 			modalLocation = modalLocation // Use existing modal location if available
 			pinMovedInModal = false
 			showLocationModal = true
+			await saveProfile(false)
 			return
 		}
 
@@ -2835,7 +2855,7 @@
 		</section>
 	</ShowAdmin>
 
-	<section class="panel">
+	<section class="panel" onfocusout={handleFormFocusOut}>
 		{#if !isPostEditRoute && pin && !isUnlocked}
 			<div class="lock-screen">
 				<h3>Profile Locked</h3>
@@ -3018,8 +3038,9 @@
 			<button
 				type="button"
 				class="primary"
+				class:disabled-btn={!isFormValid}
 				onclick={publishToBluesky}
-				disabled={publishing || publishBlockedByMedia || !isFormValid}
+				disabled={publishing || publishBlockedByMedia}
 			>
 				<Send size={16} aria-hidden="true" />
 				<span>{publishing ? "Publishing…" : "Publish"}</span>
@@ -3202,9 +3223,14 @@
 		border-color: #305741;
 		color: #fff;
 	}
-	button:disabled {
+	button:disabled,
+	button.disabled-btn {
 		cursor: not-allowed;
 		opacity: 0.58;
+	}
+	button.disabled-btn:hover {
+		background: #3b6e4f;
+		border-color: #305741;
 	}
 	.actions-row {
 		display: grid;
