@@ -36,8 +36,8 @@
 	} from "$lib/profileRegistry";
 	import { isLocalHost, removeApproxPostFromCache } from "$lib/utils";
 	import { formatDisplayAddress } from "$lib/addressFormat";
-	import Chat from "$lib/Chat.svelte";
 	import { scrollToTarget } from "$lib/autoscroll.js";
+	import { loadMostRecentProfileBundleFromPublicBsky } from "$lib/bskyChunkStore";
 
 	// ── props ──────────────────────────────────────────────────────────────────
 	let { type = "post" } = $props();
@@ -576,12 +576,32 @@
 			};
 
 			const executeFetch = async () => {
-				const response = await fetch(
-					`/api/profile-bundle?uuid=${encodeURIComponent(uuid)}`,
-				);
-				const bundle = await response.json().catch(() => ({}));
-				if (!response.ok) {
-					throw new Error(bundle?.error || "Failed to load data");
+				let response = null;
+				let bundle = null;
+				try {
+					console.log(`[BundleViewPage] Fetching profile bundle from proxy API for uuid: ${uuid}`);
+					response = await fetch(
+						`/api/profile-bundle?uuid=${encodeURIComponent(uuid)}`,
+					);
+					if (response.ok) {
+						bundle = await response.json().catch(() => null);
+					}
+				} catch (e) {
+					console.warn("Failed to fetch profile bundle from local API", e);
+				}
+
+				if (!bundle || typeof bundle !== "object" || !bundle.combined) {
+					console.log(`[BundleViewPage] Proxy API failed or empty, fetching directly from Bluesky for uuid: ${uuid}`);
+					bundle = await loadMostRecentProfileBundleFromPublicBsky({
+						fetchImpl: fetch,
+						uuid,
+						author: "love4dogs.club",
+						debug: true,
+					}).catch(() => null);
+				}
+
+				if (!bundle || typeof bundle !== "object" || !bundle.combined) {
+					throw new Error("Failed to load profile bundle from API and Bluesky");
 				}
 
 				const { primary, subsequent } = bundle?.combined || {};
@@ -959,8 +979,8 @@
 		onSetView={setView}
 	/>
 
-	{#if fetchingMore}
-		<div class="progress-bar-container" aria-label="Loading updates in background">
+	{#if loading || fetchingMore}
+		<div class="progress-bar-container" aria-label="Loading updates">
 			<div class="progress-bar-shimmer"></div>
 		</div>
 	{/if}

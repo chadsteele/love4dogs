@@ -44,6 +44,7 @@
 		measureChunkAltPayloadLength as measureBskyChunkAltPayloadLength,
 		publishChunkBundleToBsky,
 		replacePostUriViaApi,
+		loadMostRecentProfileBundleFromPublicBsky,
 	} from "$lib/bskyChunkStore"
 	import {
 		buildCompressedTimestamp,
@@ -1077,10 +1078,40 @@
 					: "",
 	)
 
+	let mediaUploadTimeout = $state(false)
+	let uploadTimeoutTimer = null
+
+	$effect(() => {
+		const isBlocked = imageUploadActive || mediaUploadActive || (unresolvedEditorMediaCount > 0);
+		if (isBlocked) {
+			if (!uploadTimeoutTimer) {
+				uploadTimeoutTimer = setTimeout(() => {
+					console.log("[profile] Media upload/resolution timed out. Enabling publish button.");
+					mediaUploadTimeout = true;
+				}, 10000);
+			}
+		} else {
+			if (uploadTimeoutTimer) {
+				clearTimeout(uploadTimeoutTimer);
+				uploadTimeoutTimer = null;
+			}
+			mediaUploadTimeout = false;
+		}
+
+		return () => {
+			if (uploadTimeoutTimer) {
+				clearTimeout(uploadTimeoutTimer);
+				uploadTimeoutTimer = null;
+			}
+		};
+	});
+
 	const publishBlockedByMedia = $derived(
-		imageUploadActive ||
+		!mediaUploadTimeout && (
+			imageUploadActive ||
 			mediaUploadActive ||
-			unresolvedEditorMediaCount > 0,
+			unresolvedEditorMediaCount > 0
+		)
 	)
 
 	const isFormValid = $derived(
@@ -2561,26 +2592,37 @@
 					}
 
 					try {
+						console.log(`[profile] Fetching profile bundle from proxy API for uuid: ${routeUuid}`);
 						const response = await fetch(`/api/profile-bundle?uuid=${encodeURIComponent(routeUuid)}`)
+						let bundle = null
 						if (response.ok) {
-							const bundle = await response.json().catch(() => null)
-							if (!disposed && bundle && typeof bundle === "object") {
-								debugProfile(
-									"[profile] onMount:loaded bundle from api",
-									{
-										routeUuid,
-									},
-								)
-								applyBundleToEditor(bundle, routeUuid)
-								initialProfileSnapshot =
-									cloneStoredProfile(buildStoredProfile())
-								setStoredSnapshotBaseline(
-									buildStoredProfileForStorage(),
-								)
-								storageReady = true
-								await saveProfile(false)
-								return
-							}
+							bundle = await response.json().catch(() => null)
+						}
+						if (!bundle || typeof bundle !== "object" || !bundle.combined) {
+							console.log(`[profile] Proxy API failed or empty, fetching directly from Bluesky for uuid: ${routeUuid}`);
+							bundle = await loadMostRecentProfileBundleFromPublicBsky({
+								fetchImpl: fetch,
+								uuid: routeUuid,
+								author: "love4dogs.club",
+								debug: true,
+							}).catch(() => null)
+						}
+						if (!disposed && bundle && typeof bundle === "object" && bundle.combined) {
+							debugProfile(
+								"[profile] onMount:loaded bundle",
+								{
+									routeUuid,
+								},
+							)
+							applyBundleToEditor(bundle, routeUuid)
+							initialProfileSnapshot =
+								cloneStoredProfile(buildStoredProfile())
+							setStoredSnapshotBaseline(
+								buildStoredProfileForStorage(),
+							)
+							storageReady = true
+							await saveProfile(false)
+							return
 						}
 					} catch (e) {
 						debugProfile("[profile] fetch profile-bundle error", e)
@@ -2844,6 +2886,12 @@
 </svelte:head>
 
 <main class="page">
+	{#if !storageReady}
+		<div class="progress-bar-container" aria-label="Loading profile data">
+			<div class="progress-bar-shimmer"></div>
+		</div>
+	{/if}
+
 	<NavBar {currentView} onSetView={setView} />
 
 	<ShowAdmin {currentView}>
@@ -3432,5 +3480,33 @@ Retrieved 2026-05-08, License - CC BY-SA 4.0
 	}
 	.pin-label {
 		margin-top: 0.8rem;
+	}
+
+	/* ── progress bar ─────────────────────────────────────────────────────── */
+	.progress-bar-container {
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		height: 4px;
+		background: rgba(59, 110, 79, 0.1);
+		z-index: 2000;
+		overflow: hidden;
+	}
+
+	.progress-bar-shimmer {
+		width: 50%;
+		height: 100%;
+		background: linear-gradient(90deg, transparent, #3b6e4f, transparent);
+		animation: progress-slide 1.5s infinite ease-in-out;
+	}
+
+	@keyframes progress-slide {
+		0% {
+			transform: translateX(-100%);
+		}
+		100% {
+			transform: translateX(200%);
+		}
 	}
 </style>
