@@ -63,7 +63,7 @@
 
 	:global(html),
 	:global(body) {
-		min-height: 100%;
+		min-height: 100vh;
 	}
 
 	:global(body) {
@@ -72,6 +72,8 @@
 		line-height: var(--line-height-body);
 		color: var(--color-text-body);
 		background: #10140f;
+		display: flex;
+		flex-direction: column;
 	}
 
 	:global(button),
@@ -156,6 +158,7 @@
 	.app-shell {
 		position: relative;
 		z-index: 2;
+		flex-grow: 1;
 	}
 
 	.footer {

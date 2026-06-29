@@ -1,6 +1,7 @@
 <script>
 	import {onMount} from "svelte"
 	import {page} from "$app/state"
+	import {goto} from "$app/navigation"
 	import {Eraser, Save, Send, X, MapPin} from "lucide-svelte"
 	import Editor from "$lib/Editor.svelte"
 	import NavBar from "$lib/NavBar.svelte"
@@ -2476,6 +2477,59 @@
 		async function init() {
 			try {
 				if (!routeUuid) {
+					// Check for current/recent profile draft first
+					const currentUuid = await getCurrentProfileUuid()
+					if (currentUuid) {
+						const storedByUuid = await readStoredProfileByUuid(currentUuid)
+						if (storedByUuid) {
+							debugProfile(
+								"[profile] onMount:no uuid in URL; loaded stored profile by currentUuid",
+								{ currentUuid },
+							)
+							applyStoredProfile(storedByUuid)
+							uuid = currentUuid
+							initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
+							setStoredSnapshotBaseline(buildStoredProfileForStorage())
+							storageReady = true
+							goto(`/profile/edit/${encodeURIComponent(currentUuid)}`, { replaceState: true })
+							return
+						}
+					}
+
+					// Fall back to migrating legacy profile
+					const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(LEGACY_PROFILE_STORAGE_KEY) : null
+					if (raw) {
+						try {
+							const parsed = JSON.parse(raw)
+							if (parsed && typeof parsed === "object" && parsed.uuid) {
+								debugProfile("[profile] onMount:migrating legacy profile", {
+									uuid: parsed.uuid,
+								})
+								applyStoredProfile(parsed)
+								uuid = parsed.uuid
+								await writeStoredProfileByUuid(parsed.uuid, parsed)
+								await setCurrentProfileUuid(parsed.uuid)
+								await upsertStoredProfile({
+									uuid: parsed.uuid,
+									name: parsed.profileName,
+									avatarUrl: String(
+										parsed?.profileUploadedMedia?.[0]?.bskyUrl ||
+											parsed?.profileUploadedMedia?.[0]?.url ||
+											"",
+									),
+								})
+								initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
+								setStoredSnapshotBaseline(buildStoredProfileForStorage())
+								storageReady = true
+								goto(`/profile/edit/${encodeURIComponent(parsed.uuid)}`, { replaceState: true })
+								return
+							}
+						} catch {
+							warnProfile("[profile] onMount:failed to parse legacy profile")
+						}
+					}
+
+					// Starting a new empty profile
 					debugProfile("[profile] onMount:no uuid in URL; starting empty")
 					uuid = generateShortUuid()
 					existingProfileAtUri = ""
@@ -2492,6 +2546,7 @@
 					initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
 					storageReady = true
 					setStoredSnapshotBaseline(buildStoredProfileForStorage())
+					goto(`/profile/edit/${encodeURIComponent(uuid)}`, { replaceState: true })
 					return
 				}
 
@@ -2648,66 +2703,6 @@
 					storageReady = true
 					return
 				}
-
-				const currentUuid = await getCurrentProfileUuid()
-				const loadUuid = currentUuid
-
-				if (loadUuid) {
-					const storedByUuid = await readStoredProfileByUuid(loadUuid)
-					if (storedByUuid) {
-						debugProfile(
-							"[profile] onMount:loaded stored profile by uuid",
-							{
-								loadUuid,
-							},
-						)
-						applyStoredProfile(storedByUuid)
-						await setCurrentProfileUuid(loadUuid)
-						initialProfileSnapshot =
-							cloneStoredProfile(buildStoredProfile())
-						setStoredSnapshotBaseline(buildStoredProfileForStorage())
-						storageReady = true
-						return
-					}
-				}
-
-				const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(LEGACY_PROFILE_STORAGE_KEY) : null
-				if (raw) {
-					try {
-						const parsed = JSON.parse(raw)
-						if (parsed && typeof parsed === "object" && parsed.uuid) {
-							debugProfile("[profile] onMount:migrating legacy profile", {
-								uuid: parsed.uuid,
-							})
-							applyStoredProfile(parsed)
-							await writeStoredProfileByUuid(parsed.uuid, parsed)
-							await setCurrentProfileUuid(parsed.uuid)
-							await upsertStoredProfile({
-								uuid: parsed.uuid,
-								name: parsed.profileName,
-								avatarUrl: String(
-									parsed?.profileUploadedMedia?.[0]?.bskyUrl ||
-										parsed?.profileUploadedMedia?.[0]?.url ||
-										"",
-								),
-							})
-							initialProfileSnapshot =
-								cloneStoredProfile(buildStoredProfile())
-							setStoredSnapshotBaseline(buildStoredProfileForStorage())
-							storageReady = true
-							return
-						}
-					} catch {
-						warnProfile("[profile] onMount:failed to parse legacy profile")
-					}
-				}
-
-				debugProfile("[profile] onMount:no current profile; starting empty")
-				uuid = generateShortUuid()
-				existingProfileAtUri = ""
-				initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
-				storageReady = true
-				setStoredSnapshotBaseline(buildStoredProfileForStorage())
 			} catch (err) {
 				console.error("[profile] onMount error", err)
 				storageReady = true
@@ -2743,7 +2738,7 @@
 	})
 
 	$effect(() => {
-		if (!storageReady || suppressAutosave) return
+		if (!storageReady || suppressAutosave || !hasChangedFromStoredSnapshot) return
 		const warning = getDraftSaveWarning()
 		if (warning) {
 			saveWarning = warning
