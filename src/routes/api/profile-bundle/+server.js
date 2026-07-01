@@ -16,7 +16,7 @@ export async function GET({url, fetch}) {
 		}
 
 		const bundle = await loadMostRecentProfileBundleFromPublicBsky({
-			fetchImpl: fetch,
+			fetchImpl: globalThis.fetch,
 			uuid,
 			author: 'love4dogs.club',
 			debug: true,

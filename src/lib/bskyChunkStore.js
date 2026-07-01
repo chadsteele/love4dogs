@@ -938,18 +938,25 @@ async function fetchAuthorFeedPostsFromPublicBsky(
 	return Array.from(postsByUri.values())
 }
 
+export function extractImagesFromPost(post = {}) {
+	const embed = post?.embed || post?.record?.embed
+	const media =
+		embed?.$type === "app.bsky.embed.recordWithMedia#view" || embed?.$type === "app.bsky.embed.recordWithMedia"
+			? embed.media
+			: embed
+	const images =
+		media?.$type === "app.bsky.embed.images#view" || media?.$type === "app.bsky.embed.images" || Array.isArray(media?.images)
+			? media.images || []
+			: []
+	return images
+}
+
 export function collectChunkPayloadsFromPosts(posts = [], {uuid} = {}) {
 	const expectedUuid = String(uuid || "")
 	const byIndex = new Map()
 
 	for (const post of Array.isArray(posts) ? posts : []) {
-		const embed = post?.embed
-		const media =
-			embed?.$type === "app.bsky.embed.recordWithMedia#view"
-				? embed.media
-				: embed
-		const images =
-			media?.$type === "app.bsky.embed.images#view" ? media.images || [] : []
+		const images = extractImagesFromPost(post)
 		for (const image of images) {
 			const payload = parseChunkPayloadFromAlt(image?.alt || "")
 			if (!payload) continue
@@ -1049,9 +1056,9 @@ export async function loadMostRecentProfileBundleFromPublicBsky({
 	const id = String(uuid || "").trim()
 	if (!id) throw new Error("Missing uuid route param")
 	const postsByUri = new Map()
-	const searchQueries = [id].filter(Boolean)
+	const searchQueries = [`${id} profile`].filter(Boolean)
 	for (const query of searchQueries) {
-		const searchUrl = `${BSKY_PUBLIC_XRPC}/app.bsky.feed.searchPosts?q=${encodeURIComponent(query)}&author=${encodeURIComponent(author)}&limit=${encodeURIComponent(String(pageLimit))}`
+		const searchUrl = `${BSKY_PUBLIC_XRPC}/app.bsky.feed.searchPosts?q=${encodeURIComponent(query)}&author=${encodeURIComponent(author)}&limit=1`
 		try {
 			const response = await fetchImpl(searchUrl)
 			debugLog("latest-by-uuid public search response", {
@@ -1076,17 +1083,43 @@ export async function loadMostRecentProfileBundleFromPublicBsky({
 		}
 	}
 
-	const authorFeedPosts = await fetchAuthorFeedPostsFromPublicBsky(
-		fetchImpl,
-		author,
-		{maxPages, pageLimit},
-		debugLog,
-		warnLog,
-	)
-	for (const post of authorFeedPosts) {
-		const uri = String(post?.uri || "").trim()
-		if (!uri || postsByUri.has(uri)) continue
-		postsByUri.set(uri, post)
+	// 2. Fetch page 1 of the author feed
+	const actor = String(author || "").trim()
+	if (actor) {
+		const feedUrl = `${BSKY_PUBLIC_XRPC}/app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(actor)}&limit=${encodeURIComponent(String(pageLimit))}`
+		try {
+			const response = await fetchImpl(feedUrl)
+			debugLog("author feed response", {
+				page: 1,
+				status: response.status,
+				ok: response.ok,
+				feedUrl,
+			})
+			if (response.ok) {
+				const json = await response.json().catch(() => ({}))
+				const items = Array.isArray(json?.feed) ? json.feed : []
+				const pagePosts = items
+					.map((item) => (item && typeof item === "object" ? item.post : null))
+					.filter((post) => post && typeof post === "object")
+
+				for (const post of pagePosts) {
+					const uri = String(post?.uri || "").trim()
+					if (!uri || postsByUri.has(uri)) continue
+					postsByUri.set(uri, post)
+				}
+				debugLog("author feed page", {
+					page: 1,
+					itemCount: items.length,
+					postCount: pagePosts.length,
+					totalCollected: postsByUri.size,
+				})
+			}
+		} catch (error) {
+			warnLog("author feed page 1 fetch failed", {
+				actor,
+				error: error?.message || String(error),
+			})
+		}
 	}
 
 	const posts = Array.from(postsByUri.values())
@@ -1096,6 +1129,59 @@ export async function loadMostRecentProfileBundleFromPublicBsky({
 		postCount: posts.length,
 	})
 
+	// Try resolving with manifest candidates from search + page 1 posts first
+	const originCandidates = collectOriginPayloadCandidatesFromPosts(posts, {
+		uuid: id,
+	})
+
+	let lastError = null
+	for (const candidate of originCandidates) {
+		try {
+			const manifestPosts = await fetchPostsByUrisFromPublicBsky(
+				fetchImpl,
+				candidate.chunkUris,
+				debugLog,
+				warnLog,
+			)
+			const mergedByUri = new Map()
+			for (const post of [candidate.post, ...manifestPosts]) {
+				const uri = String(post?.uri || "").trim()
+				if (!uri || mergedByUri.has(uri)) continue
+				mergedByUri.set(uri, post)
+			}
+			const candidatePosts = Array.from(mergedByUri.values())
+			const payloads = collectChunkPayloadsFromPosts(candidatePosts, {uuid: id})
+
+			debugLog("latest-by-uuid manifest candidate", {
+				uuid: id,
+				originUri: candidate.originUri,
+				manifestChunkPostCount: candidate.chunkUris.length,
+				recoveredChunkPayloadCount: payloads.length,
+			})
+
+			if (payloads.length > 0) {
+				const reconstructed = reconstructBundleFromChunkPayloads(payloads)
+				return {
+					uuid: id,
+					posts: candidatePosts,
+					payloads,
+					originPayload: candidate.originPayload,
+					chunkUris: candidate.chunkUris,
+					...reconstructed,
+				}
+			}
+		} catch (error) {
+			lastError = error
+			warnLog("latest-by-uuid manifest reconstruction failed", {
+				uuid: id,
+				originUri: candidate.originUri,
+				chunkUris: candidate.chunkUris,
+				error: error?.message || String(error),
+				details: error?.details || null,
+			})
+		}
+	}
+
 	const groupsByRevision = new Map()
 
 	for (const post of posts) {
@@ -1103,13 +1189,7 @@ export async function loadMostRecentProfileBundleFromPublicBsky({
 		if (!rootUri) continue
 		const postTimestampMs = resolvePostTimestampMs(post)
 
-		const embed = post?.embed
-		const media =
-			embed?.$type === "app.bsky.embed.recordWithMedia#view"
-				? embed.media
-				: embed
-		const images =
-			media?.$type === "app.bsky.embed.images#view" ? media.images || [] : []
+		const images = extractImagesFromPost(post)
 
 		for (const image of images) {
 			const payload = parseChunkPayloadFromAlt(image?.alt || "")
@@ -1145,9 +1225,6 @@ export async function loadMostRecentProfileBundleFromPublicBsky({
 	const groups = Array.from(groupsByRevision.values()).sort(
 		(a, b) => b.latestMs - a.latestMs,
 	)
-	const originCandidates = collectOriginPayloadCandidatesFromPosts(posts, {
-		uuid: id,
-	})
 
 	debugLog("latest-by-uuid candidate groups", {
 		uuid: id,
@@ -1160,53 +1237,6 @@ export async function loadMostRecentProfileBundleFromPublicBsky({
 			latestMs: group.latestMs,
 		})),
 	})
-
-	let lastError = null
-	for (const candidate of originCandidates) {
-		const manifestPosts = await fetchPostsByUrisFromPublicBsky(
-			fetchImpl,
-			candidate.chunkUris,
-			debugLog,
-			warnLog,
-		)
-		const mergedByUri = new Map()
-		for (const post of [candidate.post, ...manifestPosts]) {
-			const uri = String(post?.uri || "").trim()
-			if (!uri || mergedByUri.has(uri)) continue
-			mergedByUri.set(uri, post)
-		}
-		const candidatePosts = Array.from(mergedByUri.values())
-		const payloads = collectChunkPayloadsFromPosts(candidatePosts, {uuid: id})
-
-		debugLog("latest-by-uuid manifest candidate", {
-			uuid: id,
-			originUri: candidate.originUri,
-			manifestChunkPostCount: candidate.chunkUris.length,
-			recoveredChunkPayloadCount: payloads.length,
-		})
-
-		if (!payloads.length) continue
-		try {
-			const reconstructed = reconstructBundleFromChunkPayloads(payloads)
-			return {
-				uuid: id,
-				posts: candidatePosts,
-				payloads,
-				originPayload: candidate.originPayload,
-				chunkUris: candidate.chunkUris,
-				...reconstructed,
-			}
-		} catch (error) {
-			lastError = error
-			warnLog("latest-by-uuid manifest reconstruction failed", {
-				uuid: id,
-				originUri: candidate.originUri,
-				chunkUris: candidate.chunkUris,
-				error: error?.message || String(error),
-				details: error?.details || null,
-			})
-		}
-	}
 
 	for (const group of groups) {
 		const seedUris = Array.from(group.seedUris).filter(Boolean)
@@ -1331,13 +1361,7 @@ export async function loadMostRecentProfileBundleFromPublicBsky({
 	}
 
 	for (const post of posts) {
-		const embed = post?.embed
-		const media =
-			embed?.$type === "app.bsky.embed.recordWithMedia#view"
-				? embed.media
-				: embed
-		const images =
-			media?.$type === "app.bsky.embed.images#view" ? media.images || [] : []
+		const images = extractImagesFromPost(post)
 		for (const image of images) {
 			const alt = String(image?.alt || "")
 			if (!alt) continue
@@ -1460,13 +1484,7 @@ function collectOriginPayloadCandidatesFromPosts(posts = [], {uuid} = {}) {
 		const text = String(post?.record?.text || post?.text || "").trim()
 		if (text) valuesToInspect.push(text)
 
-		const embed = post?.embed
-		const media =
-			embed?.$type === "app.bsky.embed.recordWithMedia#view"
-				? embed.media
-				: embed
-		const images =
-			media?.$type === "app.bsky.embed.images#view" ? media.images || [] : []
+		const images = extractImagesFromPost(post)
 		for (const image of images) {
 			const alt = String(image?.alt || "").trim()
 			if (alt) valuesToInspect.push(alt)
@@ -1501,28 +1519,34 @@ async function fetchPostsByUrisFromPublicBsky(
 	const normalizedUris = normalizeChunkUriList(uris)
 	if (!normalizedUris.length) return []
 
-	const results = await Promise.all(
-		normalizedUris.map(async (uri) => {
-			try {
-				const posts = await fetchThreadPostsFromPublicBsky(
-					fetchImpl,
-					uri,
-					debugLog,
-					warnLog,
-				)
-				if (!posts.length) {
-					debugLog("manifest uri produced no posts", {uri})
+	const results = []
+	const batchSize = 5
+	for (let i = 0; i < normalizedUris.length; i += batchSize) {
+		const batch = normalizedUris.slice(i, i + batchSize)
+		const batchResults = await Promise.all(
+			batch.map(async (uri) => {
+				try {
+					const posts = await fetchThreadPostsFromPublicBsky(
+						fetchImpl,
+						uri,
+						debugLog,
+						warnLog,
+					)
+					if (!posts.length) {
+						debugLog("manifest uri produced no posts", {uri})
+					}
+					return posts
+				} catch (error) {
+					warnLog("manifest uri fetch failed", {
+						uri,
+						error: error?.message || String(error),
+					})
+					return []
 				}
-				return posts
-			} catch (error) {
-				warnLog("manifest uri fetch failed", {
-					uri,
-					error: error?.message || String(error),
-				})
-				return []
-			}
-		}),
-	)
+			})
+		)
+		results.push(...batchResults)
+	}
 
 	const postsByUri = new Map()
 	for (const post of results.flat()) {

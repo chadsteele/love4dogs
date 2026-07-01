@@ -37,6 +37,7 @@
 	import { isLocalHost, removeApproxPostFromCache } from "$lib/utils";
 	import { formatDisplayAddress } from "$lib/addressFormat";
 	import { scrollToTarget } from "$lib/autoscroll.js";
+	import Chat from "$lib/Chat.svelte";
 	import { loadMostRecentProfileBundleFromPublicBsky } from "$lib/bskyChunkStore";
 
 	// ── props ──────────────────────────────────────────────────────────────────
