@@ -1043,7 +1043,6 @@ export async function loadMostRecentProfileBundleFromPublicBsky({
 	uuid,
 	author = "love4dogs.club",
 	debug = false,
-	maxPages = 8,
 	pageLimit = 100,
 } = {}) {
 	const debugLog = (...args) => {
@@ -1474,7 +1473,7 @@ function parseOriginPayloadValue(value = "", expectedUuid = "") {
 	}
 }
 
-function collectOriginPayloadCandidatesFromPosts(posts = [], {uuid} = {}) {
+export function collectOriginPayloadCandidatesFromPosts(posts = [], {uuid} = {}) {
 	const expectedUuid = String(uuid || "").trim()
 	const candidates = []
 	const seenKeys = new Set()

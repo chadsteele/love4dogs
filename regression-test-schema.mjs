@@ -14,6 +14,10 @@ import {
 } from './src/lib/postTypeTags.js';
 import { setPost, getPost, getAllPosts, deletePost, getSetting, setSetting } from './src/lib/db.js';
 import { formatDisplayAddress } from './src/lib/addressFormat.js';
+import {
+	extractImagesFromPost,
+	collectOriginPayloadCandidatesFromPosts,
+} from './src/lib/bskyChunkStore.js';
 
 const {assert, assertEqual, counts} = createAssertions();
 
@@ -435,6 +439,7 @@ async function main() {
 	await runDatabaseCacheTests();
 	await runCacheWaterCleanupTests();
 	runPostClassificationTests();
+	runChunkStoreUnitTests();
 
 	const summary = counts();
 	console.log('------------------------------------------------------------');
@@ -442,6 +447,68 @@ async function main() {
 	console.log('============================================================');
 
 	process.exit(summary.failed > 0 ? 1 : 0);
+}
+
+function runChunkStoreUnitTests() {
+	console.log('Testing extractImagesFromPost()...');
+
+	// Test case 1: standard post.embed with view type
+	const post1 = {
+		embed: {
+			$type: 'app.bsky.embed.images#view',
+			images: [{ url: 'https://test.com/1.jpg', alt: 'Test 1' }]
+		}
+	};
+	const images1 = extractImagesFromPost(post1);
+	assertEqual(images1.length, 1, 'Extracts standard view images');
+	assertEqual(images1[0].alt, 'Test 1', 'Standard image alt matches');
+
+	// Test case 2: post.record.embed with raw type
+	const post2 = {
+		record: {
+			embed: {
+				$type: 'app.bsky.embed.images',
+				images: [{ url: 'https://test.com/2.jpg', alt: 'Test 2' }]
+			}
+		}
+	};
+	const images2 = extractImagesFromPost(post2);
+	assertEqual(images2.length, 1, 'Extracts raw record embed images');
+	assertEqual(images2[0].alt, 'Test 2', 'Raw image alt matches');
+
+	// Test case 3: post.embed with recordWithMedia type
+	const post3 = {
+		embed: {
+			$type: 'app.bsky.embed.recordWithMedia#view',
+			media: {
+				$type: 'app.bsky.embed.images#view',
+				images: [{ url: 'https://test.com/3.jpg', alt: 'Test 3' }]
+			}
+		}
+	};
+	const images3 = extractImagesFromPost(post3);
+	assertEqual(images3.length, 1, 'Extracts recordWithMedia view images');
+	assertEqual(images3[0].alt, 'Test 3', 'recordWithMedia image alt matches');
+
+	console.log('Testing collectOriginPayloadCandidatesFromPosts()...');
+	const mockManifestPost = {
+		uri: 'at://did:plc:test/app.bsky.feed.post/manifest',
+		embed: {
+			$type: 'app.bsky.embed.images#view',
+			images: [{
+				alt: JSON.stringify({
+					u: 'j092e0ob',
+					primary: { name: 'Alpha' },
+					chunks: ['at://did:plc:test/app.bsky.feed.post/chunk1']
+				})
+			}]
+		}
+	};
+	const candidates = collectOriginPayloadCandidatesFromPosts([mockManifestPost], { uuid: 'j092e0ob' });
+	assertEqual(candidates.length, 1, 'Finds manifest candidate');
+	assertEqual(candidates[0].originUri, 'at://did:plc:test/app.bsky.feed.post/manifest', 'Candidate origin URI matches');
+	assertEqual(candidates[0].chunkUris.length, 1, 'Candidate chunk URIs count matches');
+	assertEqual(candidates[0].chunkUris[0], 'at://did:plc:test/app.bsky.feed.post/chunk1', 'Candidate chunk URI matches');
 }
 
 main();
