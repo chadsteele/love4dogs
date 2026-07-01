@@ -9,6 +9,7 @@
 	import {readSearchTerm, writeSearchTerm} from "$lib/searchStore"
 	import { getSetting, getAllPosts, setPost } from "$lib/db"
 	import { slowScrollIntoView } from "$lib/utils"
+	import { getCurrentProfileUuid, readStoredProfileByUuid, listStoredProfiles } from "$lib/profileRegistry"
 
 	const FAVORITE_SEARCH_TERMS_KEY =
 		"love4dogs.settings.favorite-search-terms-v1"
@@ -16,6 +17,7 @@
 
 	let posts = $state([])
 	let searchTerm = $state("")
+	let lastUsedQuery = $state("")
 	let loadingPosts = $state(false)
 	let blockedUuids = $state([])
 	let blockedAuthors = $state([])
@@ -86,6 +88,42 @@
 
 	function buildFeedQuery(rawQuery = "") {
 		return String(rawQuery || "").trim()
+	}
+
+	async function processQueryForNearMe(rawQuery) {
+		let query = String(rawQuery || "").trim()
+		if (/\bnear\s+me\b/gi.test(query)) {
+			const currentUuid = await getCurrentProfileUuid()
+			let loc = null
+			if (currentUuid) {
+				const profile = await readStoredProfileByUuid(currentUuid)
+				if (profile?.confirmedLocation) {
+					loc = profile.confirmedLocation
+				}
+			}
+			if (!loc) {
+				const profiles = await listStoredProfiles()
+				for (const p of profiles) {
+					const profile = await readStoredProfileByUuid(p.uuid)
+					if (profile?.confirmedLocation) {
+						loc = profile.confirmedLocation
+						break
+					}
+				}
+			}
+
+			const city = loc?.city || ""
+			const state = loc?.state || ""
+			const country = loc?.country || ""
+			const locParts = [city, country, state].map(s => String(s || "").trim()).filter(Boolean)
+
+			if (locParts.length > 0) {
+				query = query.replace(/\bnear\s+me\b/gi, locParts.join(" "))
+			} else {
+				query = query.replace(/\bnear\s+me\b/gi, "")
+			}
+		}
+		return query.replace(/\s+/g, " ").trim()
 	}
 
 	function getSearchTokens(value = "") {
@@ -322,91 +360,132 @@
 			return
 		}
 
-		try {
-			const query = buildFeedQuery(searchTerm)
-			const params = new URLSearchParams({
-				query,
-				sort: searchSort,
-				limit: 20,
-				chat: "all",
-			})
-			if (forceFresh) {
-				params.set("refresh", "1")
-				params.set("ts", String(Date.now()))
-			}
-			const res = await fetch(`/api/feed?${params.toString()}`, {
-				cache: forceFresh ? "no-store" : "default",
-			})
-			const json = await res.json()
+		let activeQuery = await processQueryForNearMe(searchTerm)
+		let searchAttempts = 0
+		const maxSearchAttempts = 15
 
-			if (!res.ok) {
-				throw new Error(json.error || "Could not load posts.")
-			}
-
-			if (requestId !== lastFeedRequestId) return
-
-			posts = json.posts || []
-			feedCursor = json.cursor || null
-			feedCursorHost = json.cursorHost || null
-			hasMorePosts = !!json.cursor
-
-			// Cache fetched posts to IndexedDB
-			for (const post of posts) {
-				if (post && post.uri) {
-					await setPost(post.uri, post)
+		while (searchAttempts < maxSearchAttempts) {
+			searchAttempts++
+			try {
+				const query = buildFeedQuery(activeQuery)
+				const params = new URLSearchParams({
+					query,
+					sort: searchSort,
+					limit: 20,
+					chat: "all",
+				})
+				if (forceFresh) {
+					params.set("refresh", "1")
+					params.set("ts", String(Date.now()))
 				}
-			}
+				const res = await fetch(`/api/feed?${params.toString()}`, {
+					cache: forceFresh ? "no-store" : "default",
+				})
+				const json = await res.json()
 
-			if (posts.length === 0 && searchTerm.trim() !== "") {
-				showNoResultsInfo = searchTerm
-			}
-		} catch (error) {
-			if (requestId !== lastFeedRequestId) return
+				if (!res.ok) {
+					throw new Error(json.error || "Could not load posts.")
+				}
 
-			// Offline fallback
-			const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
-			if (isOffline || error.message?.includes("failed to fetch") || error.message?.includes("network")) {
-				try {
-					const allCached = await getAllPosts()
-					const queryTokens = getSearchTokens(searchTerm).map(t => t.toLowerCase())
-					if (queryTokens.length > 0) {
-						posts = allCached.filter(post => {
-							const text = String(post.text || '').toLowerCase()
-							const name = String(post.name || '').toLowerCase()
-							const desc = String(post.description || '').toLowerCase()
-							const tags = (post.tags || []).map(t => String(t || '').toLowerCase())
-							return queryTokens.every(token => 
-								text.includes(token) || 
-								name.includes(token) || 
-								desc.includes(token) ||
-								tags.includes(token)
-							)
-						})
-					} else {
-						posts = allCached
+				if (requestId !== lastFeedRequestId) return
+
+				const foundPosts = json.posts || []
+				if (foundPosts.length > 0 || activeQuery === "") {
+					posts = foundPosts
+					lastUsedQuery = activeQuery
+					feedCursor = json.cursor || null
+					feedCursorHost = json.cursorHost || null
+					hasMorePosts = !!json.cursor
+
+					// Cache fetched posts to IndexedDB
+					for (const post of posts) {
+						if (post && post.uri) {
+							await setPost(post.uri, post)
+						}
 					}
 
 					if (posts.length === 0 && searchTerm.trim() !== "") {
 						showNoResultsInfo = searchTerm
 					}
-
-					posts.sort((a, b) => {
-						const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0
-						const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0
-						return timeB - timeA
-					})
-					feedCursor = null
-					hasMorePosts = false
-					feedError = "Offline mode. Showing cached search results."
-					return
-				} catch (cacheErr) {
-					console.error("Local search fallback failed:", cacheErr)
+					break
+				} else {
+					const words = activeQuery.split(/\s+/).filter(Boolean)
+					if (words.length > 0) {
+						words.pop()
+						activeQuery = words.join(" ")
+					} else {
+						activeQuery = ""
+					}
 				}
+			} catch (error) {
+				if (requestId !== lastFeedRequestId) return
+
+				// Offline fallback
+				const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
+				if (isOffline || error.message?.includes("failed to fetch") || error.message?.includes("network")) {
+					try {
+						const allCached = await getAllPosts()
+						let offlineQuery = activeQuery
+						let offlineAttempts = 0
+
+						while (offlineAttempts < maxSearchAttempts) {
+							offlineAttempts++
+							const queryTokens = offlineQuery.split(/\s+/).filter(Boolean).map(t => t.toLowerCase())
+							let filtered = []
+
+							if (queryTokens.length > 0) {
+								filtered = allCached.filter(post => {
+									const text = String(post.text || '').toLowerCase()
+									const name = String(post.name || '').toLowerCase()
+									const desc = String(post.description || '').toLowerCase()
+									const tags = (post.tags || []).map(t => String(t || '').toLowerCase())
+									return queryTokens.every(token => 
+										text.includes(token) || 
+										name.includes(token) || 
+										desc.includes(token) ||
+										tags.includes(token)
+									)
+								})
+							} else {
+								filtered = allCached
+							}
+
+							if (filtered.length > 0 || offlineQuery === "") {
+								posts = filtered
+								lastUsedQuery = offlineQuery
+								if (posts.length === 0 && searchTerm.trim() !== "") {
+									showNoResultsInfo = searchTerm
+								}
+
+								posts.sort((a, b) => {
+									const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0
+									const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0
+									return timeB - timeA
+								})
+								feedCursor = null
+								hasMorePosts = false
+								feedError = "Offline mode. Showing cached search results."
+								return
+							} else {
+								const words = offlineQuery.split(/\s+/).filter(Boolean)
+								if (words.length > 0) {
+									words.pop()
+									offlineQuery = words.join(" ")
+								} else {
+									offlineQuery = ""
+								}
+							}
+						}
+					} catch (cacheErr) {
+						console.error("Local search fallback failed:", cacheErr)
+					}
+				}
+				feedError = error.message || "Failed loading feed."
+				break
 			}
-			feedError = error.message || "Failed loading feed."
-		} finally {
-			if (requestId === lastFeedRequestId) loadingPosts = false
 		}
+
+		if (requestId === lastFeedRequestId) loadingPosts = false
 	}
 
 	async function loadMorePosts(isManual = false) {
@@ -422,7 +501,7 @@
 		try {
 			while (newlyAddedCount < targetCount && feedCursor && hasMorePosts && attempts < maxAttempts) {
 				attempts++
-				const query = buildFeedQuery(searchTerm)
+				const query = buildFeedQuery(lastUsedQuery)
 				const params = new URLSearchParams({
 					query,
 					sort: searchSort,
