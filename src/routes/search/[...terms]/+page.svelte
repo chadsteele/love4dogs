@@ -618,6 +618,19 @@
 		writeSearchTerm(searchTerm)
 	})
 
+	// Save the current search results and query to sessionStorage for the map view
+	$effect(() => {
+		const results = visiblePosts();
+		if (typeof sessionStorage !== 'undefined') {
+			try {
+				sessionStorage.setItem('love4dogs.last-search-results', JSON.stringify(results));
+				sessionStorage.setItem('love4dogs.last-search-query', searchTerm);
+			} catch (e) {
+				console.error("Failed to save search results to sessionStorage:", e);
+			}
+		}
+	})
+
 	// Automate loading more if there are less than 12 visible posts
 	$effect(() => {
 		const visibleCount = visiblePosts().length

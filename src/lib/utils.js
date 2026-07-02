@@ -874,4 +874,65 @@ export function slowScrollIntoView(element, duration = 3000) {
 	animationFrameId = requestAnimationFrame(step);
 }
 
+export function extractExactHashFromPost(post) {
+	if (!post || typeof post !== 'object') return '';
+
+	// 1. Try alt text JSON
+	const alts = [
+		...(Array.isArray(post.imageAlts) ? post.imageAlts : []),
+		String(post.video?.alt || '')
+	].filter(Boolean);
+
+	for (const alt of alts) {
+		try {
+			const parsed = JSON.parse(alt);
+			const candidates = [
+				parsed,
+				parsed?.primary,
+				parsed?.combined?.primary
+			];
+			if (typeof parsed?.h === 'string' && parsed.h.trim()) {
+				try {
+					const inner = JSON.parse(parsed.h);
+					candidates.push(inner, inner?.primary, inner?.combined?.primary);
+				} catch {}
+			}
+
+			for (const candidate of candidates) {
+				if (!candidate || typeof candidate !== 'object') continue;
+				const location = candidate?.location && typeof candidate.location === 'object' ? candidate.location : null;
+				const hashPath = String(candidate?.hashPath || location?.hashPath || '').trim();
+				let exact = String(candidate?.exact || location?.exact || '').trim();
+				
+				if (hashPath) {
+					const parts = hashPath.split('/').map(p => p.trim().toLowerCase()).filter(Boolean);
+					if (parts.length >= 2 && !exact) {
+						exact = parts[1];
+					}
+				}
+				
+				if (exact && exact.length === 9) {
+					return exact;
+				}
+			}
+		} catch {}
+	}
+
+	// 2. Try text match (regex)
+	const regex = /love4dogs\.club\/map\/[0-9bcdefghjkmnpqrstuvwxyz]{5}\/([0-9bcdefghjkmnpqrstuvwxyz]{9})/i;
+	const match = String(post.text || '').match(regex);
+	if (match) return match[1];
+
+	return '';
+}
+
+export function isPostInWater(post, isSeaFn) {
+	if (!isSeaFn) return false;
+	const exact = extractExactHashFromPost(post);
+	if (!exact) return false;
+	const gps = hashToGps(exact);
+	if (!gps) return false;
+	return isSeaFn(gps.lat, gps.lon);
+}
+
 

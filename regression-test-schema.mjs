@@ -352,7 +352,8 @@ async function runDatabaseCacheTests() {
 	assert(firstKeptImg !== null, 'First kept image (index 6) is retained');
 }
 
-import { cleanWaterPostsFromCaches } from './src/lib/utils.js';
+import { cleanWaterPostsFromCaches, extractExactHashFromPost, isPostInWater } from './src/lib/utils.js';
+import isSea from 'is-sea';
 
 async function runCacheWaterCleanupTests() {
 	console.log('Testing cleanWaterPostsFromCaches()...');
@@ -512,6 +513,46 @@ function runPostClassificationTests() {
 	assertEqual(classifyPost(multiImageCdn), 'unknown', 'Multi-image CDN post classified as unknown (requires exactly 1 image)');
 }
 
+function runWaterPostDetectionTests() {
+	console.log('Testing extractExactHashFromPost() and isPostInWater()...');
+
+	// 1. Post with exact hash in alt text JSON
+	const postWithAltHash = {
+		imageAlts: [
+			JSON.stringify({
+				exact: 'mk2vwnpvx',
+				location: { city: 'Port Louis', state: 'Mauritius', country: 'Mauritius', zip: '74211' }
+			})
+		]
+	};
+	assertEqual(extractExactHashFromPost(postWithAltHash), 'mk2vwnpvx', 'Extracts exact hash from alt JSON');
+	assertEqual(isPostInWater(postWithAltHash, isSea), false, 'Post on land is not in water');
+
+	// 2. Post with water coordinates (0, 0 is in the Atlantic Ocean)
+	const postInWater = {
+		imageAlts: [
+			JSON.stringify({
+				exact: 's00000000',
+				location: { city: 'Ocean', state: 'Water', country: 'Water', zip: '00000' }
+			})
+		]
+	};
+	assertEqual(extractExactHashFromPost(postInWater), 's00000000', 'Extracts exact hash of water post');
+	assertEqual(isPostInWater(postInWater, isSea), true, 'Identifies post in ocean as water post');
+
+	// 3. Post with regex map link in text
+	const postWithTextHash = {
+		text: 'Visit here: love4dogs.club/map/bcdef/s00000000 for details!'
+	};
+	assertEqual(extractExactHashFromPost(postWithTextHash), 's00000000', 'Extracts exact hash from text URL');
+	assertEqual(isPostInWater(postWithTextHash, isSea), true, 'Identifies text URL post in ocean as water post');
+
+	// 4. Invalid or empty post
+	assertEqual(extractExactHashFromPost(null), '', 'Handles null post gracefully');
+	assertEqual(extractExactHashFromPost({}), '', 'Handles empty post gracefully');
+	assertEqual(isPostInWater({}, isSea), false, 'Empty post is not in water');
+}
+
 async function main() {
 	console.log('============================================================');
 	console.log('Schema Regression Test - love4dogs');
@@ -524,6 +565,7 @@ async function main() {
 	await runDatabaseProxyTests();
 	await runDatabaseCacheTests();
 	await runCacheWaterCleanupTests();
+	runWaterPostDetectionTests();
 	runPostClassificationTests();
 	runChunkStoreUnitTests();
 	await runSearchFallbackAndGeocodingTests();

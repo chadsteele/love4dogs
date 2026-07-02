@@ -6,13 +6,15 @@
 	import FeedHeaderActions from "$lib/FeedHeaderActions.svelte"
 	import { lookupLocationDetails } from "$lib/utils"
 
-	const urlTerms = $derived(
-		String(page.params?.terms || "")
+	const urlTerms = $derived.by(() => {
+		const termsParam = String(page.params?.terms || "")
 			.split("/")
 			.map((s) => s.trim())
 			.filter(Boolean)
-			.join(" "),
-	)
+			.join(" ")
+		if (termsParam) return termsParam;
+		return page.url?.searchParams?.get("q") || "";
+	})
 
 	let searchTerm = $state("")
 	let refreshTrigger = $state(0)

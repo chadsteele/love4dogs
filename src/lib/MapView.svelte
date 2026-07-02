@@ -7,12 +7,92 @@
 		setApproxPostsInCache,
 		getApproxCacheEntry,
         isLocalHost,
+		hashToGps,
 	} from "$lib/utils"
 	import { getSetting, setSetting, setPost } from "$lib/db.js"
 	import { listStoredProfiles } from "$lib/profileRegistry"
 	import { readSearchTerm, writeSearchTerm } from "$lib/searchStore.js"
 
 	let { searchTerm = "", refreshTrigger = 0, mapCenter = $bindable(null) } = $props()
+
+	function extractCoordinatesFromPost(post) {
+		if (!post || typeof post !== 'object') return null;
+		if (Number.isFinite(post.lat) && Number.isFinite(post.lon)) {
+			return { lat: post.lat, lon: post.lon };
+		}
+		
+		const alts = [
+			...(Array.isArray(post.imageAlts) ? post.imageAlts : []),
+			String(post.video?.alt || '')
+		].filter(Boolean);
+
+		for (const alt of alts) {
+			try {
+				const parsed = JSON.parse(alt);
+				const candidates = [
+					parsed,
+					parsed?.primary,
+					parsed?.combined?.primary
+				];
+				if (typeof parsed?.h === 'string' && parsed.h.trim()) {
+					try {
+						const inner = JSON.parse(parsed.h);
+						candidates.push(inner, inner?.primary, inner?.combined?.primary);
+					} catch {}
+				}
+
+				for (const candidate of candidates) {
+					if (!candidate || typeof candidate !== 'object') continue;
+					const location = candidate?.location && typeof candidate.location === 'object' ? candidate.location : null;
+					const hashPath = String(candidate?.hashPath || location?.hashPath || '').trim();
+					let exact = String(candidate?.exact || location?.exact || '').trim();
+					
+					if (hashPath) {
+						const parts = hashPath.split('/').map(p => p.trim().toLowerCase()).filter(Boolean);
+						if (parts.length >= 2 && !exact) {
+							exact = parts[1];
+						}
+					}
+					
+					if (exact && exact.length === 9) {
+						const gps = hashToGps(exact);
+						if (gps && Number.isFinite(gps.lat) && Number.isFinite(gps.lon)) {
+							return { lat: gps.lat, lon: gps.lon };
+						}
+					}
+				}
+			} catch (e) {
+				// Ignore JSON parsing errors.
+			}
+		}
+		return null;
+	}
+
+	function getSessionCachedResults(term) {
+		if (typeof sessionStorage === 'undefined') return null;
+		try {
+			const cachedQuery = sessionStorage.getItem('love4dogs.last-search-query');
+			if (normalizeSearchTerm(cachedQuery) === normalizeSearchTerm(term)) {
+				const resultsStr = sessionStorage.getItem('love4dogs.last-search-results');
+				if (resultsStr) {
+					const parsed = JSON.parse(resultsStr);
+					if (Array.isArray(parsed)) {
+						return parsed.map(post => {
+							const coords = extractCoordinatesFromPost(post);
+							if (coords) {
+								post.lat = coords.lat;
+								post.lon = coords.lon;
+							}
+							return post;
+						});
+					}
+				}
+			}
+		} catch (e) {
+			console.error("Error reading sessionStorage cache in MapView:", e);
+		}
+		return null;
+	}
 
 	let mapEl = $state(null)
 	let mapPosts = $state([])
@@ -155,6 +235,24 @@
 	async function processSearch(current) {
 		pauseBackgroundSearch = true
 		mapLoadRequestId += 1
+
+		const cached = getSessionCachedResults(current);
+		if (cached && cached.length > 0) {
+			mapPosts = cached;
+			activeKeywordFilter = "";
+			if (mapInstance) {
+				const coords = cached
+					.filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon))
+					.map(p => [p.lat, p.lon]);
+				if (coords.length > 1) {
+					mapInstance.fitBounds(coords, { padding: [50, 50] });
+				} else if (coords.length === 1) {
+					mapInstance.setView(coords[0], 13);
+				}
+			}
+			pauseBackgroundSearch = false;
+			return;
+		}
 		
 		const resolved = await resolveSearchLocation(current)
 		
@@ -950,6 +1048,11 @@
 	async function refreshViewportPosts() {
 		if (pauseBackgroundSearch) return
 		if (!mapInstance) return
+		const cached = getSessionCachedResults(searchTerm);
+		if (cached && cached.length > 0) {
+			mapPosts = cached;
+			return;
+		}
 		const approximates = collectViewportApproximates()
 		const key = [...approximates].sort().join(",")
 		if (key === requestedViewportKey && refreshInFlight) return
@@ -1194,19 +1297,46 @@
 
 			let lat, lon, zoom = 13
 			let activeKeyword = ""
+			let cachedApplied = false
 
-			const resolved = await resolveSearchLocation(searchTerm)
-			if (resolved.type === "coordinates") {
-				lat = resolved.lat
-				lon = resolved.lon
-				activeKeyword = resolved.keyword
-			} else {
-				activeKeyword = resolved.keyword
-				let coords = null
-				if (resolved.type !== "near-me" && saved) {
-					coords = { lat: saved.lat, lon: saved.lon }
-					zoom = saved.zoom || 13
+			const cached = getSessionCachedResults(searchTerm)
+			if (cached && cached.length > 0) {
+				mapPosts = cached
+				activeKeywordFilter = ""
+				cachedApplied = true
+				
+				const coords = cached
+					.filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon))
+					.map(p => [p.lat, p.lon])
+				if (coords.length > 0) {
+					lat = coords[0][0]
+					lon = coords[0][1]
 				} else {
+					try {
+						const browserCoords = await getBrowserCoords()
+						lat = browserCoords.lat
+						lon = browserCoords.lon
+					} catch (err) {
+						console.error("Browser geolocation failed:", err)
+						if (saved) {
+							lat = saved.lat
+							lon = saved.lon
+							zoom = saved.zoom || 13
+						} else {
+							lat = 40.7128
+							lon = -74.0060
+						}
+					}
+				}
+			} else {
+				const resolved = await resolveSearchLocation(searchTerm)
+				if (resolved.type === "coordinates") {
+					lat = resolved.lat
+					lon = resolved.lon
+					activeKeyword = resolved.keyword
+				} else {
+					activeKeyword = resolved.keyword
+					let coords = null
 					try {
 						coords = await getBrowserCoords()
 						zoom = saved?.zoom || 13
@@ -1228,14 +1358,14 @@
 							coords = { lat: saved.lat, lon: saved.lon }
 							zoom = saved.zoom || 13
 						} else {
-							mapError = "Unable to get your location."
-							return
+							coords = { lat: 40.7128, lon: -74.0060 }
+							zoom = 13
 						}
 					}
-				}
-				if (coords) {
-					lat = coords.lat
-					lon = coords.lon
+					if (coords) {
+						lat = coords.lat
+						lon = coords.lon
+					}
 				}
 			}
 
@@ -1259,6 +1389,15 @@
 					minZoom: MIN_ZOOM,
 				})
 				.setView([lat, lon], zoom)
+
+			if (cachedApplied && cached && cached.length > 0) {
+				const coords = cached
+					.filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon))
+					.map(p => [p.lat, p.lon])
+				if (coords.length > 1) {
+					mapInstance.fitBounds(coords, { padding: [50, 50] })
+				}
+			}
 
 			leaflet
 				.tileLayer(
