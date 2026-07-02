@@ -1,5 +1,5 @@
 <script>
-	import {onMount} from "svelte"
+	import {onMount, tick} from "svelte"
 	import {page} from "$app/state"
 	import {goto} from "$app/navigation"
 	import {Eraser, Save, Send, X, MapPin} from "lucide-svelte"
@@ -150,6 +150,7 @@
 	let validationActive = $state(false)
 	let profileImageWrapEl = $state(null)
 	let profileNameInputEl = $state(null)
+	let profileDescriptionInputEl = $state(null)
 	let emailInputEl = $state(null)
 	let storageReady = $state(false)
 	let initialProfileSnapshot = null
@@ -177,9 +178,20 @@
 		if (regex.test(profileDescription)) {
 			profileDescription = profileDescription.replace(regex, "").trim()
 		} else {
-			profileDescription = (profileDescription.trim() + " #" + word).trim()
+			const endsWithHashtag = /#\w+\s*$/.test(profileDescription)
+			const addition = endsWithHashtag ? (" #" + word) : ("\n#" + word)
+			const proposedValue = (profileDescription.trim() + addition).trim()
+			if (proposedValue.length + nameCharCount > 300) {
+				return
+			}
+			profileDescription = proposedValue
 		}
 		activateValidation()
+		tick().then(() => {
+			if (profileDescriptionInputEl) {
+				profileDescriptionInputEl.scrollTop = profileDescriptionInputEl.scrollHeight
+			}
+		})
 	}
 
 	// Keep postTags in sync with profileDescription hashtags
@@ -975,8 +987,7 @@
 	const totalWordCount = $derived.by(() => {
 		const nameText = String(profileName || "").trim()
 		const descText = String(profileDescription || "").trim()
-		const contentText = String(contentHtml || "").replace(/<[^>]*>/g, " ").trim()
-		const allText = `${nameText} ${descText} ${contentText}`.trim()
+		const allText = `${nameText} ${descText}`.trim()
 		if (!allText) return 0
 		return allText.split(/\s+/).filter(Boolean).length
 	})
@@ -3069,11 +3080,9 @@
 		{#if touchedName && nameError}
 			<p class="field-error">{nameError}</p>
 		{/if}
-		<div class="post-tags-container">
-			<HashTagCloud activeTags={postTags} onToggle={togglePostTag} />
-		</div>
 		<label>
 			<textarea
+				bind:this={profileDescriptionInputEl}
 				rows="4"
 				bind:value={profileDescription}
 				onfocus={activateValidation}
@@ -3087,6 +3096,9 @@
 		<div class="meta-row">
 			<span class="word-count">Words: {totalWordCount}</span>
 			<span class="char-count">{remainingProfileChars}/{descMaxLength}</span>
+		</div>
+		<div class="post-tags-container">
+			<HashTagCloud activeTags={postTags} onToggle={togglePostTag} />
 		</div>
 		<div class="editor-wrap">
 			<Editor
@@ -3406,6 +3418,12 @@
 	.post-tags-container {
 		margin-top: 0.6rem;
 		margin-bottom: 0.8rem;
+		max-height: 2.25rem;
+		overflow: hidden;
+		transition: max-height 0.2s ease-in-out;
+	}
+	.post-tags-container:focus-within {
+		max-height: 20rem;
 	}
 	.meta-row {
 		display: flex;
