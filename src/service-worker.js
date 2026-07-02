@@ -45,7 +45,10 @@ function getOfflineImageFromDB(uuid) {
 				const tx = db.transaction('offlineImages', 'readonly');
 				const store = tx.objectStore('offlineImages');
 				const req = store.get(uuid);
-				req.onsuccess = () => resolve(req.result || null);
+				req.onsuccess = () => {
+					const res = req.result;
+					resolve(res && res.blob ? res.blob : (res || null));
+				};
 				req.onerror = () => resolve(null);
 			} catch (e) {
 				resolve(null);

@@ -121,14 +121,28 @@ export async function removeSetting(key) {
 // ── Profiles store helpers ──────────────────────────────────────────────────
 export async function getProfile(uuid) {
 	const db = await getDB();
+	const PROFILE_VIEW_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 	if (!db) {
-		return memoryStores.profiles.get(uuid) || null;
+		const profile = memoryStores.profiles.get(uuid) || null;
+		if (profile && profile.cachedAt && profile.data && Date.now() - profile.cachedAt > PROFILE_VIEW_CACHE_TTL_MS) {
+			memoryStores.profiles.delete(uuid);
+			return null;
+		}
+		return profile;
 	}
 	return new Promise((resolve) => {
 		const tx = db.transaction('profiles', 'readonly');
 		const store = tx.objectStore('profiles');
 		const req = store.get(uuid);
-		req.onsuccess = () => resolve(req.result || null);
+		req.onsuccess = () => {
+			const profile = req.result || null;
+			if (profile && profile.cachedAt && profile.data && Date.now() - profile.cachedAt > PROFILE_VIEW_CACHE_TTL_MS) {
+				deleteProfile(uuid).catch(() => {});
+				resolve(null);
+			} else {
+				resolve(profile);
+			}
+		};
 		req.onerror = () => resolve(null);
 	});
 }
@@ -138,14 +152,71 @@ export async function setProfile(uuid, data) {
 	const unwrapped = unwrap(data);
 	if (!db) {
 		memoryStores.profiles.set(uuid, unwrapped);
+		const now = Date.now();
+		const PROFILE_VIEW_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+		const remaining = [];
+		for (const [key, val] of memoryStores.profiles.entries()) {
+			if (val && val.cachedAt && val.data && now - val.cachedAt > PROFILE_VIEW_CACHE_TTL_MS) {
+				memoryStores.profiles.delete(key);
+			} else if (val && val.cachedAt && val.data) {
+				remaining.push({ key, val });
+			}
+		}
+		if (remaining.length > 100) {
+			remaining.sort((a, b) => (a.val.cachedAt || 0) - (b.val.cachedAt || 0));
+			const toDeleteCount = remaining.length - 100;
+			for (let i = 0; i < toDeleteCount; i++) {
+				memoryStores.profiles.delete(remaining[i].key);
+			}
+		}
 		return;
 	}
 	return new Promise((resolve, reject) => {
 		const tx = db.transaction('profiles', 'readwrite');
 		const store = tx.objectStore('profiles');
-		const req = store.put(unwrapped, uuid);
-		req.onsuccess = () => resolve();
-		req.onerror = () => reject(req.error);
+		
+		store.put(unwrapped, uuid);
+		
+		const items = [];
+		const req = store.openCursor();
+		req.onsuccess = (event) => {
+			const cursor = event.target.result;
+			if (cursor) {
+				items.push({ key: cursor.key, value: cursor.value });
+				cursor.continue();
+			} else {
+				const now = Date.now();
+				const PROFILE_VIEW_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+				const toDelete = [];
+				const remaining = [];
+				
+				for (const item of items) {
+					const val = item.value;
+					if (val && val.cachedAt && val.data) {
+						if (now - val.cachedAt > PROFILE_VIEW_CACHE_TTL_MS) {
+							toDelete.push(item.key);
+						} else {
+							remaining.push(item);
+						}
+					}
+				}
+				
+				if (remaining.length > 100) {
+					remaining.sort((a, b) => (a.value.cachedAt || 0) - (b.value.cachedAt || 0));
+					const deleteCount = remaining.length - 100;
+					for (let i = 0; i < deleteCount; i++) {
+						toDelete.push(remaining[i].key);
+					}
+				}
+				
+				for (const key of toDelete) {
+					store.delete(key);
+				}
+			}
+		};
+		
+		tx.oncomplete = () => resolve();
+		tx.onerror = () => reject(tx.error);
 	});
 }
 
@@ -166,15 +237,50 @@ export async function deleteProfile(uuid) {
 
 export async function getAllProfiles() {
 	const db = await getDB();
+	const PROFILE_VIEW_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 	if (!db) {
-		return Array.from(memoryStores.profiles.values());
+		const now = Date.now();
+		const results = [];
+		for (const [key, profile] of memoryStores.profiles.entries()) {
+			if (profile && profile.cachedAt && profile.data && now - profile.cachedAt > PROFILE_VIEW_CACHE_TTL_MS) {
+				memoryStores.profiles.delete(key);
+			} else {
+				results.push(profile);
+			}
+		}
+		return results;
 	}
 	return new Promise((resolve) => {
 		const tx = db.transaction('profiles', 'readonly');
 		const store = tx.objectStore('profiles');
-		const req = store.getAll();
-		req.onsuccess = () => resolve(req.result || []);
-		req.onerror = () => resolve([]);
+		const keysReq = store.getAllKeys();
+		const valsReq = store.getAll();
+
+		tx.oncomplete = () => {
+			const keys = keysReq.result || [];
+			const vals = valsReq.result || [];
+			const now = Date.now();
+			const valid = [];
+			const expiredKeys = [];
+			for (let i = 0; i < vals.length; i++) {
+				const profile = vals[i];
+				const key = keys[i];
+				if (profile && profile.cachedAt && profile.data && now - profile.cachedAt > PROFILE_VIEW_CACHE_TTL_MS) {
+					expiredKeys.push(key);
+				} else {
+					valid.push(profile);
+				}
+			}
+			if (expiredKeys.length > 0) {
+				const writeTx = db.transaction('profiles', 'readwrite');
+				const writeStore = writeTx.objectStore('profiles');
+				for (const key of expiredKeys) {
+					writeStore.delete(key);
+				}
+			}
+			resolve(valid);
+		};
+		tx.onerror = () => resolve([]);
 	});
 }
 
@@ -419,13 +525,17 @@ export async function deleteSyncItem(id) {
 export async function getOfflineImage(uuid) {
 	const db = await getDB();
 	if (!db) {
-		return memoryStores.offlineImages.get(uuid) || null;
+		const val = memoryStores.offlineImages.get(uuid) || null;
+		return val && val.blob ? val.blob : val;
 	}
 	return new Promise((resolve) => {
 		const tx = db.transaction('offlineImages', 'readonly');
 		const store = tx.objectStore('offlineImages');
 		const req = store.get(uuid);
-		req.onsuccess = () => resolve(req.result || null);
+		req.onsuccess = () => {
+			const res = req.result;
+			resolve(res && res.blob ? res.blob : (res || null));
+		};
 		req.onerror = () => resolve(null);
 	});
 }
@@ -433,16 +543,54 @@ export async function getOfflineImage(uuid) {
 export async function setOfflineImage(uuid, blob) {
 	const db = await getDB();
 	const unwrapped = unwrap(blob);
+	const entry = { blob: unwrapped, cachedAt: Date.now() };
 	if (!db) {
-		memoryStores.offlineImages.set(uuid, unwrapped);
+		memoryStores.offlineImages.set(uuid, entry);
+		const remaining = [];
+		for (const [key, val] of memoryStores.offlineImages.entries()) {
+			remaining.push({ key, cachedAt: val?.cachedAt || 0 });
+		}
+		if (remaining.length > 200) {
+			remaining.sort((a, b) => a.cachedAt - b.cachedAt);
+			const toDeleteCount = remaining.length - 200;
+			for (let i = 0; i < toDeleteCount; i++) {
+				memoryStores.offlineImages.delete(remaining[i].key);
+			}
+		}
 		return;
 	}
 	return new Promise((resolve, reject) => {
 		const tx = db.transaction('offlineImages', 'readwrite');
 		const store = tx.objectStore('offlineImages');
-		const req = store.put(unwrapped, uuid);
-		req.onsuccess = () => resolve();
-		req.onerror = () => reject(req.error);
+		
+		store.put(entry, uuid);
+		
+		const items = [];
+		const req = store.openCursor();
+		req.onsuccess = (event) => {
+			const cursor = event.target.result;
+			if (cursor) {
+				items.push({ key: cursor.key, value: cursor.value });
+				cursor.continue();
+			} else {
+				const remaining = [];
+				for (const item of items) {
+					const val = item.value;
+					remaining.push({ key: item.key, cachedAt: val?.cachedAt || 0 });
+				}
+				
+				if (remaining.length > 200) {
+					remaining.sort((a, b) => a.cachedAt - b.cachedAt);
+					const deleteCount = remaining.length - 200;
+					for (let i = 0; i < deleteCount; i++) {
+						store.delete(remaining[i].key);
+					}
+				}
+			}
+		};
+		
+		tx.oncomplete = () => resolve();
+		tx.onerror = () => reject(tx.error);
 	});
 }
 

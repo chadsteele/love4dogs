@@ -12,7 +12,21 @@ import {
 	upsertTypeTag,
 	classifyPost,
 } from './src/lib/postTypeTags.js';
-import { setPost, getPost, getAllPosts, deletePost, getSetting, setSetting, setProfile } from './src/lib/db.js';
+import {
+	setPost,
+	getPost,
+	getAllPosts,
+	deletePost,
+	getSetting,
+	setSetting,
+	setProfile,
+	getProfile,
+	getAllProfiles,
+	deleteProfile,
+	getOfflineImage,
+	setOfflineImage,
+	deleteOfflineImage
+} from './src/lib/db.js';
 import { formatDisplayAddress } from './src/lib/addressFormat.js';
 import {
 	extractImagesFromPost,
@@ -266,6 +280,76 @@ async function runDatabaseCacheTests() {
 	// Check that it was actually deleted from database as well
 	const retrievedExpiredAgain = await getPost(uriExpired);
 	assertEqual(retrievedExpiredAgain, null, 'Expired post was deleted from database');
+
+	// 4. Verify Profile TTL expiration (24 hours)
+	console.log('  Testing 24-hour Profile TTL expiration...');
+	const profileUuidExpired = 'test-profile-expired';
+	const twentyFiveHoursAgo = Date.now() - (25 * 60 * 60 * 1000);
+	await setProfile(profileUuidExpired, {
+		cachedAt: twentyFiveHoursAgo,
+		data: { uuid: profileUuidExpired, name: 'Expired Profile' }
+	});
+
+	// It should be filtered out and deleted on getProfile
+	const retrievedExpiredProfile = await getProfile(profileUuidExpired);
+	assertEqual(retrievedExpiredProfile, null, 'Expired profile is filtered out and deleted on getProfile');
+
+	// Draft profiles (no cachedAt or data wrapping) should NOT expire
+	const profileUuidDraft = 'test-profile-draft';
+	await setProfile(profileUuidDraft, { uuid: profileUuidDraft, name: 'Draft Profile' });
+	const retrievedDraftProfile = await getProfile(profileUuidDraft);
+	assert(retrievedDraftProfile !== null, 'Draft profile (no cachedAt wrapping) does not expire');
+	assertEqual(retrievedDraftProfile.name, 'Draft Profile', 'Draft profile content retrieved correctly');
+
+	// 5. Verify Profile 100 cached profile limit
+	console.log('  Testing 100 cached profile limit...');
+	// Reset profiles first
+	const initialProfiles = await getAllProfiles();
+	for (const p of initialProfiles) {
+		const key = p.data?.uuid || p.uuid;
+		await deleteProfile(key);
+	}
+	// Insert 105 cached profiles
+	for (let i = 1; i <= 105; i++) {
+		const uuid = `test-profile-cache-${i}`;
+		await setProfile(uuid, {
+			cachedAt: Date.now() + i,
+			data: { uuid, name: `Cached Profile ${i}` }
+		});
+	}
+	// Make sure we also have a draft profile in there, which shouldn't count towards the 100 limit or get pruned
+	await setProfile(profileUuidDraft, { uuid: profileUuidDraft, name: 'Draft Profile' });
+
+	const allProfiles = await getAllProfiles();
+	const cachedProfiles = allProfiles.filter(p => p.cachedAt && p.data);
+	assertEqual(cachedProfiles.length, 100, 'Profiles cache prunes to max 100 cached profiles');
+
+	// Oldest cached profile (test-profile-cache-1) should be pruned
+	const prunedProfile = await getProfile('test-profile-cache-1');
+	assertEqual(prunedProfile, null, 'Oldest cached profile was pruned');
+
+	// Draft profile is still there
+	const draftStillThere = await getProfile(profileUuidDraft);
+	assert(draftStillThere !== null, 'Draft profile was not pruned');
+
+	// 6. Verify Offline Images capacity (200) pruning
+	console.log('  Testing offline images capacity limit (200)...');
+	// Let's set 205 offline images
+	for (let i = 1; i <= 205; i++) {
+		await setOfflineImage(`img-${i}`, `blob-content-${i}`);
+	}
+	
+	// Check that we can retrieve the newest one and it unwraps the blob
+	const newestImg = await getOfflineImage('img-205');
+	assertEqual(newestImg, 'blob-content-205', 'Offline image retrieves unwrapped blob value');
+
+	// Check that oldest (img-1) was pruned
+	const prunedImg = await getOfflineImage('img-1');
+	assertEqual(prunedImg, null, 'Oldest offline image was pruned');
+
+	// Check that we have exactly 200 retrieved when starting from img-6 to img-205
+	const firstKeptImg = await getOfflineImage('img-6');
+	assert(firstKeptImg !== null, 'First kept image (index 6) is retained');
 }
 
 import { cleanWaterPostsFromCaches } from './src/lib/utils.js';
