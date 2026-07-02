@@ -1,0 +1,7 @@
+[[edge_functions]]
+path = "/profile/view/*"
+function = "rewrite-og-tags"
+
+[[edge_functions]]
+path = "/post/view/*"
+function = "rewrite-og-tags"
