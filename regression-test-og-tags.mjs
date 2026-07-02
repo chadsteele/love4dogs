@@ -47,7 +47,7 @@ async function runTests() {
 		);
 	}
 
-	// Test 3: Matching profile route (should rewrite tags from bsky search result)
+	// Test 3: Matching profile route (should rewrite tags from bsky search result via SvelteKit API)
 	{
 		const mockRequest = {
 			url: "http://localhost:5173/profile/view/test-profile-uuid",
@@ -72,33 +72,33 @@ async function runTests() {
 			next: async () => mockResponse,
 		};
 
-		// Mock global fetch to return manifest payload
+		// Mock global fetch to return SvelteKit API bundle payload
 		const originalFetch = globalThis.fetch;
-		const testManifest = {
-			u: "test-profile-uuid",
-			primary: {
-				uuid: "test-profile-uuid",
-				name: "Spotty Dog",
-				description: "A very friendly spotty dog.",
-				profileImage: "https://cdn.bsky.app/some-dog-pic.jpg",
+		const testBundle = {
+			uuid: "test-profile-uuid",
+			combined: {
+				primary: {
+					uuid: "test-profile-uuid",
+					name: "Spotty Dog",
+					description: "A very friendly spotty dog.",
+					profileImage: "https://cdn.bsky.app/some-dog-pic.jpg",
+				},
+				subsequent: [],
 			},
-			chunks: "1. at://did:plc:123/app.bsky.feed.post/456",
+			posts: [
+				{
+					uri: "at://did:plc:123/app.bsky.feed.post/456",
+					record: {
+						text: "Spotty Dog profile post",
+					},
+				},
+			],
 		};
 
 		globalThis.fetch = async (url) => {
-			if (url.includes("app.bsky.feed.searchPosts")) {
-				return new Response(
-					JSON.stringify({
-						posts: [
-							{
-								uri: "at://did:plc:123/app.bsky.feed.post/456",
-								record: {
-									text: JSON.stringify(testManifest),
-								},
-							},
-						],
-					})
-				);
+			const urlStr = typeof url === "string" ? url : url.toString();
+			if (urlStr.includes("/api/profile-bundle?uuid=test-profile-uuid")) {
+				return new Response(JSON.stringify(testBundle));
 			}
 			return new Response(null, { status: 404 });
 		};
@@ -144,7 +144,7 @@ async function runTests() {
 		}
 	}
 
-	// Test 4: Post route with fallback search and embedded image extraction
+	// Test 4: Post route fetching from SvelteKit API and resolving first embedded image
 	{
 		const mockRequest = {
 			url: "http://localhost:5173/post/view/test-post-uuid",
@@ -167,42 +167,38 @@ async function runTests() {
 		};
 
 		const originalFetch = globalThis.fetch;
-		const testManifest = {
-			u: "test-post-uuid",
-			primary: {
-				uuid: "test-post-uuid",
-				name: "Paws in the Park",
-				description: "A fun park meetup.",
+		const testBundle = {
+			uuid: "test-post-uuid",
+			combined: {
+				primary: {
+					uuid: "test-post-uuid",
+					name: "Paws in the Park",
+					description: "A fun park meetup.",
+				},
+				subsequent: [],
 			},
-			chunks: "1. at://did:plc:123/app.bsky.feed.post/789",
+			posts: [
+				{
+					uri: "at://did:plc:123/app.bsky.feed.post/789",
+					record: {
+						text: "Paws in the Park post",
+					},
+					embed: {
+						images: [
+							{
+								fullsize: "https://cdn.bsky.app/post-dog-pic.jpg",
+								alt: "Spot at the park",
+							},
+						],
+					},
+				},
+			],
 		};
 
 		globalThis.fetch = async (url) => {
-			// Fail first request (with author filter) to test fallback
-			if (url.includes("author=love4dogs.club")) {
-				return new Response(JSON.stringify({ posts: [] }));
-			}
-			if (url.includes("app.bsky.feed.searchPosts")) {
-				return new Response(
-					JSON.stringify({
-						posts: [
-							{
-								uri: "at://did:plc:123/app.bsky.feed.post/789",
-								record: {
-									text: JSON.stringify(testManifest),
-								},
-								embed: {
-									images: [
-										{
-											fullsize: "https://cdn.bsky.app/post-dog-pic.jpg",
-											alt: "Spot at the park",
-										},
-									],
-								},
-							},
-						],
-					})
-				);
+			const urlStr = typeof url === "string" ? url : url.toString();
+			if (urlStr.includes("/api/profile-bundle?uuid=test-post-uuid")) {
+				return new Response(JSON.stringify(testBundle));
 			}
 			return new Response(null, { status: 404 });
 		};

@@ -1,5 +1,3 @@
-const BSKY_PUBLIC_XRPC = "https://public.api.bsky.app/xrpc";
-
 function escapeHtml(str) {
 	if (typeof str !== "string") return "";
 	return str
@@ -41,50 +39,41 @@ function replaceCanonicalLink(html, newUrl) {
 	return html;
 }
 
-async function fetchMetadata(uuid) {
+function getOriginPost(bundle, uuid) {
+	if (!bundle || !Array.isArray(bundle.posts)) return null;
+	const primary = bundle.combined?.primary || {};
+	const mainUri =
+		primary.uri ||
+		primary.rootUri ||
+		primary.atUri ||
+		bundle.originPayload?.primary?.uri;
+	if (mainUri) {
+		const found = bundle.posts.find((p) => p.uri === mainUri);
+		if (found) return found;
+	}
+	return (
+		bundle.posts.find((p) => {
+			const text = String(p.record?.text || p.text || "");
+			return text.includes(uuid);
+		}) ||
+		bundle.posts[0] ||
+		null
+	);
+}
+
+async function fetchMetadataFromApi(requestUrl, uuid) {
 	try {
-		// First try with author filter
-		let url = `${BSKY_PUBLIC_XRPC}/app.bsky.feed.searchPosts?q=${encodeURIComponent(
-			uuid
-		)}&author=love4dogs.club&limit=1`;
-		let res = await fetch(url);
-		let json = await res.json().catch(() => ({}));
-		let post = json?.posts?.[0];
-
-		// Fallback without author filter
-		if (!post) {
-			url = `${BSKY_PUBLIC_XRPC}/app.bsky.feed.searchPosts?q=${encodeURIComponent(
-				uuid
-			)}&limit=1`;
-			res = await fetch(url);
-			json = await res.json().catch(() => ({}));
-			post = json?.posts?.[0];
-		}
-
-		if (!post) return null;
-
-		const text = post.record?.text || post.text || "";
-		const images = post.embed?.images || post.record?.embed?.images || [];
-
-		const candidates = [text, ...images.map((img) => img.alt || "")].filter(
-			Boolean
+		const apiUrl = new URL(
+			`/api/profile-bundle?uuid=${encodeURIComponent(uuid)}`,
+			requestUrl
 		);
-		for (const cand of candidates) {
-			try {
-				const parsed = JSON.parse(cand);
-				const payloadUuid = parsed.u || parsed.uuid || parsed.primary?.uuid;
-				if (payloadUuid === uuid && parsed.primary) {
-					return {
-						primary: parsed.primary,
-						post,
-					};
-				}
-			} catch {
-				// Not JSON, ignore
-			}
-		}
+		const res = await fetch(apiUrl);
+		if (!res.ok) return null;
+		const bundle = await res.json();
+		if (!bundle || !bundle.combined) return null;
+		return bundle;
 	} catch (err) {
-		console.error("Error fetching metadata:", err);
+		console.error("Error fetching metadata from API:", err);
 	}
 	return null;
 }
@@ -112,28 +101,23 @@ export default async (request, context) => {
 
 	const uuid = pathParts[3];
 
-	const metaData = await fetchMetadata(uuid);
-	if (!metaData) {
+	const bundle = await fetchMetadataFromApi(request.url, uuid);
+	if (!bundle) {
 		return response;
 	}
 
-	const { primary, post } = metaData;
+	const primary = bundle.combined?.primary || {};
 	const name = primary.name || primary.title || "";
 	const description = primary.description || "";
 
-	// Image priority: profilePic/profileImage, then first embed image of the post, then backgroundPic
+	// Image priority: profilePic/profileImage, then first embed image of the origin post, then backgroundPic
 	let image = primary.profilePic || primary.profileImage || "";
 	if (!image) {
-		const embedImages = post?.embed?.images || post?.record?.embed?.images || [];
+		const originPost = getOriginPost(bundle, uuid);
+		const embedImages =
+			originPost?.embed?.images || originPost?.record?.embed?.images || [];
 		if (embedImages[0]) {
 			image = embedImages[0].fullsize || embedImages[0].thumb || "";
-			if (!image && embedImages[0].image) {
-				const did = post.author?.did || "";
-				const cid = embedImages[0].image?.ref?.$link || embedImages[0].image?.cid || "";
-				if (did && cid) {
-					image = `https://cdn.bsky.app/img/feed_fullsize/plain/${did}/${cid}@jpeg`;
-				}
-			}
 		}
 	}
 	if (!image) {
