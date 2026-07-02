@@ -12,12 +12,14 @@ import {
 	upsertTypeTag,
 	classifyPost,
 } from './src/lib/postTypeTags.js';
-import { setPost, getPost, getAllPosts, deletePost, getSetting, setSetting } from './src/lib/db.js';
+import { setPost, getPost, getAllPosts, deletePost, getSetting, setSetting, setProfile } from './src/lib/db.js';
 import { formatDisplayAddress } from './src/lib/addressFormat.js';
 import {
 	extractImagesFromPost,
 	collectOriginPayloadCandidatesFromPosts,
 } from './src/lib/bskyChunkStore.js';
+import { processQueryForNearMe } from './src/lib/locationUtils.js';
+
 
 const {assert, assertEqual, counts} = createAssertions();
 
@@ -440,6 +442,7 @@ async function main() {
 	await runCacheWaterCleanupTests();
 	runPostClassificationTests();
 	runChunkStoreUnitTests();
+	await runSearchFallbackAndGeocodingTests();
 
 	const summary = counts();
 	console.log('------------------------------------------------------------');
@@ -509,6 +512,68 @@ function runChunkStoreUnitTests() {
 	assertEqual(candidates[0].originUri, 'at://did:plc:test/app.bsky.feed.post/manifest', 'Candidate origin URI matches');
 	assertEqual(candidates[0].chunkUris.length, 1, 'Candidate chunk URIs count matches');
 	assertEqual(candidates[0].chunkUris[0], 'at://did:plc:test/app.bsky.feed.post/chunk1', 'Candidate chunk URI matches');
+}
+
+async function runSearchFallbackAndGeocodingTests() {
+	console.log('Testing search fallback & geocoding near me expansion...');
+
+	// 1. Test processQueryForNearMe with active profile location
+	await setSetting('love4dogs.current-profile-uuid', 'active-dog-uuid');
+	await setProfile('active-dog-uuid', {
+		uuid: 'active-dog-uuid',
+		confirmedLocation: {
+			city: 'San Francisco',
+			state: 'CA',
+			country: 'US',
+			zip: '94103'
+		}
+	});
+
+	const expanded1 = await processQueryForNearMe('adoptable retrievers near me');
+	assertEqual(expanded1, 'adoptable retrievers San Francisco US CA', 'Expands near me using active profile confirmedLocation');
+
+	// 2. Test processQueryForNearMe fallback when no active profile location is set
+	await setSetting('love4dogs.current-profile-uuid', 'no-loc-uuid');
+	await setProfile('no-loc-uuid', { uuid: 'no-loc-uuid' });
+	
+	// Seed a registry entry and profile with location
+	await setSetting('love4dogs.profile-registry-v1', [{ uuid: 'other-dog-uuid' }]);
+	await setProfile('other-dog-uuid', {
+		uuid: 'other-dog-uuid',
+		confirmedLocation: {
+			city: 'Austin',
+			state: 'TX',
+			country: 'US',
+			zip: '78701'
+		}
+	});
+
+	const expanded2 = await processQueryForNearMe('adoptable retrievers near me');
+	assertEqual(expanded2, 'adoptable retrievers Austin US TX', 'Expands near me using fallback profile from registry');
+
+	// 3. Test processQueryForNearMe when no location is found at all
+	await setSetting('love4dogs.profile-registry-v1', []);
+	const expanded3 = await processQueryForNearMe('adoptable retrievers near me');
+	assertEqual(expanded3, 'adoptable retrievers', 'Removes near me if no location context is available');
+
+	// 4. Test Query token popping sequence (fuzzy fallback logic)
+	const querySequence = [];
+	let activeQuery = 'urgent foster adopt me';
+	while (activeQuery) {
+		querySequence.push(activeQuery);
+		const words = activeQuery.split(/\s+/).filter(Boolean);
+		if (words.length > 0) {
+			words.pop();
+			activeQuery = words.join(" ");
+		} else {
+			activeQuery = "";
+		}
+	}
+	assertEqual(querySequence[0], 'urgent foster adopt me', 'Sequence starts with full query');
+	assertEqual(querySequence[1], 'urgent foster adopt', 'Popped last token');
+	assertEqual(querySequence[2], 'urgent foster', 'Popped second last token');
+	assertEqual(querySequence[3], 'urgent', 'Popped down to first token');
+	assertEqual(querySequence.length, 4, 'Correct number of fallback query retries');
 }
 
 main();

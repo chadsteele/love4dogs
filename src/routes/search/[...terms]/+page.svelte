@@ -10,6 +10,7 @@
 	import { getSetting, getAllPosts, setPost } from "$lib/db"
 	import { slowScrollIntoView } from "$lib/utils"
 	import { getCurrentProfileUuid, readStoredProfileByUuid, listStoredProfiles } from "$lib/profileRegistry"
+	import { processQueryForNearMe } from "$lib/locationUtils"
 
 	const FAVORITE_SEARCH_TERMS_KEY =
 		"love4dogs.settings.favorite-search-terms-v1"
@@ -89,42 +90,6 @@
 
 	function buildFeedQuery(rawQuery = "") {
 		return String(rawQuery || "").trim()
-	}
-
-	async function processQueryForNearMe(rawQuery) {
-		let query = String(rawQuery || "").trim()
-		if (/\bnear\s+me\b/gi.test(query)) {
-			const currentUuid = await getCurrentProfileUuid()
-			let loc = null
-			if (currentUuid) {
-				const profile = await readStoredProfileByUuid(currentUuid)
-				if (profile?.confirmedLocation) {
-					loc = profile.confirmedLocation
-				}
-			}
-			if (!loc) {
-				const profiles = await listStoredProfiles()
-				for (const p of profiles) {
-					const profile = await readStoredProfileByUuid(p.uuid)
-					if (profile?.confirmedLocation) {
-						loc = profile.confirmedLocation
-						break
-					}
-				}
-			}
-
-			const city = loc?.city || ""
-			const state = loc?.state || ""
-			const country = loc?.country || ""
-			const locParts = [city, country, state].map(s => String(s || "").trim()).filter(Boolean)
-
-			if (locParts.length > 0) {
-				query = query.replace(/\bnear\s+me\b/gi, locParts.join(" "))
-			} else {
-				query = query.replace(/\bnear\s+me\b/gi, "")
-			}
-		}
-		return query.replace(/\s+/g, " ").trim()
 	}
 
 	function getSearchTokens(value = "") {

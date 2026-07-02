@@ -1,4 +1,6 @@
 import {lookupLocationDetails} from "./utils.js"
+import { getCurrentProfileUuid, readStoredProfileByUuid, listStoredProfiles } from './profileRegistry.js'
+
 
 export function hasRequiredLocationParts(location) {
 	if (!location || typeof location !== "object") return false
@@ -109,5 +111,42 @@ export async function handleLocationModalConfirm(
 		modalLocation,
 	}
 }
+
+export async function processQueryForNearMe(rawQuery) {
+	let query = String(rawQuery || "").trim()
+	if (/\bnear\s+me\b/gi.test(query)) {
+		const currentUuid = await getCurrentProfileUuid()
+		let loc = null
+		if (currentUuid) {
+			const profile = await readStoredProfileByUuid(currentUuid)
+			if (profile?.confirmedLocation) {
+				loc = profile.confirmedLocation
+			}
+		}
+		if (!loc) {
+			const profiles = await listStoredProfiles()
+			for (const p of profiles) {
+				const profile = await readStoredProfileByUuid(p.uuid)
+				if (profile?.confirmedLocation) {
+					loc = profile.confirmedLocation
+					break
+				}
+			}
+		}
+
+		const city = loc?.city || ""
+		const state = loc?.state || ""
+		const country = loc?.country || ""
+		const locParts = [city, country, state].map(s => String(s || "").trim()).filter(Boolean)
+
+		if (locParts.length > 0) {
+			query = query.replace(/\bnear\s+me\b/gi, locParts.join(" "))
+		} else {
+			query = query.replace(/\bnear\s+me\b/gi, "")
+		}
+	}
+	return query.replace(/\s+/g, " ").trim()
+}
+
 
 
