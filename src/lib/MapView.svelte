@@ -105,6 +105,7 @@
 	let findingNearMe = $state(false)
 	let blockedUuids = $state([])
 	let blockedAuthors = $state([])
+	let userInteractedWithMap = $state(false)
 
 	let leaflet = null
 	let mapInstance = $state(null)
@@ -237,7 +238,7 @@
 		mapLoadRequestId += 1
 
 		const cached = getSessionCachedResults(current);
-		if (cached && cached.length > 0) {
+		if (cached && cached.length > 0 && !userInteractedWithMap) {
 			mapPosts = cached;
 			activeKeywordFilter = "";
 			if (mapInstance) {
@@ -293,6 +294,7 @@
 		const current = searchTerm
 		if (current !== lastProcessedSearchTerm) {
 			lastProcessedSearchTerm = current
+			userInteractedWithMap = false
 			writeSearchTerm(current).catch(() => {})
 			processSearch(current)
 		}
@@ -1049,7 +1051,7 @@
 		if (pauseBackgroundSearch) return
 		if (!mapInstance) return
 		const cached = getSessionCachedResults(searchTerm);
-		if (cached && cached.length > 0) {
+		if (cached && cached.length > 0 && !userInteractedWithMap) {
 			mapPosts = cached;
 			return;
 		}
@@ -1410,6 +1412,13 @@
 				.addTo(mapInstance)
 
 			markerLayer = leaflet.layerGroup().addTo(mapInstance)
+
+			mapInstance.on("dragstart", () => {
+				userInteractedWithMap = true
+			})
+			mapInstance.on("zoomstart", () => {
+				userInteractedWithMap = true
+			})
 			
 			mapInstance.on("move", () => {
 				scheduleViewportRefresh()
