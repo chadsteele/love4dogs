@@ -56,6 +56,7 @@ async function runTests() {
       <html>
         <head>
           <title>Original Title</title>
+          <link rel="canonical" href="https://love4dogs.club/search" />
           <meta property="og:title" content="Original OG Title" />
           <meta property="og:description" content="Original Description" />
           <meta property="og:image" content="http://orig.img" />
@@ -131,6 +132,98 @@ async function runTests() {
 					'<meta property="og:url" content="http://localhost:5173/profile/view/test-profile-uuid" />'
 				),
 				"og:url updated"
+			);
+			assertions.assert(
+				text.includes(
+					'<link rel="canonical" href="http://localhost:5173/profile/view/test-profile-uuid" />'
+				),
+				"canonical link updated"
+			);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+	}
+
+	// Test 4: Post route with fallback search and embedded image extraction
+	{
+		const mockRequest = {
+			url: "http://localhost:5173/post/view/test-post-uuid",
+		};
+		const originalHtml = `
+      <html>
+        <head>
+          <title>Original Title</title>
+          <meta property="og:title" content="Original OG Title" />
+          <meta property="og:image" content="http://orig.img" />
+        </head>
+        <body>Post content</body>
+      </html>
+    `;
+		const mockResponse = new Response(originalHtml, {
+			headers: { "content-type": "text/html" },
+		});
+		const mockContext = {
+			next: async () => mockResponse,
+		};
+
+		const originalFetch = globalThis.fetch;
+		const testManifest = {
+			u: "test-post-uuid",
+			primary: {
+				uuid: "test-post-uuid",
+				name: "Paws in the Park",
+				description: "A fun park meetup.",
+			},
+			chunks: "1. at://did:plc:123/app.bsky.feed.post/789",
+		};
+
+		globalThis.fetch = async (url) => {
+			// Fail first request (with author filter) to test fallback
+			if (url.includes("author=love4dogs.club")) {
+				return new Response(JSON.stringify({ posts: [] }));
+			}
+			if (url.includes("app.bsky.feed.searchPosts")) {
+				return new Response(
+					JSON.stringify({
+						posts: [
+							{
+								uri: "at://did:plc:123/app.bsky.feed.post/789",
+								record: {
+									text: JSON.stringify(testManifest),
+								},
+								embed: {
+									images: [
+										{
+											fullsize: "https://cdn.bsky.app/post-dog-pic.jpg",
+											alt: "Spot at the park",
+										},
+									],
+								},
+							},
+						],
+					})
+				);
+			}
+			return new Response(null, { status: 404 });
+		};
+
+		try {
+			const result = await rewriteOgTags(mockRequest, mockContext);
+			const text = await result.text();
+
+			assertions.assert(
+				text.includes("<title>Paws in the Park | Love4Dogs</title>"),
+				"Post title tag updated"
+			);
+			assertions.assert(
+				text.includes('<meta property="og:title" content="Paws in the Park" />'),
+				"Post og:title updated"
+			);
+			assertions.assert(
+				text.includes(
+					'<meta property="og:image" content="https://cdn.bsky.app/post-dog-pic.jpg" />'
+				),
+				"Post og:image fallback to embed images view updated"
 			);
 		} finally {
 			globalThis.fetch = originalFetch;
