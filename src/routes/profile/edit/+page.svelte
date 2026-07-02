@@ -9,6 +9,7 @@
 	import LocationModal from "$lib/LocationModal.svelte"
 	import ContactInput from "$lib/ContactInput.svelte"
 	import HashTagCloud from "$lib/HashTagCloud.svelte"
+	import { defaultHashtags } from "$lib/config"
 	import {
 		buildCanonicalUrl,
 		buildLocationBlock,
@@ -163,14 +164,40 @@
 	let profileRecordStamp = $state(buildCompressedTimestamp())
 	let postTags = $state([])
 
+	function getHashtagWord(tag) {
+		return String(tag || "")
+			.replace(/[^\w\s]/g, "")
+			.replace(/\s+/g, "")
+			.toLowerCase()
+	}
+
 	function togglePostTag(tag) {
-		if (postTags.includes(tag)) {
-			postTags = postTags.filter((t) => t !== tag)
+		const word = getHashtagWord(tag)
+		const regex = new RegExp("(?:\\s+)?#" + word + "\\b", "gi")
+		if (regex.test(profileDescription)) {
+			profileDescription = profileDescription.replace(regex, "").trim()
 		} else {
-			postTags = [...postTags, tag]
+			profileDescription = (profileDescription.trim() + " #" + word).trim()
 		}
 		activateValidation()
 	}
+
+	// Keep postTags in sync with profileDescription hashtags
+	$effect(() => {
+		const descLower = String(profileDescription || "").toLowerCase()
+		const detectedTags = defaultHashtags.filter((tag) => {
+			const word = getHashtagWord(tag)
+			return descLower.includes("#" + word)
+		})
+		const currentHashWords = postTags.map((t) => getHashtagWord(t))
+		const detectedHashWords = detectedTags.map((t) => getHashtagWord(t))
+		const hasDiff =
+			currentHashWords.length !== detectedHashWords.length ||
+			!currentHashWords.every((w) => detectedHashWords.includes(w))
+		if (hasDiff) {
+			postTags = detectedTags
+		}
+	})
 
 	let minifiedChunkEntries = $state([])
 	let chunkBuildVersion = 0
@@ -944,6 +971,15 @@
 	)
 	const descMaxLength = $derived(Math.max(0, 300 - nameCharCount))
 	const remainingProfileChars = $derived(Math.max(0, 300 - combinedCharCount))
+
+	const totalWordCount = $derived.by(() => {
+		const nameText = String(profileName || "").trim()
+		const descText = String(profileDescription || "").trim()
+		const contentText = String(contentHtml || "").replace(/<[^>]*>/g, " ").trim()
+		const allText = `${nameText} ${descText} ${contentText}`.trim()
+		if (!allText) return 0
+		return allText.split(/\s+/).filter(Boolean).length
+	})
 
 	const selectedProfileImage = $derived(
 		profileUploadedMedia.find((entry) => entry?.kind === "image") || null,
@@ -3033,6 +3069,9 @@
 		{#if touchedName && nameError}
 			<p class="field-error">{nameError}</p>
 		{/if}
+		<div class="post-tags-container">
+			<HashTagCloud activeTags={postTags} onToggle={togglePostTag} />
+		</div>
 		<label>
 			<textarea
 				rows="4"
@@ -3045,12 +3084,10 @@
 				style="min-height: 100px; resize: vertical;"
 			></textarea>
 		</label>
-		<p class="char-count">{remainingProfileChars}/{descMaxLength}</p>
-		{#if isPostEditRoute}
-			<div class="post-tags-container">
-				<HashTagCloud activeTags={postTags} onToggle={togglePostTag} />
-			</div>
-		{/if}
+		<div class="meta-row">
+			<span class="word-count">Words: {totalWordCount}</span>
+			<span class="char-count">{remainingProfileChars}/{descMaxLength}</span>
+		</div>
 		<div class="editor-wrap">
 			<Editor
 				bind:value={contentHtml}
@@ -3369,6 +3406,18 @@
 	.post-tags-container {
 		margin-top: 0.6rem;
 		margin-bottom: 0.8rem;
+	}
+	.meta-row {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-top: 0.15rem;
+		margin-bottom: 0.45rem;
+	}
+	.word-count {
+		margin: 0;
+		font-size: 0.78rem;
+		color: #56695f;
 	}
 	.char-count {
 		margin: 0;
