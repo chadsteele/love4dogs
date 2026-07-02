@@ -35,6 +35,7 @@
 	let automateFailed = $state(false)
 	let showNoResultsInfo = $state("")
 	let loadMoreBtn = $state(null)
+	let searchTermsChanged = $state(false)
 
 	let searchDebounceTimer = null
 	let lastFeedRequestId = 0
@@ -327,6 +328,7 @@
 		feedCursorHost = null
 		hasMorePosts = true
 		automateFailed = false
+		searchTermsChanged = false
 		if (searchTerm.trim() !== "") {
 			showNoResultsInfo = ""
 		}
@@ -361,6 +363,7 @@
 		}
 
 		let activeQuery = await processQueryForNearMe(searchTerm)
+		const initialActiveQuery = activeQuery
 		let searchAttempts = 0
 		const maxSearchAttempts = 15
 
@@ -407,6 +410,9 @@
 					if (posts.length === 0 && searchTerm.trim() !== "") {
 						showNoResultsInfo = searchTerm
 					}
+					if (activeQuery !== initialActiveQuery && posts.length > 0) {
+						searchTermsChanged = true
+					}
 					break
 				} else {
 					const words = activeQuery.split(/\s+/).filter(Boolean)
@@ -426,6 +432,7 @@
 					try {
 						const allCached = await getAllPosts()
 						let offlineQuery = activeQuery
+						const initialOfflineQuery = offlineQuery
 						let offlineAttempts = 0
 
 						while (offlineAttempts < maxSearchAttempts) {
@@ -455,6 +462,9 @@
 								lastUsedQuery = offlineQuery
 								if (posts.length === 0 && searchTerm.trim() !== "") {
 									showNoResultsInfo = searchTerm
+								}
+								if (offlineQuery !== initialOfflineQuery && posts.length > 0) {
+									searchTermsChanged = true
 								}
 
 								posts.sort((a, b) => {
@@ -791,6 +801,14 @@
 					<CircleAlert size={16} />
 					<span>No posts matched "{showNoResultsInfo}". Showing all recent posts instead.</span>
 					<button type="button" class="dismiss-btn" onclick={() => showNoResultsInfo = ""}>Dismiss</button>
+				</div>
+			{/if}
+
+			{#if searchTermsChanged}
+				<div class="no-results-banner">
+					<CircleAlert size={16} />
+					<span>Search terms have changed to match available results. Please order your search terms by priority (most important first).</span>
+					<button type="button" class="dismiss-btn" onclick={() => searchTermsChanged = false}>Dismiss</button>
 				</div>
 			{/if}
 
