@@ -5,7 +5,7 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
-		"build": "vite build",
+		"build": "node regression-test-profiles.mjs --test && node regression-test-posts.mjs --test && node regression-test-schema.mjs && vite build",
 		"tests": "node regression-test-profiles.mjs; node regression-test-posts.mjs; node regression-test-schema.mjs",
 		"test:regression": "node regression-test-profiles.mjs && node regression-test-posts.mjs && node regression-test-schema.mjs",
 		"test:regression:schema": "node regression-test-schema.mjs",

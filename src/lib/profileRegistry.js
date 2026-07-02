@@ -134,6 +134,20 @@ export function rebuildStoredProfileFromBundle(
 		profileUploadedMedia: [buildImportedMediaEntry(profilePic, "Profile image")].filter(Boolean),
 		backgroundUploadedMedia: [buildImportedMediaEntry(backgroundPic, "Profile background")].filter(Boolean),
 		editorMediaList: [],
+		locationConfirmed: Boolean(primary?.locationConfirmed || !!primary?.location),
+		confirmedAddress: String(primary?.confirmedAddress || primary?.address || "").trim(),
+		confirmedLocation: primary?.location && typeof primary.location === "object" ? {
+			lat: Number(primary.location.lat),
+			lon: Number(primary.location.lon),
+			approximate: String(primary.location.approximate || "").trim(),
+			exact: String(primary.location.exact || "").trim(),
+			hashPath: String(primary.location.hashPath || "").trim(),
+			formattedAddress: String(primary.location.formattedAddress || "").trim(),
+			city: String(primary.location.city || "").trim(),
+			state: String(primary.location.state || "").trim(),
+			country: String(primary.location.country || "").trim(),
+			zip: String(primary.location.zip || "").trim(),
+		} : null,
 	}
 
 	return {

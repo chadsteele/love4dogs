@@ -1157,6 +1157,23 @@
 		name: profileName,
 		description: profileDescription,
 		tags: isPostEditRoute ? $state.snapshot(postTags) : ["profile"],
+		address: locationConfirmed ? confirmedAddress : "",
+		city: locationConfirmed ? confirmedLocation?.city || "" : "",
+		state: locationConfirmed ? confirmedLocation?.state || "" : "",
+		zip: locationConfirmed ? confirmedLocation?.zip || "" : "",
+		country: locationConfirmed ? confirmedLocation?.country || "" : "",
+		location: locationConfirmed && confirmedLocation ? {
+			lat: confirmedLocation.lat,
+			lon: confirmedLocation.lon,
+			approximate: confirmedLocation.approximate,
+			exact: confirmedLocation.exact,
+			hashPath: confirmedLocation.hashPath,
+			formattedAddress: confirmedLocation.formattedAddress,
+			city: confirmedLocation.city || "",
+			state: confirmedLocation.state || "",
+			country: confirmedLocation.country || "",
+			zip: confirmedLocation.zip || "",
+		} : null,
 	})
 
 	const subsequentPostsPayload = $derived(
@@ -1818,6 +1835,23 @@
 						name: profileName,
 						description: profileDescription,
 						tags: isPostEditRoute ? $state.snapshot(postTags) : ["profile"],
+						address: locationConfirmed ? confirmedAddress : "",
+						city: locationConfirmed ? confirmedLocation?.city || "" : "",
+						state: locationConfirmed ? confirmedLocation?.state || "" : "",
+						zip: locationConfirmed ? confirmedLocation?.zip || "" : "",
+						country: locationConfirmed ? confirmedLocation?.country || "" : "",
+						location: locationConfirmed && confirmedLocation ? {
+							lat: confirmedLocation.lat,
+							lon: confirmedLocation.lon,
+							approximate: confirmedLocation.approximate,
+							exact: confirmedLocation.exact,
+							hashPath: confirmedLocation.hashPath,
+							formattedAddress: confirmedLocation.formattedAddress,
+							city: confirmedLocation.city || "",
+							state: confirmedLocation.state || "",
+							country: confirmedLocation.country || "",
+							zip: confirmedLocation.zip || "",
+						} : null,
 					}
 					const subsequentPayloadForBundle = mapSubsequentPayloadForBundle(
 						subsequentPostsPayload,
@@ -1833,9 +1867,13 @@
 					const chunks = buildChunkEntriesFromBundle(combinedBundle)
 
 					const postText = clampPostTextForApi(
-						[profileName.trim(), profileDescription.trim()]
+						[
+							profileName.trim(),
+							profileDescription.trim(),
+							locationConfirmed && confirmedLocation ? buildLocationBlock(confirmedLocation).trim() : ""
+						]
 							.filter(Boolean)
-							.join("\n"),
+							.join("\n\n"),
 					)
 
 					const primaryMedia = []
@@ -1999,6 +2037,23 @@
 				name: profileName,
 				description: profileDescription,
 				tags: isPostEditRoute ? $state.snapshot(postTags) : ["profile"],
+				address: locationConfirmed ? confirmedAddress : "",
+				city: locationConfirmed ? confirmedLocation?.city || "" : "",
+				state: locationConfirmed ? confirmedLocation?.state || "" : "",
+				zip: locationConfirmed ? confirmedLocation?.zip || "" : "",
+				country: locationConfirmed ? confirmedLocation?.country || "" : "",
+				location: locationConfirmed && confirmedLocation ? {
+					lat: confirmedLocation.lat,
+					lon: confirmedLocation.lon,
+					approximate: confirmedLocation.approximate,
+					exact: confirmedLocation.exact,
+					hashPath: confirmedLocation.hashPath,
+					formattedAddress: confirmedLocation.formattedAddress,
+					city: confirmedLocation.city || "",
+					state: confirmedLocation.state || "",
+					country: confirmedLocation.country || "",
+					zip: confirmedLocation.zip || "",
+				} : null,
 			}
 			const combinedBundle = buildBskyCombinedPayloadBundle(
 				primaryPayloadForBundle,
@@ -2012,9 +2067,13 @@
 
 			// Build post text: name + description (≤300 chars enforced by the form)
 			const postText = clampPostTextForApi(
-				[profileName.trim(), profileDescription.trim()]
+				[
+					profileName.trim(),
+					profileDescription.trim(),
+					locationConfirmed && confirmedLocation ? buildLocationBlock(confirmedLocation).trim() : ""
+				]
 					.filter(Boolean)
-					.join("\n"),
+					.join("\n\n"),
 			)
 			debugProfile("[profile] primary post text prepared", {
 				textLength: [...postText].length,
