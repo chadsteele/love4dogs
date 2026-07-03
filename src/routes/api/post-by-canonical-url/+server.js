@@ -5,6 +5,8 @@ const BSKY_XRPC = 'https://bsky.social/xrpc';
 const BSKY_HANDLE = 'love4dogs.club';
 
 let cachedSession = null;
+let sessionCreatedAt = 0;
+const SESSION_TTL_MS = 90 * 60 * 1000; // 90 minutes — well before Bluesky's ~2hr JWT expiry
 
 function resolveRootUri(post = {}) {
 	const root = String(post?.record?.reply?.root?.uri || post?.reply?.root?.uri || '').trim();
@@ -45,60 +47,19 @@ function altMatchesUuid(alt = '', uuid = '') {
 	return false;
 }
 
-function logAuthDebug(context, identifier, secret, response, error) {
-	const envKeys = {
-		'env.BSKY_USERNAME': !!env.BSKY_USERNAME,
-		'env.BSKY_ADMIN_HANDLE': !!env.BSKY_ADMIN_HANDLE,
-		'process.env.BSKY_USERNAME': typeof process !== 'undefined' && !!process.env?.BSKY_USERNAME,
-		'process.env.BSKY_ADMIN_HANDLE': typeof process !== 'undefined' && !!process.env?.BSKY_ADMIN_HANDLE,
-		'env.BSKY_PASSWORD': !!env.BSKY_PASSWORD,
-		'process.env.BSKY_PASSWORD': typeof process !== 'undefined' && !!process.env?.BSKY_PASSWORD,
-	};
-	
-	const matchedEnv = [];
-	for (const [key, present] of Object.entries(envKeys)) {
-		if (present) matchedEnv.push(key);
-	}
-
-	const hasWhitespace = (str) => typeof str === 'string' && (str.trim() !== str);
-	const hasQuotes = (str) => typeof str === 'string' && ((str.startsWith('"') && str.endsWith('"')) || (str.startsWith("'") && str.endsWith("'")));
-
-	const info = {
-		context,
-		matchedEnv,
-		identifier: {
-			length: identifier ? identifier.length : 0,
-			hasWhitespace: hasWhitespace(identifier),
-			hasQuotes: hasQuotes(identifier),
-			valueMasked: identifier ? `${identifier.slice(0, 3)}...${identifier.slice(-3)}` : 'N/A'
-		},
-		secret: {
-			length: secret ? secret.length : 0,
-			hasWhitespace: hasWhitespace(secret),
-			hasQuotes: hasQuotes(secret),
-			valueMasked: secret ? `${secret.slice(0, 2)}...${secret.slice(-2)}` : 'N/A'
-		}
-	};
-
-	if (response) {
-		info.response = {
-			status: response.status,
-			statusText: response.statusText,
-		};
-	}
-
-	if (error) {
-		info.error = {
-			message: error.message,
-			stack: error.stack,
-		};
-	}
-
-	console.error(`[AUTH_DEBUG] ${context}:`, JSON.stringify(info, null, 2));
+function clearSession() {
+	cachedSession = null;
+	sessionCreatedAt = 0;
 }
 
-async function getSession() {
-	if (cachedSession) return cachedSession;
+async function getSession(forceRefresh = false) {
+	// Return cached session if still within TTL
+	if (!forceRefresh && cachedSession && (Date.now() - sessionCreatedAt < SESSION_TTL_MS)) {
+		return cachedSession;
+	}
+
+	// Clear stale session
+	clearSession();
 
 	const identifier = env.BSKY_USERNAME || env.BSKY_ADMIN_HANDLE ||
 		(typeof process !== 'undefined' && process.env && (process.env.BSKY_USERNAME || process.env.BSKY_ADMIN_HANDLE)) || '';
@@ -106,35 +67,49 @@ async function getSession() {
 		(typeof process !== 'undefined' && process.env && process.env.BSKY_PASSWORD) || '';
 
 	if (!identifier || !secret) {
-		logAuthDebug('getSession:missing_credentials', identifier, secret, null, new Error('Missing Bluesky credentials'));
 		throw new Error('Missing Bluesky credentials in .env');
 	}
 
-	let res;
-	try {
-		res = await fetch(`${BSKY_XRPC}/com.atproto.server.createSession`, {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ identifier, password: secret })
-		});
-	} catch (err) {
-		logAuthDebug('getSession:network_error', identifier, secret, null, err);
-		throw err;
-	}
+	const res = await fetch(`${BSKY_XRPC}/com.atproto.server.createSession`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ identifier, password: secret })
+	});
 
 	if (!res.ok) {
-		let bodyText = '';
-		try {
-			bodyText = await res.text();
-		} catch (e) {
-			bodyText = `Failed to read body: ${e.message}`;
-		}
-		logAuthDebug('getSession:failed_response', identifier, secret, res, new Error(`Session creation failed: ${bodyText}`));
 		throw new Error('Failed to create session');
 	}
 
 	cachedSession = await res.json();
+	sessionCreatedAt = Date.now();
 	return cachedSession;
+}
+
+/**
+ * Perform an authenticated search, retrying once with a fresh session on auth failure.
+ */
+async function searchPostsAuthenticated(searchQuery) {
+	const searchUrl = `${BSKY_XRPC}/app.bsky.feed.searchPosts?q=${encodeURIComponent(searchQuery)}&author=${encodeURIComponent(BSKY_HANDLE)}&limit=100`;
+
+	for (let attempt = 0; attempt < 2; attempt++) {
+		const session = await getSession(attempt > 0);
+		const res = await fetch(searchUrl, {
+			headers: {
+				authorization: `Bearer ${session.accessJwt}`,
+				accept: 'application/json'
+			}
+		});
+
+		if (res.ok) return res;
+
+		// On auth-related failures, clear session and retry once
+		if ((res.status === 400 || res.status === 401 || res.status === 403) && attempt === 0) {
+			clearSession();
+			continue;
+		}
+
+		return res; // Non-retryable failure
+	}
 }
 
 export async function GET({ url }) {
@@ -157,22 +132,9 @@ export async function GET({ url }) {
 			);
 		}
 
-		const session = await getSession();
-
-		// Search for posts using uuid only.
-		const searchQuery = uuid;
-		const res = await fetch(
-			`${BSKY_XRPC}/app.bsky.feed.searchPosts?q=${encodeURIComponent(searchQuery)}&author=${encodeURIComponent(BSKY_HANDLE)}&limit=100`,
-			{
-				headers: {
-					authorization: `Bearer ${session.accessJwt}`,
-					accept: 'application/json'
-				}
-			}
-		);
+		const res = await searchPostsAuthenticated(uuid);
 
 		if (!res.ok) {
-			if (res.status === 401 || res.status === 403) cachedSession = null;
 			return new Response(
 				JSON.stringify({ error: 'Search failed' }),
 				{ status: res.status, headers: { 'content-type': 'application/json' } }
