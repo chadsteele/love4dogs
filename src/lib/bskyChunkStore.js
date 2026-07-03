@@ -846,13 +846,37 @@ function collectPostsFromThreadNode(node, posts = [], seenUris = new Set()) {
 	return posts
 }
 
+async function fetchWithFallback(fetchImpl, urlStr) {
+	const hosts = [
+		"https://api.bsky.app/xrpc",
+		"https://public.api.bsky.app/xrpc"
+	];
+	let lastError = null;
+	for (const host of hosts) {
+		const targetUrl = urlStr.replace(/^https:\/\/public\.api\.bsky\.app\/xrpc/, host);
+		try {
+			const res = await fetchImpl(targetUrl);
+			if (res.ok) {
+				return res;
+			}
+			if (res.status === 403 || res.status === 429) {
+				continue;
+			}
+			return res;
+		} catch (err) {
+			lastError = err;
+		}
+	}
+	throw lastError || new Error(`Failed to fetch: ${urlStr}`);
+}
+
 async function fetchThreadPostsFromPublicBsky(fetchImpl, uri, debugLog, warnLog) {
 	const targetUri = String(uri || "").trim()
 	if (!targetUri) return []
 	const threadUrl = `${BSKY_PUBLIC_XRPC}/app.bsky.feed.getPostThread?uri=${encodeURIComponent(targetUri)}&depth=100&parentHeight=100`
 
 	try {
-		const response = await fetchImpl(threadUrl)
+		const response = await fetchWithFallback(fetchImpl, threadUrl)
 		debugLog("thread response", {
 			uri: targetUri,
 			status: response.status,
@@ -895,7 +919,7 @@ async function fetchAuthorFeedPostsFromPublicBsky(
 	for (let page = 1; page <= maxPages; page += 1) {
 		const feedUrl = `${BSKY_PUBLIC_XRPC}/app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(actor)}&limit=${encodeURIComponent(String(pageLimit))}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`
 		try {
-			const response = await fetchImpl(feedUrl)
+			const response = await fetchWithFallback(fetchImpl, feedUrl)
 			debugLog("author feed response", {
 				page,
 				status: response.status,
@@ -1055,11 +1079,11 @@ export async function loadMostRecentProfileBundleFromPublicBsky({
 	const id = String(uuid || "").trim()
 	if (!id) throw new Error("Missing uuid route param")
 	const postsByUri = new Map()
-	const searchQueries = [`${id} profile`].filter(Boolean)
+	const searchQueries = [`${id} profile`, id].filter(Boolean)
 	for (const query of searchQueries) {
-		const searchUrl = `${BSKY_PUBLIC_XRPC}/app.bsky.feed.searchPosts?q=${encodeURIComponent(query)}&author=${encodeURIComponent(author)}&limit=1`
+		const searchUrl = `${BSKY_PUBLIC_XRPC}/app.bsky.feed.searchPosts?q=${encodeURIComponent(query)}&author=${encodeURIComponent(author)}&limit=${encodeURIComponent(String(pageLimit))}`
 		try {
-			const response = await fetchImpl(searchUrl)
+			const response = await fetchWithFallback(fetchImpl, searchUrl)
 			debugLog("latest-by-uuid public search response", {
 				query,
 				status: response.status,
@@ -1087,7 +1111,7 @@ export async function loadMostRecentProfileBundleFromPublicBsky({
 	if (actor) {
 		const feedUrl = `${BSKY_PUBLIC_XRPC}/app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(actor)}&limit=${encodeURIComponent(String(pageLimit))}`
 		try {
-			const response = await fetchImpl(feedUrl)
+			const response = await fetchWithFallback(fetchImpl, feedUrl)
 			debugLog("author feed response", {
 				page: 1,
 				status: response.status,
@@ -1291,7 +1315,7 @@ export async function loadMostRecentProfileBundleFromPublicBsky({
 				const fallbackQuery = `${id} ${group.legacyToken}`.trim()
 				const fallbackSearchUrl = `${BSKY_PUBLIC_XRPC}/app.bsky.feed.searchPosts?q=${encodeURIComponent(fallbackQuery)}&author=${encodeURIComponent(author)}&limit=${encodeURIComponent(String(pageLimit))}`
 				try {
-					const response = await fetchImpl(fallbackSearchUrl)
+					const response = await fetchWithFallback(fetchImpl, fallbackSearchUrl)
 					if (response.ok) {
 						const json = await response.json().catch(() => ({}))
 						const fallbackPosts = Array.isArray(json?.posts) ? json.posts : []

@@ -23,6 +23,39 @@
 					console.error("Failed to run cache clean-up:", err)
 				})
 			})
+
+			// Handle broken image tags (hide and retry loading them)
+			const handleImageError = (event) => {
+				if (event.target && event.target.tagName === "IMG") {
+					const img = event.target
+					img.style.opacity = "0"
+					const retries = parseInt(img.getAttribute("data-retry-count") || "0", 10)
+					if (retries < 15) {
+						img.setAttribute("data-retry-count", String(retries + 1))
+						const src = img.src
+						if (src) {
+							setTimeout(() => {
+								img.src = ""
+								img.src = src
+							}, 2000)
+						}
+					}
+				}
+			}
+
+			const handleImageLoad = (event) => {
+				if (event.target && event.target.tagName === "IMG") {
+					event.target.style.opacity = ""
+				}
+			}
+
+			window.addEventListener("error", handleImageError, true)
+			window.addEventListener("load", handleImageLoad, true)
+
+			return () => {
+				window.removeEventListener("error", handleImageError, true)
+				window.removeEventListener("load", handleImageLoad, true)
+			}
 		}
 	})
 </script>
@@ -382,5 +415,8 @@
 	:global(.pell-wrapper .pell-content code) {
 		max-width: 100%;
 		box-sizing: border-box;
+	}
+	:global(img) {
+		transition: opacity 0.3s ease;
 	}
 </style>
