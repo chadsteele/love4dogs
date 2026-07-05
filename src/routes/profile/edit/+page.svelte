@@ -1728,6 +1728,10 @@
 			return
 		}
 
+		const activeTags = isPostEditRoute ? $state.snapshot(postTags) : ["profile"]
+		const isOffline =
+			typeof navigator !== "undefined" && navigator.onLine === false
+
 		publishing = true
 
 		try {
@@ -1834,7 +1838,262 @@
 				}
 			}
 
-			if (typeof navigator !== "undefined" && navigator.onLine === false) {
+			const buildPostTextForPublish = () =>
+				{
+					const baseText = clampPostTextForApi(
+						[
+							profileName.trim(),
+							profileDescription.trim(),
+						]
+							.filter(Boolean)
+							.join("\n\n"),
+					)
+					const locationBlock =
+						locationConfirmed && confirmedLocation
+							? String(buildLocationBlock(confirmedLocation) || "").trim()
+							: ""
+					if (!locationBlock) return baseText
+
+					const separator = baseText ? "\n\n" : ""
+					const withLocation = `${baseText}${separator}${locationBlock}`
+					const clampedWithLocation = clampPostTextForApi(withLocation)
+					if (clampedWithLocation === withLocation) return withLocation
+
+					debugProfile("[profile] location block omitted from post text; insufficient room", {
+						baseLength: [...baseText].length,
+						locationLength: [...locationBlock].length,
+					})
+					return baseText
+				}
+
+			const buildPrimaryPayloadForBundle = ({
+				publishProfileImage,
+				publishBackgroundImage,
+				omitImagesForPostEdit = false,
+			}) => {
+				const shouldOmitImages = omitImagesForPostEdit && isPostEditRoute
+				return {
+					type: isPostEditRoute ? "post" : "profile",
+					uuid,
+					authorid: uuid,
+					stamp: profileRecordStamp,
+					email: encryptEmailForPayload(email),
+					birthdate: encryptPinForPayload(pin, profileRecordStamp),
+					profileImage: shouldOmitImages
+						? null
+						: publishProfileImage?.bskyUrl ||
+						  selectedProfileImage?.bskyUrl ||
+						  selectedProfileImage?.url ||
+						  null,
+					profilePic: shouldOmitImages
+						? null
+						: publishProfileImage?.bskyUrl ||
+						  selectedProfileImage?.bskyUrl ||
+						  selectedProfileImage?.url ||
+						  null,
+					backgroundPic: shouldOmitImages
+						? null
+						: publishBackgroundImage?.bskyUrl ||
+						  selectedBackgroundImage?.bskyUrl ||
+						  selectedBackgroundImage?.url ||
+						  null,
+					name: profileName,
+					description: profileDescription,
+					tags: activeTags,
+					address: locationConfirmed ? confirmedAddress : "",
+					city: locationConfirmed ? confirmedLocation?.city || "" : "",
+					state: locationConfirmed ? confirmedLocation?.state || "" : "",
+					zip: locationConfirmed ? confirmedLocation?.zip || "" : "",
+					country: locationConfirmed
+						? confirmedLocation?.country || ""
+						: "",
+					location:
+						locationConfirmed && confirmedLocation
+							? {
+								lat: confirmedLocation.lat,
+								lon: confirmedLocation.lon,
+								approximate: confirmedLocation.approximate,
+								exact: confirmedLocation.exact,
+								hashPath: confirmedLocation.hashPath,
+								formattedAddress:
+									confirmedLocation.formattedAddress,
+								city: confirmedLocation.city || "",
+								state: confirmedLocation.state || "",
+								country: confirmedLocation.country || "",
+								zip: confirmedLocation.zip || "",
+							}
+							: null,
+				}
+			}
+
+			const buildPrimaryMedia = (
+				publishProfileImage,
+				publishBackgroundImage,
+				{requireBlob = false} = {},
+			) => {
+				const media = []
+				if (publishProfileImage && (!requireBlob || publishProfileImage.blob)) {
+					media.push({
+						...publishProfileImage,
+						kind: "image",
+						alt: String(publishProfileImage.alt || "Profile image"),
+					})
+				}
+				if (
+					publishBackgroundImage &&
+					(!requireBlob || publishBackgroundImage.blob)
+				) {
+					media.push({
+						...publishBackgroundImage,
+						kind: "image",
+						alt: String(
+							publishBackgroundImage.alt || "Profile background",
+						),
+					})
+				}
+				return media
+			}
+
+			const buildEditorAttachments = ({
+				requireBlob = false,
+				includeTransportFields = false,
+			} = {}) => {
+				const imageAttachments = editorMediaList
+					.filter(
+						(entry) =>
+							entry?.kind === "image" &&
+							(!requireBlob || Boolean(entry?.blob)),
+					)
+					.map((entry) => {
+						const base = {
+							kind: "image",
+							alt: String(entry.alt || "Image"),
+							blob: entry.blob,
+						}
+						if (!includeTransportFields) return base
+						return {
+							...base,
+							url: entry.url || entry.bskyUrl,
+							bskyUrl: entry.bskyUrl || entry.url,
+							isOfflineMedia: entry.isOfflineMedia,
+							offlineId:
+								entry.offlineId ||
+								getOfflineId(entry.url || entry.bskyUrl),
+						}
+					})
+
+				const videoAttachments = editorMediaList
+					.filter(
+						(entry) =>
+							entry?.kind === "video" &&
+							(!requireBlob || Boolean(entry?.blob)),
+					)
+					.slice(0, 1)
+					.map((entry) => {
+						const base = {
+							kind: "video",
+							alt: String(entry.alt || "Video"),
+							blob: entry.blob,
+						}
+						if (!includeTransportFields) return base
+						return {
+							...base,
+							url: entry.url || entry.bskyUrl,
+							bskyUrl: entry.bskyUrl || entry.url,
+							isOfflineMedia: entry.isOfflineMedia,
+							offlineId:
+								entry.offlineId ||
+								getOfflineId(entry.url || entry.bskyUrl),
+						}
+					})
+
+				return {imageAttachments, videoAttachments}
+			}
+
+			const buildFallbackImage = (
+				publishProfileImage,
+				{requireBlob = false, includeTransportFields = false} = {},
+			) => {
+				if (!publishProfileImage) return []
+				if (requireBlob && !publishProfileImage.blob) return []
+				const base = {
+					kind: "image",
+					alt: String(publishProfileImage.alt || "Profile image"),
+					blob: publishProfileImage.blob,
+				}
+				if (!includeTransportFields) return [base]
+				return [
+					{
+						...base,
+						url:
+							publishProfileImage.url || publishProfileImage.bskyUrl,
+						bskyUrl:
+							publishProfileImage.bskyUrl || publishProfileImage.url,
+						isOfflineMedia: publishProfileImage.isOfflineMedia,
+						offlineId: publishProfileImage.offlineId,
+					},
+				]
+			}
+
+			const buildPublishArtifacts = ({
+				publishProfileImage,
+				publishBackgroundImage,
+				omitImagesForPostEdit = false,
+				requireBlobAttachments = false,
+				includeTransportFields = false,
+			}) => {
+				const primaryPayloadForBundle = buildPrimaryPayloadForBundle({
+					publishProfileImage,
+					publishBackgroundImage,
+					omitImagesForPostEdit,
+				})
+				const subsequentPayloadForBundle = mapSubsequentPayloadForBundle(
+					subsequentPostsPayload,
+				)
+				const combinedBundle = buildBskyCombinedPayloadBundle(
+					primaryPayloadForBundle,
+					subsequentPayloadForBundle,
+					{
+						uuid: String(primaryPayloadForBundle?.uuid || uuid || ""),
+						maxPayloadChars: CHUNK_ALT_PAYLOAD_TARGET_CHARS,
+					},
+				)
+				const chunks = buildChunkEntriesFromBundle(combinedBundle)
+				const postText = buildPostTextForPublish()
+				const primaryMedia = buildPrimaryMedia(
+					publishProfileImage,
+					publishBackgroundImage,
+					{requireBlob: requireBlobAttachments},
+				)
+				const {imageAttachments, videoAttachments} =
+					buildEditorAttachments({
+						requireBlob: requireBlobAttachments,
+						includeTransportFields,
+					})
+				const fallbackImage = buildFallbackImage(publishProfileImage, {
+					requireBlob: requireBlobAttachments,
+					includeTransportFields,
+				})
+				const attachmentPool =
+					imageAttachments.length > 0
+						? imageAttachments
+						: primaryMedia.length > 0
+							? primaryMedia
+							: fallbackImage
+
+				return {
+					primaryPayloadForBundle,
+					subsequentPayloadForBundle,
+					combinedBundle,
+					chunks,
+					postText,
+					primaryMedia,
+					videoAttachments,
+					attachmentPool,
+				}
+			}
+
+			if (isOffline) {
 				try {
 					const publishProfileImage = await resolvePublishImageCarrier(
 						selectedProfileImage,
@@ -1854,137 +2113,20 @@
 
 					await saveProfile(false)
 
-					const primaryPayloadForBundle = {
-						type: isPostEditRoute ? "post" : "profile",
-						uuid,
-						authorid: uuid,
-						stamp: profileRecordStamp,
-						email: encryptEmailForPayload(email),
-						birthdate: encryptPinForPayload(pin, profileRecordStamp),
-						profileImage: isPostEditRoute
-							? null
-							: publishProfileImage?.bskyUrl ||
-							  selectedProfileImage?.bskyUrl ||
-							  selectedProfileImage?.url ||
-							  null,
-						profilePic: isPostEditRoute
-							? null
-							: publishProfileImage?.bskyUrl ||
-							  selectedProfileImage?.bskyUrl ||
-							  selectedProfileImage?.url ||
-							  null,
-						backgroundPic: isPostEditRoute
-							? null
-							: publishBackgroundImage?.bskyUrl ||
-							  selectedBackgroundImage?.bskyUrl ||
-							  selectedBackgroundImage?.url ||
-							  null,
-						name: profileName,
-						description: profileDescription,
-						tags: isPostEditRoute ? $state.snapshot(postTags) : ["profile"],
-						address: locationConfirmed ? confirmedAddress : "",
-						city: locationConfirmed ? confirmedLocation?.city || "" : "",
-						state: locationConfirmed ? confirmedLocation?.state || "" : "",
-						zip: locationConfirmed ? confirmedLocation?.zip || "" : "",
-						country: locationConfirmed ? confirmedLocation?.country || "" : "",
-						location: locationConfirmed && confirmedLocation ? {
-							lat: confirmedLocation.lat,
-							lon: confirmedLocation.lon,
-							approximate: confirmedLocation.approximate,
-							exact: confirmedLocation.exact,
-							hashPath: confirmedLocation.hashPath,
-							formattedAddress: confirmedLocation.formattedAddress,
-							city: confirmedLocation.city || "",
-							state: confirmedLocation.state || "",
-							country: confirmedLocation.country || "",
-							zip: confirmedLocation.zip || "",
-						} : null,
-					}
-					const subsequentPayloadForBundle = mapSubsequentPayloadForBundle(
-						subsequentPostsPayload,
-					)
-					const combinedBundle = buildBskyCombinedPayloadBundle(
+					const {
 						primaryPayloadForBundle,
-						subsequentPayloadForBundle,
-						{
-							uuid: String(primaryPayloadForBundle?.uuid || uuid || ""),
-							maxPayloadChars: CHUNK_ALT_PAYLOAD_TARGET_CHARS,
-						},
-					)
-					const chunks = buildChunkEntriesFromBundle(combinedBundle)
-
-					const postText = clampPostTextForApi(
-						[
-							profileName.trim(),
-							profileDescription.trim(),
-							locationConfirmed && confirmedLocation ? buildLocationBlock(confirmedLocation).trim() : ""
-						]
-							.filter(Boolean)
-							.join("\n\n"),
-					)
-
-					const primaryMedia = []
-					if (publishProfileImage) {
-						primaryMedia.push({
-							...publishProfileImage,
-							kind: "image",
-							alt: String(publishProfileImage.alt || "Profile image"),
-						})
-					}
-					if (publishBackgroundImage) {
-						primaryMedia.push({
-							...publishBackgroundImage,
-							kind: "image",
-							alt: String(
-								publishBackgroundImage.alt || "Profile background",
-							),
-						})
-					}
-
-					const imageAttachments = editorMediaList
-						.filter((entry) => entry?.kind === "image")
-						.map((entry) => ({
-							kind: "image",
-							alt: String(entry.alt || "Image"),
-							blob: entry.blob,
-							url: entry.url || entry.bskyUrl,
-							bskyUrl: entry.bskyUrl || entry.url,
-							isOfflineMedia: entry.isOfflineMedia,
-							offlineId: entry.offlineId || getOfflineId(entry.url || entry.bskyUrl)
-						}))
-					const videoAttachments = editorMediaList
-						.filter((entry) => entry?.kind === "video")
-						.slice(0, 1)
-						.map((entry) => ({
-							kind: "video",
-							alt: String(entry.alt || "Video"),
-							blob: entry.blob,
-							url: entry.url || entry.bskyUrl,
-							bskyUrl: entry.bskyUrl || entry.url,
-							isOfflineMedia: entry.isOfflineMedia,
-							offlineId: entry.offlineId || getOfflineId(entry.url || entry.bskyUrl)
-						}))
-					const fallbackImage = publishProfileImage
-						? [
-								{
-									kind: "image",
-									alt: String(
-										publishProfileImage.alt || "Profile image",
-									),
-									blob: publishProfileImage.blob,
-									url: publishProfileImage.url || publishProfileImage.bskyUrl,
-									bskyUrl: publishProfileImage.bskyUrl || publishProfileImage.url,
-									isOfflineMedia: publishProfileImage.isOfflineMedia,
-									offlineId: publishProfileImage.offlineId
-								},
-							]
-						: []
-					const attachmentPool =
-						imageAttachments.length > 0
-							? imageAttachments
-							: primaryMedia.length > 0
-								? primaryMedia
-								: fallbackImage
+						chunks,
+						postText,
+						primaryMedia,
+						videoAttachments,
+						attachmentPool,
+					} = buildPublishArtifacts({
+						publishProfileImage,
+						publishBackgroundImage,
+						omitImagesForPostEdit: true,
+						requireBlobAttachments: false,
+						includeTransportFields: true,
+					})
 
 					await enqueueSync({
 						uuid,
@@ -2056,127 +2198,27 @@
 			const publishedViewUrl = `/profile/view/${encodeURIComponent(uuid)}/${publishedSlugPath || "profile"}`
 			profileRecordStamp = buildCompressedTimestamp()
 
-			const subsequentPayloadForBundle = mapSubsequentPayloadForBundle(
-				subsequentPostsPayload,
-			)
-			const primaryPayloadForBundle = {
-				type: isPostEditRoute ? "post" : "profile",
-				uuid,
-				authorid: uuid,
-				stamp: profileRecordStamp,
-				email: encryptEmailForPayload(email),
-				birthdate: encryptPinForPayload(pin, profileRecordStamp),
-				profileImage:
-					publishProfileImage?.bskyUrl ||
-					selectedProfileImage?.bskyUrl ||
-					selectedProfileImage?.url ||
-					null,
-				profilePic:
-					publishProfileImage?.bskyUrl ||
-					selectedProfileImage?.bskyUrl ||
-					selectedProfileImage?.url ||
-					null,
-				backgroundPic:
-					publishBackgroundImage?.bskyUrl ||
-					selectedBackgroundImage?.bskyUrl ||
-					selectedBackgroundImage?.url ||
-					null,
-				name: profileName,
-				description: profileDescription,
-				tags: isPostEditRoute ? $state.snapshot(postTags) : ["profile"],
-				address: locationConfirmed ? confirmedAddress : "",
-				city: locationConfirmed ? confirmedLocation?.city || "" : "",
-				state: locationConfirmed ? confirmedLocation?.state || "" : "",
-				zip: locationConfirmed ? confirmedLocation?.zip || "" : "",
-				country: locationConfirmed ? confirmedLocation?.country || "" : "",
-				location: locationConfirmed && confirmedLocation ? {
-					lat: confirmedLocation.lat,
-					lon: confirmedLocation.lon,
-					approximate: confirmedLocation.approximate,
-					exact: confirmedLocation.exact,
-					hashPath: confirmedLocation.hashPath,
-					formattedAddress: confirmedLocation.formattedAddress,
-					city: confirmedLocation.city || "",
-					state: confirmedLocation.state || "",
-					country: confirmedLocation.country || "",
-					zip: confirmedLocation.zip || "",
-				} : null,
-			}
-			const combinedBundle = buildBskyCombinedPayloadBundle(
+			const {
 				primaryPayloadForBundle,
 				subsequentPayloadForBundle,
-				{
-					uuid: String(primaryPayloadForBundle?.uuid || uuid || ""),
-					maxPayloadChars: CHUNK_ALT_PAYLOAD_TARGET_CHARS,
-				},
-			)
-			const chunks = buildChunkEntriesFromBundle(combinedBundle)
+				combinedBundle,
+				chunks,
+				postText,
+				primaryMedia,
+				videoAttachments,
+				attachmentPool,
+			} = buildPublishArtifacts({
+				publishProfileImage,
+				publishBackgroundImage,
+				omitImagesForPostEdit: false,
+				requireBlobAttachments: true,
+				includeTransportFields: false,
+			})
 
-			// Build post text: name + description (≤300 chars enforced by the form)
-			const postText = clampPostTextForApi(
-				[
-					profileName.trim(),
-					profileDescription.trim(),
-					locationConfirmed && confirmedLocation ? buildLocationBlock(confirmedLocation).trim() : ""
-				]
-					.filter(Boolean)
-					.join("\n\n"),
-			)
 			debugProfile("[profile] primary post text prepared", {
 				textLength: [...postText].length,
 				textPreview: postText.slice(0, 80),
 			})
-
-			const primaryMedia = []
-			if (publishProfileImage?.blob) {
-				primaryMedia.push({
-					...publishProfileImage,
-					kind: "image",
-					alt: String(publishProfileImage.alt || "Profile image"),
-				})
-			}
-			if (publishBackgroundImage?.blob) {
-				primaryMedia.push({
-					...publishBackgroundImage,
-					kind: "image",
-					alt: String(
-						publishBackgroundImage.alt || "Profile background",
-					),
-				})
-			}
-
-			const imageAttachments = editorMediaList
-				.filter((entry) => entry?.kind === "image" && entry?.blob)
-				.map((entry) => ({
-					kind: "image",
-					alt: String(entry.alt || "Image"),
-					blob: entry.blob,
-				}))
-			const videoAttachments = editorMediaList
-				.filter((entry) => entry?.kind === "video" && entry?.blob)
-				.slice(0, 1)
-				.map((entry) => ({
-					kind: "video",
-					alt: String(entry.alt || "Video"),
-					blob: entry.blob,
-				}))
-			const fallbackImage = publishProfileImage
-				? [
-						{
-							kind: "image",
-							alt: String(
-								publishProfileImage.alt || "Profile image",
-							),
-							blob: publishProfileImage.blob,
-						},
-					]
-				: []
-			const attachmentPool =
-				imageAttachments.length > 0
-					? imageAttachments
-					: primaryMedia.length > 0
-						? primaryMedia
-						: fallbackImage
 
 			const chunkDiagnostics = chunks.map((entry, index) => ({
 				index: index + 1,
@@ -2204,7 +2246,7 @@
 				primaryMedia,
 				replyAttachmentPool: attachmentPool,
 				videoAttachments,
-				tags: isPostEditRoute ? $state.snapshot(postTags) : ["profile"],
+				tags: activeTags,
 				primaryPayload: primaryPayloadForBundle,
 			})
 
