@@ -56,6 +56,7 @@
 	} from "$lib/dateTime"
 	import ShowAdmin from "$lib/ShowAdmin.svelte"
 	import {enqueueSync, setOfflineImage, setPost, setProfile} from "$lib/db"
+	import {upsertTypeTag} from "$lib/postTypeTags.js"
 	import {
 		buildLocalImageProxyUrl,
 		collectUrlTextNodes,
@@ -1672,6 +1673,88 @@
 		return result
 	}
 
+	function countPostTextForApi(text = "") {
+		const normalized = String(text || "")
+			.replace(/\r\n?/g, "\n")
+			.trim()
+		let count = 0
+		for (const char of normalized) {
+			count += char === "\n" ? 2 : 1
+		}
+		return count
+	}
+
+	function escapeRegExp(value = "") {
+		return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+	}
+
+	function buildTextWithVisibleTagsForCounter(text = "", tags = []) {
+		const baseText = String(text || "").trim()
+		const normalizedTags = (Array.isArray(tags) ? tags : [])
+			.map((entry) => String(entry || "").trim().toLowerCase())
+			.filter(Boolean)
+		if (!normalizedTags.length) return baseText
+
+		const missingTokens = []
+		for (const tag of normalizedTags) {
+			const token = `#${tag}`
+			const re = new RegExp(
+				`(^|\\s)${escapeRegExp(token)}(?=$|\\s|[.,!?;:])`,
+				"i",
+			)
+			if (!re.test(baseText)) missingTokens.push(token)
+		}
+
+		if (!missingTokens.length) return baseText
+		if (!baseText) return missingTokens.join(" ")
+		return `${baseText}\n\n${missingTokens.join(" ")}`
+	}
+
+	function buildPostTextForPublish() {
+		const baseText = clampPostTextForApi(
+			[profileName.trim(), profileDescription.trim()]
+				.filter(Boolean)
+				.join("\n\n"),
+		)
+		const locationBlock =
+			locationConfirmed && confirmedLocation
+				? String(buildLocationBlock(confirmedLocation) || "").trim()
+				: ""
+		if (!locationBlock) return baseText
+
+		const separator = baseText ? "\n\n" : ""
+		const withLocation = `${baseText}${separator}${locationBlock}`
+		const clampedWithLocation = clampPostTextForApi(withLocation)
+		if (clampedWithLocation === withLocation) return withLocation
+
+		debugProfile(
+			"[profile] location block omitted from post text; insufficient room",
+			{
+				baseLength: [...baseText].length,
+				locationLength: [...locationBlock].length,
+			},
+		)
+		return baseText
+	}
+
+	const publishTagsForCounter = $derived.by(() => {
+		const baseTags = isPostEditRoute ? $state.snapshot(postTags) : ["profile"]
+		const postType = isPostEditRoute ? "" : "profile"
+		return upsertTypeTag(baseTags, postType)
+	})
+
+	const publishTextForCounter = $derived.by(() => {
+		const baseText = buildPostTextForPublish()
+		return buildTextWithVisibleTagsForCounter(baseText, publishTagsForCounter)
+	})
+
+	const publishTextCharCount = $derived(
+		countPostTextForApi(publishTextForCounter),
+	)
+
+	const publishTextRemainingChars = $derived(300 - publishTextCharCount)
+	const publishTextOverLimit = $derived(publishTextRemainingChars < 0)
+
 	$effect(() => {
 		locationConfirmed = locationConfirmed && addressOkay(addressText, confirmedLocation)
 		if (locationConfirmed) locationError = ""
@@ -1837,34 +1920,6 @@
 					sourceUrl,
 				}
 			}
-
-			const buildPostTextForPublish = () =>
-				{
-					const baseText = clampPostTextForApi(
-						[
-							profileName.trim(),
-							profileDescription.trim(),
-						]
-							.filter(Boolean)
-							.join("\n\n"),
-					)
-					const locationBlock =
-						locationConfirmed && confirmedLocation
-							? String(buildLocationBlock(confirmedLocation) || "").trim()
-							: ""
-					if (!locationBlock) return baseText
-
-					const separator = baseText ? "\n\n" : ""
-					const withLocation = `${baseText}${separator}${locationBlock}`
-					const clampedWithLocation = clampPostTextForApi(withLocation)
-					if (clampedWithLocation === withLocation) return withLocation
-
-					debugProfile("[profile] location block omitted from post text; insufficient room", {
-						baseLength: [...baseText].length,
-						locationLength: [...locationBlock].length,
-					})
-					return baseText
-				}
 
 			const buildPrimaryPayloadForBundle = ({
 				publishProfileImage,
@@ -2425,6 +2480,10 @@
 		} catch (err) {
 			console.error("[profile] publishToBluesky:exception", err)
 			publishError = err?.message || "Unexpected error while publishing."
+			if (/300 character limit/i.test(publishError)) {
+				profileDescriptionInputEl?.focus()
+				slowScrollIntoView(profileDescriptionInputEl, 2000)
+			}
 		} finally {
 			debugProfile("[profile] publishToBluesky:finally", {
 				publishingBeforeReset: publishing,
@@ -3127,6 +3186,7 @@
 				bind:this={profileDescriptionInputEl}
 				rows="4"
 				bind:value={profileDescription}
+				class:invalid-field={publishTextOverLimit}
 				onfocus={activateValidation}
 				placeholder={isPostEditRoute
 					? "Short post description"
@@ -3137,8 +3197,14 @@
 		</label>
 		<div class="meta-row">
 			<span class="word-count">Words: {totalWordCount}</span>
-			<span class="char-count">{remainingProfileChars}/{descMaxLength}</span>
+			<span class="char-count">Description: {remainingProfileChars}/{descMaxLength}</span>
+			<span class="char-count" class:error-count={publishTextOverLimit}>Publish text: {publishTextCharCount}/300</span>
 		</div>
+		{#if publishTextOverLimit}
+			<p class="field-error">
+				Publish text is over by {Math.abs(publishTextRemainingChars)} characters after formatting and tag expansion. Shorten the title or description.
+			</p>
+		{/if}
 		<div class="post-tags-container">
 			<HashTagCloud activeTags={postTags} onToggle={togglePostTag} />
 		</div>
@@ -3484,6 +3550,9 @@
 		text-align: right;
 		font-size: 0.78rem;
 		color: #56695f;
+	}
+	.error-count {
+		color: #8e2f21;
 	}
 	.canonicalurl-preview {
 		margin: -0.1rem 0 0.45rem;
