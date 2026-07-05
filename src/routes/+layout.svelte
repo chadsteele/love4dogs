@@ -9,9 +9,12 @@
 	onMount(() => {
 		if (browser && "serviceWorker" in navigator) {
 			navigator.serviceWorker
-				.register("/service-worker.js", { type: "module" })
+				.register("/service-worker.js", {type: "module"})
 				.then((reg) => {
-					console.log("ServiceWorker registered with scope:", reg.scope)
+					console.log(
+						"ServiceWorker registered with scope:",
+						reg.scope,
+					)
 				})
 				.catch((err) => {
 					console.error("ServiceWorker registration failed:", err)
@@ -29,9 +32,15 @@
 				if (event.target && event.target.tagName === "IMG") {
 					const img = event.target
 					img.style.opacity = "0"
-					const retries = parseInt(img.getAttribute("data-retry-count") || "0", 10)
+					const retries = parseInt(
+						img.getAttribute("data-retry-count") || "0",
+						10,
+					)
 					if (retries < 15) {
-						img.setAttribute("data-retry-count", String(retries + 1))
+						img.setAttribute(
+							"data-retry-count",
+							String(retries + 1),
+						)
 						const src = img.src
 						if (src) {
 							setTimeout(() => {
@@ -52,9 +61,70 @@
 			window.addEventListener("error", handleImageError, true)
 			window.addEventListener("load", handleImageLoad, true)
 
+			const attachIframeClickOverlays = () => {
+				document
+					.querySelectorAll("div.content-html iframe")
+					.forEach((iframe) => {
+						if (iframe.getAttribute("data-overlay-wrapped")) {
+							return
+						}
+
+						const wrapper = document.createElement("div")
+						wrapper.className = "iframe-overlay-wrapper"
+
+						const overlay = document.createElement("div")
+						overlay.className = "iframe-click-overlay"
+						overlay.setAttribute("role", "button")
+						overlay.setAttribute("tabindex", "0")
+						overlay.setAttribute(
+							"aria-label",
+							"Open embedded content in a new tab",
+						)
+
+						const openIframeSrcInNewTab = () => {
+							const url = iframe.getAttribute("src")
+							if (url) {
+								window.open(url, "_blank", "noopener,noreferrer")
+							}
+						}
+
+						overlay.addEventListener("click", (event) => {
+							event.preventDefault()
+							event.stopPropagation()
+							openIframeSrcInNewTab()
+						})
+
+						overlay.addEventListener("keydown", (event) => {
+							if (event.key === "Enter" || event.key === " ") {
+								event.preventDefault()
+								openIframeSrcInNewTab()
+							}
+						})
+
+						const parent = iframe.parentNode
+						if (!parent) {
+							return
+						}
+
+						parent.insertBefore(wrapper, iframe)
+						wrapper.appendChild(iframe)
+						wrapper.appendChild(overlay)
+						iframe.setAttribute("data-overlay-wrapped", "true")
+					})
+			}
+
+			attachIframeClickOverlays()
+			const iframeOverlayInterval = setInterval(
+				attachIframeClickOverlays,
+				500,
+			)
+
+
+
 			return () => {
 				window.removeEventListener("error", handleImageError, true)
 				window.removeEventListener("load", handleImageLoad, true)
+				clearInterval(iframeOverlayInterval)
 			}
 		}
 	})
@@ -173,7 +243,9 @@
 	}
 
 	@media (max-width: 700px) {
-		.bg-kenburns{display:none !important;}
+		.bg-kenburns {
+			display: none !important;
+		}
 	}
 
 	.bg-overlay {
@@ -238,8 +310,6 @@
 		padding: 0 0.4rem;
 		opacity: 0.7;
 	}
-
-
 
 	@keyframes ken-burns {
 		0% {
@@ -327,11 +397,17 @@
 	}
 
 	:global(.content-html [align="left"]),
-	:global(.pell-wrapper .pell-content [align="left"]) { text-align: left; }
+	:global(.pell-wrapper .pell-content [align="left"]) {
+		text-align: left;
+	}
 	:global(.content-html [align="center"]),
-	:global(.pell-wrapper .pell-content [align="center"]) { text-align: center; }
+	:global(.pell-wrapper .pell-content [align="center"]) {
+		text-align: center;
+	}
 	:global(.content-html [align="right"]),
-	:global(.pell-wrapper .pell-content [align="right"]) { text-align: right; }
+	:global(.pell-wrapper .pell-content [align="right"]) {
+		text-align: right;
+	}
 
 	:global(.content-html [align="left"] img),
 	:global(.content-html [align="left"] video),
@@ -419,4 +495,47 @@
 	:global(img) {
 		transition: opacity 0.3s ease;
 	}
+
+	:global(.content-html .iframe-overlay-wrapper) {
+		position: relative;
+		display: block;
+		width: 100%;
+		max-width: min(100%, 900px);
+		min-height: 320px;
+		aspect-ratio: 16 / 9;
+		margin: 1rem auto;
+		border-radius: 14px;
+		overflow: hidden;
+		box-shadow: 0 12px 28px rgba(65, 42, 20, 0.18);
+		background: #fff;
+	}
+
+	:global(.content-html .iframe-overlay-wrapper iframe) {
+		display: block;
+		width: 100%;
+		height: 100%;
+		max-width: none;
+		min-height: 0;
+		aspect-ratio: auto;
+		margin: 0;
+		border: 0;
+		border-radius: 0;
+		box-shadow: none;
+		background: #fff;
+	}
+
+	:global(.content-html .iframe-click-overlay) {
+		position: absolute;
+		inset: 0;
+		z-index: 2;
+		cursor: pointer;
+		background: transparent;
+	}
+
+
+
+
+
+
+
 </style>
