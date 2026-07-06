@@ -120,7 +120,6 @@
 	let contentHtml = $state("")
 	let addressText = $state("")
 	let locationConfirmed = $state(false)
-	let confirmedAddress = $state("")
 	let confirmedLocation = $state(null)
 	let locationError = $state("")
 	let showLocationModal = $state(false)
@@ -1205,7 +1204,7 @@
 		name: profileName,
 		description: profileDescription,
 		tags: isPostEditRoute ? $state.snapshot(postTags) : ["profile"],
-		address: locationConfirmed ? confirmedAddress : "",
+		address: locationConfirmed ? addressText : "",
 		city: locationConfirmed ? confirmedLocation?.city || "" : "",
 		state: locationConfirmed ? confirmedLocation?.state || "" : "",
 		zip: locationConfirmed ? confirmedLocation?.zip || "" : "",
@@ -1397,6 +1396,24 @@
 			buildMediaFromUrl(primary?.backgroundPic, "Profile background"),
 		])
 		editorMediaList = []
+		const bundleLocation =
+			primary?.location && typeof primary.location === "object"
+				? {
+					...primary.location,
+					city: String(primary.location.city || primary?.city || ""),
+					state: String(primary.location.state || primary?.state || ""),
+					country: String(
+						primary.location.country || primary?.country || "",
+					),
+					zip: String(primary.location.zip || primary?.zip || ""),
+				}
+				: null
+		addressText = String(
+			primary?.address || bundleLocation?.formattedAddress || "",
+		).trim()
+		confirmedLocation = bundleLocation
+		locationConfirmed = addressOkay(addressText, confirmedLocation)
+		modalLocation = confirmedLocation ? {...confirmedLocation} : null
 		existingProfileAtUri = extractRootAtUriFromBundle(bundle, uuid)
 	}
 
@@ -1430,6 +1447,22 @@
 			buildMediaFromUrl(data?.backgroundPic, "Profile background"),
 		])
 		editorMediaList = []
+		const cacheLocation =
+			data?.location && typeof data.location === "object"
+				? {
+					...data.location,
+					city: String(data.location.city || data?.city || ""),
+					state: String(data.location.state || data?.state || ""),
+					country: String(data.location.country || data?.country || ""),
+					zip: String(data.location.zip || data?.zip || ""),
+				}
+				: null
+		addressText = String(
+			data?.address || cacheLocation?.formattedAddress || "",
+		).trim()
+		confirmedLocation = cacheLocation
+		locationConfirmed = addressOkay(addressText, confirmedLocation)
+		modalLocation = confirmedLocation ? {...confirmedLocation} : null
 		existingProfileAtUri = String(data?.rootUri || data?.atUri || "").trim()
 	}
 
@@ -1460,8 +1493,9 @@
 			profileUploadedMedia,
 			backgroundUploadedMedia,
 			editorMediaList,
+			addressText,
 			locationConfirmed,
-			confirmedAddress,
+			confirmedAddress: addressText,
 			confirmedLocation,
 			tags: $state.snapshot(postTags),
 		}
@@ -1558,12 +1592,18 @@
 					(entry) => entry && typeof entry === "object",
 				)
 			: []
-		locationConfirmed = Boolean(profile.locationConfirmed || false)
-		confirmedAddress = String(profile.confirmedAddress || "")
+		addressText = String(profile.addressText || profile.confirmedAddress || "")
 		confirmedLocation = profile.confirmedLocation || null
+		if (!addressText && confirmedLocation) {
+			addressText = buildCompleteAddress(confirmedLocation)
+		}
+		locationConfirmed =
+			Boolean(profile.locationConfirmed || false) &&
+			addressOkay(addressText, confirmedLocation)
 		if (confirmedLocation) {
 			modalLocation = { ...confirmedLocation }
-			addressText = confirmedAddress
+		} else {
+			modalLocation = null
 		}
 	}
 
@@ -1955,7 +1995,7 @@
 					name: profileName,
 					description: profileDescription,
 					tags: activeTags,
-					address: locationConfirmed ? confirmedAddress : "",
+					address: locationConfirmed ? addressText : "",
 					city: locationConfirmed ? confirmedLocation?.city || "" : "",
 					state: locationConfirmed ? confirmedLocation?.state || "" : "",
 					zip: locationConfirmed ? confirmedLocation?.zip || "" : "",
@@ -2548,6 +2588,10 @@
 		profileDescription = ""
 		postTags = []
 		contentHtml = ""
+		addressText = ""
+		locationConfirmed = false
+		confirmedLocation = null
+		modalLocation = null
 		profileUploadedMedia = []
 		backgroundUploadedMedia = []
 		editorMediaList = []
@@ -2747,9 +2791,10 @@
 					profileUploadedMedia = []
 					backgroundUploadedMedia = []
 					editorMediaList = []
+					addressText = ""
 					locationConfirmed = false
-					confirmedAddress = ""
 					confirmedLocation = null
+					modalLocation = null
 					initialProfileSnapshot = cloneStoredProfile(buildStoredProfile())
 					storageReady = true
 					setStoredSnapshotBaseline(buildStoredProfileForStorage())
@@ -2799,6 +2844,10 @@
 						profileUploadedMedia = []
 						backgroundUploadedMedia = []
 						editorMediaList = []
+						addressText = ""
+						locationConfirmed = false
+						confirmedLocation = null
+						modalLocation = null
 						initialProfileSnapshot =
 							cloneStoredProfile(buildStoredProfile())
 						setStoredSnapshotBaseline(
@@ -2904,6 +2953,10 @@
 					profileUploadedMedia = []
 					backgroundUploadedMedia = []
 					editorMediaList = []
+					addressText = ""
+					locationConfirmed = false
+					confirmedLocation = null
+					modalLocation = null
 					initialProfileSnapshot =
 						cloneStoredProfile(buildStoredProfile())
 					setStoredSnapshotBaseline(buildStoredProfileForStorage())
@@ -3349,14 +3402,19 @@
 				locationConfirmed = result.locationConfirmed
 				return
 			}
-			addressText = result.addressText
-			confirmedAddress = result.confirmedAddress
-			locationConfirmed = result.locationConfirmed
+			addressText = String(
+				result.confirmedAddress || result.addressText || "",
+			).trim()
 			if (result.confirmedLocation) {
 				confirmedLocation = result.confirmedLocation
 			}
+			locationConfirmed =
+				Boolean(result.locationConfirmed) &&
+				addressOkay(addressText, confirmedLocation)
 			if (result.modalLocation) {
 				modalLocation = result.modalLocation
+			} else if (confirmedLocation) {
+				modalLocation = { ...confirmedLocation }
 			}
 			locationError = ""
 			showLocationModal = false
