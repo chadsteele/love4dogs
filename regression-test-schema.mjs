@@ -31,8 +31,33 @@ import { formatDisplayAddress } from './src/lib/addressFormat.js';
 import {
 	extractImagesFromPost,
 	collectOriginPayloadCandidatesFromPosts,
+	buildCombinedPayloadBundle,
+	buildChunkEntriesFromBundle,
+	buildChunkAltPayload,
+	inflateChunkAltPayloadHtml,
+	measureChunkAltPayloadLength,
 } from './src/lib/bskyChunkStore.js';
-import { processQueryForNearMe } from './src/lib/locationUtils.js';
+import {
+	processQueryForNearMe,
+	hasRequiredLocationParts,
+	addressOkay,
+	handleLocationModalConfirm,
+} from './src/lib/locationUtils.js';
+import {
+	writeStoredProfileByUuid,
+	upsertStoredProfile,
+	listStoredProfiles,
+	rebuildStoredProfileFromBundle,
+} from './src/lib/profileRegistry.js';
+import * as postApiMediaAltTest from './src/lib/mediaAltSchema.js';
+import {
+	normalizeContactInput,
+	encryptContact,
+	decryptContact,
+	extractExactHashFromPost,
+	isPostInWater,
+	cleanWaterPostsFromCaches,
+} from './src/lib/utils.js';
 
 
 const {assert, assertEqual, counts} = createAssertions();
@@ -247,8 +272,12 @@ async function runDatabaseCacheTests() {
 	const post105 = await getPost('at://test-post-105');
 	assert(post105 !== null, 'Newest post (post 105) is retained');
 
-	// 3. Verify TTL expiration
-	console.log('  Testing 7-day TTL expiration...');
+	// 3. Verify no age-based expiration (volume-based policy only)
+	console.log('  Testing no age-based expiration for posts...');
+	const beforeNoAgePosts = await getAllPosts();
+	for (const post of beforeNoAgePosts) {
+		await deletePost(post.uri);
+	}
 	const uriExpired = 'at://test-post-expired';
 	const eightDaysAgo = Date.now() - (8 * 24 * 60 * 60 * 1000);
 	await setPost(uriExpired, {
@@ -260,29 +289,16 @@ async function runDatabaseCacheTests() {
 		_testCachedAt: eightDaysAgo
 	});
 
-	// The post should be immediately filtered out/deleted on getPost
 	const retrievedExpired = await getPost(uriExpired);
-	assertEqual(retrievedExpired, null, 'Expired post is filtered out and deleted on getPost');
+	assert(retrievedExpired !== null, 'Old post is retained regardless of age under volume-based policy');
+	assertEqual(retrievedExpired?.uri, uriExpired, 'Old post lookup returns stored post');
 
-	// And it should not show up in getAllPosts
-	await setPost(uriExpired, {
-		uri: uriExpired,
-		title: 'Expired Post',
-		authorid: 'test-profile-uuid',
-		authorName: 'Test Profile',
-		authorAvatar: 'https://cdn.bsky.app/avatar.jpg',
-		_testCachedAt: eightDaysAgo
-	});
-	const postsWithExpired = await getAllPosts();
-	const foundExpired = postsWithExpired.find(p => p.uri === uriExpired);
-	assertEqual(foundExpired, undefined, 'Expired post is filtered out from getAllPosts');
-	
-	// Check that it was actually deleted from database as well
-	const retrievedExpiredAgain = await getPost(uriExpired);
-	assertEqual(retrievedExpiredAgain, null, 'Expired post was deleted from database');
+	const postsWithOld = await getAllPosts();
+	const foundOld = postsWithOld.find(p => p.uri === uriExpired);
+	assert(foundOld !== undefined, 'Old post remains present in getAllPosts under volume-based policy');
 
-	// 4. Verify Profile TTL expiration (24 hours)
-	console.log('  Testing 24-hour Profile TTL expiration...');
+	// 4. Verify no age-based expiration for cached profiles
+	console.log('  Testing no age-based expiration for cached profiles...');
 	const profileUuidExpired = 'test-profile-expired';
 	const twentyFiveHoursAgo = Date.now() - (25 * 60 * 60 * 1000);
 	await setProfile(profileUuidExpired, {
@@ -290,9 +306,9 @@ async function runDatabaseCacheTests() {
 		data: { uuid: profileUuidExpired, name: 'Expired Profile' }
 	});
 
-	// It should be filtered out and deleted on getProfile
 	const retrievedExpiredProfile = await getProfile(profileUuidExpired);
-	assertEqual(retrievedExpiredProfile, null, 'Expired profile is filtered out and deleted on getProfile');
+	assert(retrievedExpiredProfile !== null, 'Cached profile is retained regardless of age under volume-based policy');
+	assertEqual(retrievedExpiredProfile?.data?.uuid, profileUuidExpired, 'Old cached profile lookup returns stored profile');
 
 	// Draft profiles (no cachedAt or data wrapping) should NOT expire
 	const profileUuidDraft = 'test-profile-draft';
@@ -352,7 +368,68 @@ async function runDatabaseCacheTests() {
 	assert(firstKeptImg !== null, 'First kept image (index 6) is retained');
 }
 
-import { cleanWaterPostsFromCaches, extractExactHashFromPost, isPostInWater } from './src/lib/utils.js';
+function runMediaAltContractTests() {
+	console.log('Testing media alt schema + size contracts...');
+
+	const blob = {
+		$type: 'blob',
+		ref: { $link: 'bafkreigh2akiscaildcj7s3q5xexamplecid' },
+		mimeType: 'image/jpeg',
+		size: 1234,
+	};
+
+	const canonicalAlt = postApiMediaAltTest.normalizeAltForPublish(
+		{
+			alt: 'Photo',
+			sourceUrl: '/Users/chad/Pictures/buddy.jpg',
+			sourceName: 'buddy.jpg',
+		},
+		{ kind: 'image', blob },
+	);
+	const parsedCanonical = JSON.parse(canonicalAlt);
+	assertEqual(parsedCanonical.schema, postApiMediaAltTest.MEDIA_ALT_SCHEMA, 'Canonical media alt sets schema marker');
+	assert(Boolean(parsedCanonical.uuid), 'Canonical media alt includes uuid');
+	assertEqual(parsedCanonical.path, '/Users/chad/Pictures/buddy.jpg', 'Canonical media alt includes full source path');
+	assertEqual(parsedCanonical.filename, 'buddy.jpg', 'Canonical media alt includes source filename');
+	assertEqual(parsedCanonical.blob?.ref?.$link, blob.ref.$link, 'Canonical media alt includes blob reference');
+
+	const chunkAlt = JSON.stringify({ u: 'abc123', i: 1, t: 2, h: '<p>hello</p>' });
+	const preservedChunkAlt = postApiMediaAltTest.normalizeAltForPublish(
+		{ alt: chunkAlt },
+		{ kind: 'image', blob },
+	);
+	assertEqual(preservedChunkAlt, chunkAlt, 'Chunk payload alt JSON is preserved and not rewritten as media schema');
+
+	const tooLongAlt = 'x'.repeat(postApiMediaAltTest.MAX_MEDIA_ALT_CHARS + 1);
+	let threwLengthError = false;
+	try {
+		postApiMediaAltTest.normalizeAltForPublish(
+			{ alt: tooLongAlt },
+			{ kind: 'image', blob },
+		);
+	} catch (error) {
+		threwLengthError = /exceeds 3000/i.test(String(error?.message || ''));
+	}
+	assert(threwLengthError, 'Media alt values over 3000 chars are rejected');
+
+	const invalidSchemaAlt = JSON.stringify({
+		schema: postApiMediaAltTest.MEDIA_ALT_SCHEMA,
+		uuid: 'abc123',
+		path: '/tmp/a.jpg',
+		filename: 'a.jpg',
+	});
+	let threwSchemaError = false;
+	try {
+		postApiMediaAltTest.normalizeAltForPublish(
+			{ alt: invalidSchemaAlt },
+			{ kind: 'image', blob: null },
+		);
+	} catch (error) {
+		threwSchemaError = /valid blob reference|requires path and blob/i.test(String(error?.message || ''));
+	}
+	assert(threwSchemaError, 'Canonical media alt schema requires valid blob reference');
+}
+
 import isSea from 'is-sea';
 
 async function runCacheWaterCleanupTests() {
@@ -553,6 +630,184 @@ function runWaterPostDetectionTests() {
 	assertEqual(isPostInWater({}, isSea), false, 'Empty post is not in water');
 }
 
+function runChunkCompressionAndManifestContractTests() {
+	console.log('Testing chunk compression + manifest contracts...');
+
+	const repeatedHtml = Array.from({ length: 60 }, (_, i) =>
+		`<div><figure><img src=\"https://cdn.bsky.app/img/feed_fullsize/plain/did:plc:test/cid-${i}@jpeg\" alt=\"Dog ${i}\" /></figure><p><strong>Adopt me ${i}</strong></p></div>`
+	).join('');
+
+	const bundle = buildCombinedPayloadBundle(
+		{
+			uuid: 'chunk-contract-uuid',
+			name: 'Chunk Contract Profile',
+			description: 'Long HTML payload for chunking contract checks',
+			tags: ['profile'],
+		},
+		[repeatedHtml],
+		{ uuid: 'chunk-contract-uuid', maxPayloadChars: 2000 },
+	);
+
+	assert(bundle.fragments.length > 1, 'Long bundle payload is split into multiple chunks');
+
+	const entries = buildChunkEntriesFromBundle(bundle);
+	assertEqual(entries.length, bundle.fragments.length, 'Chunk entries count matches bundle fragments');
+
+	for (const entry of entries) {
+		const measured = measureChunkAltPayloadLength(entry.bundleFragment, {
+			uuid: 'chunk-contract-uuid',
+			index: entry.index,
+			total: entries.length,
+		});
+		assert(
+			measured <= 2000,
+			`Chunk ${entry.index} alt payload length stays within target budget`,
+			`measured=${measured}`,
+		);
+
+		const payload = buildChunkAltPayload(
+			{ uuid: 'chunk-contract-uuid', index: entry.index, total: entries.length },
+			entry.bundleFragment,
+		);
+		const inflated = inflateChunkAltPayloadHtml(payload);
+		assertEqual(
+			inflated,
+			entry.bundleFragment,
+			`Chunk ${entry.index} payload round-trips through compression+inflate`,
+		);
+	}
+}
+
+async function runLocationValidationContractTests() {
+	console.log('Testing location validation contracts...');
+
+	assert(
+		hasRequiredLocationParts({ state: 'CA', country: 'US', zip: '94103' }),
+		'Location requires state/country/zip for confirmation',
+	);
+	assert(
+		!hasRequiredLocationParts({ city: 'San Francisco', country: 'US', zip: '94103' }),
+		'Location confirmation fails when state is missing',
+	);
+
+	assert(
+		addressOkay('123 Main St, San Francisco, CA, US, 94103', {
+			city: 'San Francisco',
+			state: 'CA',
+			country: 'US',
+			zip: '94103',
+		}),
+		'Address validation requires city/state/country/zip presence in confirmed address',
+	);
+	assert(
+		!addressOkay('123 Main St, San Francisco, US, 94103', {
+			city: 'San Francisco',
+			state: 'CA',
+			country: 'US',
+			zip: '94103',
+		}),
+		'Address validation fails when required location fragments are missing from text',
+	);
+
+	const missingPartsResult = await handleLocationModalConfirm(
+		null,
+		false,
+		{ city: 'Austin', state: '', country: 'US', zip: '' },
+		'Austin',
+	);
+	assertEqual(
+		missingPartsResult.locationConfirmed,
+		false,
+		'Location cannot be confirmed when required parts are absent',
+	);
+	assert(
+		String(missingPartsResult.locationError || '').includes('state, country, and zip'),
+		'Missing location parts returns explicit guidance',
+	);
+}
+
+async function runProfileOwnershipAndObfuscationContractTests() {
+	console.log('Testing profile ownership + obfuscation contracts...');
+
+	await writeStoredProfileByUuid('owner-a', {
+		uuid: 'owner-a',
+		profileName: 'Owner A',
+		pin: '111111',
+	});
+	await writeStoredProfileByUuid('owner-b', {
+		uuid: 'owner-b',
+		profileName: 'Owner B',
+		pin: '222222',
+	});
+	await upsertStoredProfile({ uuid: 'owner-a', profileName: 'Owner A' });
+	await upsertStoredProfile({ uuid: 'owner-b', profileName: 'Owner B' });
+
+	const ownedProfiles = await listStoredProfiles();
+	const ownerA = ownedProfiles.find((entry) => entry.uuid === 'owner-a');
+	const ownerB = ownedProfiles.find((entry) => entry.uuid === 'owner-b');
+	assert(Boolean(ownerA && ownerB), 'Multiple local profiles can be owned simultaneously');
+
+	const EPOCH_OFFSET = 946684740000;
+	const stampMs = Date.now();
+	const stamp = Math.floor(stampMs).toString(36);
+	const pin = '654321';
+	const birthdate = (stampMs - EPOCH_OFFSET + Number(pin)).toString(36);
+	const rebuilt = rebuildStoredProfileFromBundle({
+		primary: {
+			uuid: 'pin-profile',
+			stamp,
+			birthdate,
+			name: 'PIN Profile',
+			tags: ['profile'],
+		},
+		subsequent: [],
+	}, { uuid: 'pin-profile' });
+	assertEqual(
+		rebuilt?.profile?.pin,
+		pin,
+		'Profile bundle can reconstruct the PIN from obfuscated birthdate+stamp payload',
+	);
+
+	const normalizedContact = normalizeContactInput('Example+User@DogMail.com ');
+	const encryptedContact = encryptContact(normalizedContact);
+	assert(encryptedContact.length > 0, 'Contact encryption returns obfuscated value');
+	assertEqual(
+		decryptContact(encryptedContact),
+		normalizedContact,
+		'Contact obfuscation is reversible with app alphabet mapping',
+	);
+}
+
+function runReactionAndMappabilityContractTests() {
+	console.log('Testing reaction/context and mapability contracts...');
+
+	const reactionPost = {
+		imageAlts: [
+			JSON.stringify({
+				uuid: 'reaction-1',
+				context: 'source-post-123',
+				text: '⭐️⭐️⭐️⭐️⭐️',
+			}),
+		],
+	};
+	assertEqual(classifyPost(reactionPost), 'comment', 'Reaction payload with context is classified as comment-style post');
+
+	const nonMappableChatPost = {
+		imageAlts: [JSON.stringify({ uuid: 'chat-1', context: 'source-post-123', text: 'Nice pup!' })],
+		text: 'Nice pup!',
+	};
+	assertEqual(
+		extractExactHashFromPost(nonMappableChatPost),
+		'',
+		'Context-only chat/reaction posts are not inherently mappable (no location hash)',
+	);
+	assertEqual(
+		isPostInWater(nonMappableChatPost, isSea),
+		false,
+		'Non-mappable posts do not trigger water detection path',
+	);
+}
+
 async function main() {
 	console.log('============================================================');
 	console.log('Schema Regression Test - love4dogs');
@@ -567,6 +822,11 @@ async function main() {
 	await runCacheWaterCleanupTests();
 	runWaterPostDetectionTests();
 	runPostClassificationTests();
+	runChunkCompressionAndManifestContractTests();
+	await runLocationValidationContractTests();
+	await runProfileOwnershipAndObfuscationContractTests();
+	runReactionAndMappabilityContractTests();
+	runMediaAltContractTests();
 	runChunkStoreUnitTests();
 	await runSearchFallbackAndGeocodingTests();
 

@@ -278,7 +278,7 @@ export function buildLocationBlock(location, mapBaseUrl = DEFAULT_MAP_BASE_URL) 
 	const details = [location.city, location.state, location.country, location.zip]
 		.filter(Boolean)
 		.join(', ');
-	return `\n\n📍 ${localizedMapBaseUrl}/${hash.path}\n${details}`;
+	return `\n\n${details}`;
 }
 
 export async function lookupLocationDetails(lat, lon, options = {}) {

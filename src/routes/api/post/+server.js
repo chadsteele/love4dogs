@@ -2,6 +2,12 @@ import { env } from '$env/dynamic/private';
 import { createIsoTimestamp } from '$lib/dateTime.js';
 import { MEDIA_TOKEN_PREFIX } from '$lib/utils.js';
 import { normalizePostType, upsertTypeTag } from '$lib/postTypeTags.js';
+import {
+	MAX_MEDIA_ALT_CHARS,
+	MEDIA_ALT_SCHEMA,
+	ensureAltLength,
+	normalizeAltForPublish,
+} from '$lib/mediaAltSchema.js';
 import { createHash } from 'node:crypto';
 import { AtpAgent, RichText } from '@atproto/api';
 import { getPost, setPost } from '$lib/db.js';
@@ -84,6 +90,13 @@ function parseExplicitTags(rawValue = '') {
 		.map((entry) => String(entry || '').trim().toLowerCase())
 		.filter(Boolean);
 }
+
+export const __test = {
+	MAX_MEDIA_ALT_CHARS,
+	MEDIA_ALT_SCHEMA,
+	ensureAltLength,
+	normalizeAltForPublish,
+};
 
 function buildImageEmbed(uploadedImages) {
 	if (!uploadedImages.length) return null;
@@ -839,6 +852,7 @@ export async function POST({ request }) {
 			const blob = await uploadBlob(session.accessJwt, file, 'Image');
 			const cachePostText = cacheText.slice(0, 300);
 			const cacheFacets = await buildRichTextFacets(cachePostText);
+			ensureAltLength(sourceUrl, 'Image cache alt text');
 			const record = {
 				$type: 'app.bsky.feed.post',
 				text: cachePostText,
@@ -1168,9 +1182,10 @@ export async function POST({ request }) {
 						headers: { 'content-type': 'application/json' }
 					});
 				}
+				const alt = normalizeAltForPublish(image, { kind: 'image', blob: image.blob });
 				uploaded.push({
 					blob: image.blob,
-					alt: String(image.alt || 'Photo')
+					alt
 				});
 			}
 
@@ -1182,21 +1197,30 @@ export async function POST({ request }) {
 						headers: { 'content-type': 'application/json' }
 					});
 				}
+				const alt = normalizeAltForPublish(video, { kind: 'video', blob: video.blob });
 				uploadedVideo = {
 					blob: video.blob,
-					alt: String(video.alt || 'Video')
+					alt
 				};
 			}
 		} else {
 			for (const image of images) {
 				const blob = await uploadBlob(session.accessJwt, image, 'Image');
-				uploaded.push({ blob, alt: image.name || 'Photo' });
+				const alt = normalizeAltForPublish(
+					{ alt: image.name || 'Photo' },
+					{ kind: 'image', blob },
+				);
+				uploaded.push({ blob, alt });
 			}
 
 			if (videos.length === 1) {
 				const video = videos[0];
 				const blob = await uploadBlob(session.accessJwt, video, 'Video');
-				uploadedVideo = { blob, alt: video.name || 'Video' };
+				const alt = normalizeAltForPublish(
+					{ alt: video.name || 'Video' },
+					{ kind: 'video', blob },
+				);
+				uploadedVideo = { blob, alt };
 			}
 		}
 
@@ -1403,6 +1427,12 @@ export async function POST({ request }) {
 			headers: { 'content-type': 'application/json' }
 		});
 	} catch (error) {
+		if (/alt text|media alt json|media metadata/i.test(String(error?.message || ''))) {
+			return new Response(JSON.stringify({ error: String(error.message || 'Invalid media alt payload.') }), {
+				status: 400,
+				headers: { 'content-type': 'application/json' }
+			});
+		}
 		console.error('POST /api/post failed:', error?.message || error, error?.stack || '');
 		return new Response(JSON.stringify({ error: error.message || 'Unexpected error.' }), {
 			status: 500,

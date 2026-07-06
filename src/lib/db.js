@@ -121,28 +121,14 @@ export async function removeSetting(key) {
 // ── Profiles store helpers ──────────────────────────────────────────────────
 export async function getProfile(uuid) {
 	const db = await getDB();
-	const PROFILE_VIEW_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 	if (!db) {
-		const profile = memoryStores.profiles.get(uuid) || null;
-		if (profile && profile.cachedAt && profile.data && Date.now() - profile.cachedAt > PROFILE_VIEW_CACHE_TTL_MS) {
-			memoryStores.profiles.delete(uuid);
-			return null;
-		}
-		return profile;
+		return memoryStores.profiles.get(uuid) || null;
 	}
 	return new Promise((resolve) => {
 		const tx = db.transaction('profiles', 'readonly');
 		const store = tx.objectStore('profiles');
 		const req = store.get(uuid);
-		req.onsuccess = () => {
-			const profile = req.result || null;
-			if (profile && profile.cachedAt && profile.data && Date.now() - profile.cachedAt > PROFILE_VIEW_CACHE_TTL_MS) {
-				deleteProfile(uuid).catch(() => {});
-				resolve(null);
-			} else {
-				resolve(profile);
-			}
-		};
+		req.onsuccess = () => resolve(req.result || null);
 		req.onerror = () => resolve(null);
 	});
 }
@@ -152,13 +138,9 @@ export async function setProfile(uuid, data) {
 	const unwrapped = unwrap(data);
 	if (!db) {
 		memoryStores.profiles.set(uuid, unwrapped);
-		const now = Date.now();
-		const PROFILE_VIEW_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 		const remaining = [];
 		for (const [key, val] of memoryStores.profiles.entries()) {
-			if (val && val.cachedAt && val.data && now - val.cachedAt > PROFILE_VIEW_CACHE_TTL_MS) {
-				memoryStores.profiles.delete(key);
-			} else if (val && val.cachedAt && val.data) {
+			if (val && val.cachedAt && val.data) {
 				remaining.push({ key, val });
 			}
 		}
@@ -185,19 +167,13 @@ export async function setProfile(uuid, data) {
 				items.push({ key: cursor.key, value: cursor.value });
 				cursor.continue();
 			} else {
-				const now = Date.now();
-				const PROFILE_VIEW_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 				const toDelete = [];
 				const remaining = [];
 				
 				for (const item of items) {
 					const val = item.value;
 					if (val && val.cachedAt && val.data) {
-						if (now - val.cachedAt > PROFILE_VIEW_CACHE_TTL_MS) {
-							toDelete.push(item.key);
-						} else {
-							remaining.push(item);
-						}
+						remaining.push(item);
 					}
 				}
 				
@@ -237,49 +213,14 @@ export async function deleteProfile(uuid) {
 
 export async function getAllProfiles() {
 	const db = await getDB();
-	const PROFILE_VIEW_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 	if (!db) {
-		const now = Date.now();
-		const results = [];
-		for (const [key, profile] of memoryStores.profiles.entries()) {
-			if (profile && profile.cachedAt && profile.data && now - profile.cachedAt > PROFILE_VIEW_CACHE_TTL_MS) {
-				memoryStores.profiles.delete(key);
-			} else {
-				results.push(profile);
-			}
-		}
-		return results;
+		return Array.from(memoryStores.profiles.values());
 	}
 	return new Promise((resolve) => {
 		const tx = db.transaction('profiles', 'readonly');
 		const store = tx.objectStore('profiles');
-		const keysReq = store.getAllKeys();
-		const valsReq = store.getAll();
-
-		tx.oncomplete = () => {
-			const keys = keysReq.result || [];
-			const vals = valsReq.result || [];
-			const now = Date.now();
-			const valid = [];
-			const expiredKeys = [];
-			for (let i = 0; i < vals.length; i++) {
-				const profile = vals[i];
-				const key = keys[i];
-				if (profile && profile.cachedAt && profile.data && now - profile.cachedAt > PROFILE_VIEW_CACHE_TTL_MS) {
-					expiredKeys.push(key);
-				} else {
-					valid.push(profile);
-				}
-			}
-			if (expiredKeys.length > 0) {
-				const writeTx = db.transaction('profiles', 'readwrite');
-				const writeStore = writeTx.objectStore('profiles');
-				for (const key of expiredKeys) {
-					writeStore.delete(key);
-				}
-			}
-			resolve(valid);
-		};
+		const req = store.getAll();
+		req.onsuccess = () => resolve(req.result || []);
 		tx.onerror = () => resolve([]);
 	});
 }
@@ -288,26 +229,13 @@ export async function getAllProfiles() {
 export async function getPost(uri) {
 	const db = await getDB();
 	if (!db) {
-		const post = memoryStores.posts.get(uri) || null;
-		if (post && post.cachedAt && Date.now() - post.cachedAt > 7 * 24 * 60 * 60 * 1000) {
-			memoryStores.posts.delete(uri);
-			return null;
-		}
-		return post;
+		return memoryStores.posts.get(uri) || null;
 	}
 	return new Promise((resolve) => {
 		const tx = db.transaction('posts', 'readonly');
 		const store = tx.objectStore('posts');
 		const req = store.get(uri);
-		req.onsuccess = () => {
-			const post = req.result || null;
-			if (post && post.cachedAt && Date.now() - post.cachedAt > 7 * 24 * 60 * 60 * 1000) {
-				deletePost(uri).catch(() => {});
-				resolve(null);
-			} else {
-				resolve(post);
-			}
-		};
+		req.onsuccess = () => resolve(req.result || null);
 		req.onerror = () => resolve(null);
 	});
 }
@@ -321,16 +249,9 @@ export async function setPost(uri, data) {
 	if (!db) {
 		memoryStores.posts.set(uri, unwrapped);
 		// Prune memory store
-		const now = Date.now();
-		const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
 		const remaining = [];
 		for (const [key, val] of memoryStores.posts.entries()) {
-			const cachedAt = val?.cachedAt || 0;
-			if (now - cachedAt > sevenDaysMs) {
-				memoryStores.posts.delete(key);
-			} else {
-				remaining.push({ key, val });
-			}
+			remaining.push({ key, val });
 		}
 		if (remaining.length > 100) {
 			remaining.sort((a, b) => (a.val?.cachedAt || 0) - (b.val?.cachedAt || 0));
@@ -357,18 +278,11 @@ export async function setPost(uri, data) {
 				items.push({ key: cursor.key, value: cursor.value });
 				cursor.continue();
 			} else {
-				const now = Date.now();
-				const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
 				const toDelete = [];
 				const remaining = [];
 				
 				for (const item of items) {
-					const cachedAt = item.value?.cachedAt || 0;
-					if (now - cachedAt > sevenDaysMs) {
-						toDelete.push(item.key);
-					} else {
-						remaining.push(item);
-					}
+					remaining.push(item);
 				}
 				
 				if (remaining.length > 100) {
@@ -408,45 +322,13 @@ export async function deletePost(uri) {
 export async function getAllPosts() {
 	const db = await getDB();
 	if (!db) {
-		const now = Date.now();
-		const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
-		const results = [];
-		for (const [key, post] of memoryStores.posts.entries()) {
-			if (post && post.cachedAt && now - post.cachedAt > sevenDaysMs) {
-				memoryStores.posts.delete(key);
-			} else {
-				results.push(post);
-			}
-		}
-		return results;
+		return Array.from(memoryStores.posts.values());
 	}
 	return new Promise((resolve) => {
 		const tx = db.transaction('posts', 'readonly');
 		const store = tx.objectStore('posts');
 		const req = store.getAll();
-		req.onsuccess = () => {
-			const posts = req.result || [];
-			const now = Date.now();
-			const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
-			const valid = [];
-			const expiredKeys = [];
-			for (const post of posts) {
-				if (post && post.cachedAt && now - post.cachedAt > sevenDaysMs) {
-					const key = post.uri || post.displayKey;
-					if (key) expiredKeys.push(key);
-				} else {
-					valid.push(post);
-				}
-			}
-			if (expiredKeys.length > 0) {
-				const writeTx = db.transaction('posts', 'readwrite');
-				const writeStore = writeTx.objectStore('posts');
-				for (const key of expiredKeys) {
-					writeStore.delete(key);
-				}
-			}
-			resolve(valid);
-		};
+		req.onsuccess = () => resolve(req.result || []);
 		req.onerror = () => resolve([]);
 	});
 }

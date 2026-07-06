@@ -532,7 +532,20 @@
 		background: transparent;
 	}
 
+	:global(.content-html button, .editor-wrap button) {
+		font-size: 0.78rem;
+    padding: 0.28rem 0.62rem;
+    border-radius: 999px;
+    border: 1px solid #c4b89e;
+    background: linear-gradient(180deg, #fffdf9 0%, #f8f1e6 100%);
+    color: #3b5e47;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: background 0.12s, color 0.12s, border-color 0.12s, box-shadow 0.12s, transform 0.08s;
+    line-height: 1.4;
 
+	}
 
 
 
