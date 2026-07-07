@@ -100,6 +100,7 @@
 	let stylePaintAwaitingFreshSelection = false
 	let lastEditorRange = null
 	let lastEditorExpandedRange = null
+	let insertModalRange = null
 	let insertModalOpen = $state(false)
 	let insertModalTab = $state("button")
 	let insertButtonLabel = $state("Open link")
@@ -392,9 +393,13 @@
 		})
 	}
 
-	function insertHtmlAtCaret(contentEl, html) {
+	function insertHtmlAtCaret(contentEl, html, preferredRange = null) {
 		contentEl.focus()
 		const sel = window.getSelection()
+		if (sel && preferredRange && contentEl.contains(preferredRange.commonAncestorContainer)) {
+			sel.removeAllRanges()
+			sel.addRange(preferredRange)
+		}
 		if (sel && sel.rangeCount > 0) {
 			const range = sel.getRangeAt(0)
 			range.deleteContents()
@@ -1852,7 +1857,7 @@
 	}
 
 	function buildButtonLinkHtml(label = "", url = "") {
-		return `<a class="editor-inline-button" href="${escapeHtmlAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHtmlText(label)}</a>`
+		return `<a href="${escapeHtmlAttr(url)}" target="_blank" rel="noopener noreferrer"><button type="button">${escapeHtmlText(label)}</button></a>`
 	}
 
 	function buildButtonPreviewHtml(label = "") {
@@ -1864,6 +1869,19 @@
 	}
 
 	function openInsertModal(tab = "button") {
+		const contentEl = pellEditor?.content
+		insertModalRange = null
+		if (contentEl) {
+			const currentRange = getSelectionRange(contentEl)
+			if (currentRange) {
+				insertModalRange = currentRange.cloneRange()
+			} else if (
+				lastEditorRange &&
+				contentEl.contains(lastEditorRange.commonAncestorContainer)
+			) {
+				insertModalRange = lastEditorRange.cloneRange()
+			}
+		}
 		insertModalTab = tab
 		insertModalError = ""
 		insertModalOpen = true
@@ -1872,12 +1890,17 @@
 	function closeInsertModal() {
 		insertModalOpen = false
 		insertModalError = ""
+		insertModalRange = null
 	}
 
 	function insertFromModal() {
 		const contentEl = pellEditor?.content
 		if (!contentEl) return
 		insertModalError = ""
+		const preferredRange =
+			insertModalRange && contentEl.contains(insertModalRange.commonAncestorContainer)
+				? insertModalRange.cloneRange()
+				: null
 
 		if (insertModalTab === "button") {
 			const label = String(insertButtonLabel || "").trim()
@@ -1890,7 +1913,7 @@
 				insertModalError = "Please enter a valid http(s) URL for the button."
 				return
 			}
-			insertHtmlAtCaret(contentEl, buildButtonLinkHtml(label, url))
+			insertHtmlAtCaret(contentEl, buildButtonLinkHtml(label, url), preferredRange)
 			closeInsertModal()
 			return
 		}
@@ -1901,7 +1924,7 @@
 				insertModalError = "Please enter a valid http(s) URL for the iframe."
 				return
 			}
-			insertHtmlAtCaret(contentEl, buildIframeHtml(url))
+			insertHtmlAtCaret(contentEl, buildIframeHtml(url), preferredRange)
 			closeInsertModal()
 			return
 		}
@@ -1916,7 +1939,7 @@
 			insertModalError = "Embed code did not contain supported embeddable markup."
 			return
 		}
-		insertHtmlAtCaret(contentEl, sanitized)
+		insertHtmlAtCaret(contentEl, sanitized, preferredRange)
 		closeInsertModal()
 	}
 
@@ -2761,23 +2784,6 @@
 		overflow-wrap: anywhere;
 		word-break: break-word;
 		word-wrap: break-word;
-	}
-
-	:global(.pell-content a.editor-inline-button) {
-		display: inline-block;
-		padding: 0.45rem 0.75rem;
-		margin: 0.2rem 0;
-		border-radius: 8px;
-		border: 1px solid #3f6b44;
-		background: #3f6b44;
-		color: #ffffff;
-		text-decoration: none;
-		font-weight: 600;
-	}
-
-	:global(.pell-content a.editor-inline-button:hover) {
-		background: #355c3a;
-		border-color: #355c3a;
 	}
 
 	.pell-wrapper :global(.pell-content) {

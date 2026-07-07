@@ -181,9 +181,6 @@
 			const endsWithHashtag = /#\w+\s*$/.test(profileDescription)
 			const addition = endsWithHashtag ? (" #" + word) : ("\n#" + word)
 			const proposedValue = (profileDescription.trim() + addition).trim()
-			if (proposedValue.length + nameCharCount > 300) {
-				return
-			}
 			profileDescription = proposedValue
 		}
 		activateValidation()
