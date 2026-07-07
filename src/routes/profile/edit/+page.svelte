@@ -2971,6 +2971,10 @@
 
 		init()
 
+		setTimeout(() => {
+			document.getElementById("unlock-pin-input")?.focus()
+		}, 500)
+
 		return () => {
 			disposed = true
 			if (intervalId) clearInterval(intervalId)
@@ -3165,16 +3169,17 @@
 				<p class="lock-desc">This profile is protected by a PIN. Please enter the 6-digit PIN to enable editing.</p>
 				<div class="unlock-row">
 					<input
+						id="unlock-pin-input"
 						type="password"
 						pattern="[0-9]*"
 						inputmode="numeric"
 						maxlength="6"
-						placeholder="••••••"
 						bind:value={enteredPin}
 						onkeydown={(e) => {
 							if (e.key === "Enter") handleUnlock();
 						}}
 						class="unlock-pin-input"
+						
 					/>
 					<button type="button" class="primary" onclick={handleUnlock}>
 						Unlock

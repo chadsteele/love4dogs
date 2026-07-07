@@ -1,9 +1,41 @@
+function normalizePart(value = "") {
+	return String(value || "").trim();
+}
+
+function splitBeforeToken(input, token, useLastIndex = false) {
+	if (!token) return input;
+	const pos = useLastIndex ? input.lastIndexOf(token) : input.indexOf(token);
+	if (pos <= 0) return input;
+
+	const before = input.slice(0, pos);
+	const after = input.slice(pos);
+
+	if (before.endsWith(", ")) return before.slice(0, -2) + "\n" + after;
+	if (before.endsWith(",")) return before.slice(0, -1) + "\n" + after;
+	return before + "\n" + after;
+}
+
+function buildMultilineFromParts(parts, city, zip) {
+	let out = "";
+	for (let i = 0; i < parts.length; i++) {
+		if (i > 0) {
+			if (parts[i] === zip || parts[i] === city) {
+				out += "\n";
+			} else if (!out.endsWith("\n")) {
+				out += ", ";
+			}
+		}
+		out += parts[i];
+	}
+	return out;
+}
+
 export function formatDisplayAddress({ address = "", city = "", state = "", zip = "", country = "" }) {
-	const addr = String(address || "").trim();
-	const c = String(city || "").trim();
-	const s = String(state || "").trim();
-	const z = String(zip || "").trim();
-	const cntry = String(country || "").trim();
+	const addr = normalizePart(address);
+	const c = normalizePart(city);
+	const s = normalizePart(state);
+	const z = normalizePart(zip);
+	const cntry = normalizePart(country);
 
 	if (!addr) {
 		const locality = [c, s, z].filter(Boolean).join(", ");
@@ -11,93 +43,43 @@ export function formatDisplayAddress({ address = "", city = "", state = "", zip 
 	}
 
 	const addrLower = addr.toLowerCase();
-	const cLower = c.toLowerCase();
-	const sLower = s.toLowerCase();
-	const zLower = z.toLowerCase();
-	const cntryLower = cntry.toLowerCase();
+	const hasCity = Boolean(c && addrLower.includes(c.toLowerCase()));
+	const hasState = Boolean(s && addrLower.includes(s.toLowerCase()));
+	const hasZip = Boolean(z && addrLower.includes(z.toLowerCase()));
+	const hasCountry = Boolean(cntry && addrLower.includes(cntry.toLowerCase()));
 
-	const hasCity = c && addrLower.includes(cLower);
-	const hasState = s && addrLower.includes(sLower);
-	const hasZip = z && addrLower.includes(zLower);
-	const hasCountry = cntry && addrLower.includes(cntryLower);
+	const parts = [addr];
+	if (c && !hasCity) parts.push(c);
+	if (s && !hasState) parts.push(s);
 
-	let parts = [addr];
-
-	if (c && !hasCity) {
-		parts.push(c);
-	}
-	if (s && !hasState) {
-		parts.push(s);
-	}
 	let zipIndexInParts = -1;
 	if (z && !hasZip) {
 		zipIndexInParts = parts.length;
 		parts.push(z);
 	}
-	if (cntry && !hasCountry) {
-		parts.push(cntry);
-	}
+
+	if (cntry && !hasCountry) parts.push(cntry);
 
 	let joined = parts.join(", ");
+	if (joined.length <= 100) return joined;
 
-	if (joined.length > 100) {
-		if (hasZip) {
-			const zipPos = joined.lastIndexOf(z);
-			if (zipPos > 0) {
-				const beforeZip = joined.slice(0, zipPos);
-				const afterZip = joined.slice(zipPos);
-				if (beforeZip.endsWith(", ")) {
-					joined = beforeZip.slice(0, -2) + "\n" + afterZip;
-				} else if (beforeZip.endsWith(",")) {
-					joined = beforeZip.slice(0, -1) + "\n" + afterZip;
-				} else {
-					joined = beforeZip + "\n" + afterZip;
-				}
-			}
-		} else if (zipIndexInParts !== -1) {
-			const beforeZipParts = parts.slice(0, zipIndexInParts);
-			const afterZipParts = parts.slice(zipIndexInParts);
-			joined = beforeZipParts.join(", ") + "\n" + afterZipParts.join(", ");
-		}
+	if (hasZip) {
+		joined = splitBeforeToken(joined, z, true);
+	} else if (zipIndexInParts !== -1) {
+		joined =
+			parts.slice(0, zipIndexInParts).join(", ") +
+			"\n" +
+			parts.slice(zipIndexInParts).join(", ");
+	}
 
-		if (joined.length > 100) {
-			if (hasCity) {
-				const cityPos = joined.indexOf(c);
-				if (cityPos > 0) {
-					const beforeCity = joined.slice(0, cityPos);
-					const afterCity = joined.slice(cityPos);
-					if (beforeCity.endsWith(", ")) {
-						joined = beforeCity.slice(0, -2) + "\n" + afterCity;
-					} else if (beforeCity.endsWith(",")) {
-						joined = beforeCity.slice(0, -1) + "\n" + afterCity;
-					} else {
-						joined = beforeCity + "\n" + afterCity;
-					}
-				}
-			} else {
-				const cityIndex = parts.indexOf(c);
-				if (cityIndex !== -1) {
-					let constructed = "";
-					for (let i = 0; i < parts.length; i++) {
-						if (i > 0) {
-							if (parts[i] === z) {
-								constructed += "\n";
-							} else if (parts[i] === c) {
-								constructed += "\n";
-							} else {
-								if (constructed.endsWith("\n")) {
-									// no comma
-								} else {
-									constructed += ", ";
-								}
-							}
-						}
-						constructed += parts[i];
-					}
-					joined = constructed;
-				}
-			}
-		}
+	if (joined.length <= 100) return joined;
+
+	if (hasCity) {
+		return splitBeforeToken(joined, c, false);
+	}
+
+	if (parts.indexOf(c) !== -1) {
+		return buildMultilineFromParts(parts, c, z);
 	}
 
 	return joined;

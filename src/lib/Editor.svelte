@@ -8,7 +8,11 @@
 	import {basicSetup} from "codemirror"
 	import {mediaOriginFromFile, mediaTokenFromFile} from "$lib/utils"
 	import {setOfflineImage} from "$lib/db.js"
+	import EditorToolbar from "$lib/EditorToolbar.svelte"
+	import InsertModal from "$lib/InsertModal.svelte"
 	import {
+		SquarePlus as ButtonIcon,
+		CodeXml as CodeIcon,
 		Bold,
 		Heading1 as H1,
 		Heading2 as H2,
@@ -96,9 +100,17 @@
 	let stylePaintAwaitingFreshSelection = false
 	let lastEditorRange = null
 	let lastEditorExpandedRange = null
+	let insertModalOpen = $state(false)
+	let insertModalTab = $state("button")
+	let insertButtonLabel = $state("Open link")
+	let insertButtonUrl = $state("")
+	let insertIframeUrl = $state("")
+	let insertEmbedCode = $state("")
+	let insertModalError = $state("")
 	let alignLeftIcon = ""
 	let alignCenterIcon = ""
 	let alignRightIcon = ""
+	let toolbarActions = $state([])
 
 	onMount(() => {
 		return () => {
@@ -1824,6 +1836,113 @@
 		dispatchEditorInput(contentEl)
 	}
 
+	function normalizePromptUrl(rawUrl = "") {
+		const trimmed = String(rawUrl || "").trim()
+		if (!trimmed) return ""
+		const withProtocol = /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(trimmed)
+			? trimmed
+			: `https://${trimmed}`
+		try {
+			const parsed = new URL(withProtocol)
+			if (!/^https?:$/i.test(parsed.protocol)) return ""
+			return parsed.toString()
+		} catch {
+			return ""
+		}
+	}
+
+	function buildButtonLinkHtml(label = "", url = "") {
+		return `<a class="editor-inline-button" href="${escapeHtmlAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHtmlText(label)}</a>`
+	}
+
+	function buildButtonPreviewHtml(label = "") {
+		return `<button type="button">${escapeHtmlText(label)}</button>`
+	}
+
+	function buildIframeHtml(url = "", title = "Embedded content") {
+		return `<iframe src="${escapeHtmlAttr(url)}" title="${escapeHtmlAttr(title)}" width="100%" height="315" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="no-referrer" allowfullscreen></iframe>`
+	}
+
+	function openInsertModal(tab = "button") {
+		insertModalTab = tab
+		insertModalError = ""
+		insertModalOpen = true
+	}
+
+	function closeInsertModal() {
+		insertModalOpen = false
+		insertModalError = ""
+	}
+
+	function insertFromModal() {
+		const contentEl = pellEditor?.content
+		if (!contentEl) return
+		insertModalError = ""
+
+		if (insertModalTab === "button") {
+			const label = String(insertButtonLabel || "").trim()
+			const url = normalizePromptUrl(insertButtonUrl)
+			if (!label) {
+				insertModalError = "Button label is required."
+				return
+			}
+			if (!url) {
+				insertModalError = "Please enter a valid http(s) URL for the button."
+				return
+			}
+			insertHtmlAtCaret(contentEl, buildButtonLinkHtml(label, url))
+			closeInsertModal()
+			return
+		}
+
+		if (insertModalTab === "iframe") {
+			const url = normalizePromptUrl(insertIframeUrl)
+			if (!url) {
+				insertModalError = "Please enter a valid http(s) URL for the iframe."
+				return
+			}
+			insertHtmlAtCaret(contentEl, buildIframeHtml(url))
+			closeInsertModal()
+			return
+		}
+
+		const embedCode = String(insertEmbedCode || "").trim()
+		if (!embedCode) {
+			insertModalError = "Embed code cannot be empty."
+			return
+		}
+		const sanitized = sanitizePastedHtml(embedCode)
+		if (!sanitized.trim()) {
+			insertModalError = "Embed code did not contain supported embeddable markup."
+			return
+		}
+		insertHtmlAtCaret(contentEl, sanitized)
+		closeInsertModal()
+	}
+
+	const insertPreviewHtml = $derived.by(() => {
+		if (insertModalTab === "button") {
+			const label = String(insertButtonLabel || "").trim() || "Preview button"
+			return buildButtonPreviewHtml(label)
+		}
+		if (insertModalTab === "iframe") {
+			const url = normalizePromptUrl(insertIframeUrl)
+			if (!url) {
+				return '<p class="insert-preview-placeholder">Enter an iframe URL to preview.</p>'
+			}
+			return buildIframeHtml(url, "Preview iframe")
+		}
+		const embedCode = String(insertEmbedCode || "").trim()
+		if (!embedCode) {
+			return '<p class="insert-preview-placeholder">Paste embed code to preview it.</p>'
+		}
+		const sanitized = sanitizePastedHtml(embedCode)
+		if (!sanitized.trim()) {
+			return '<p class="insert-preview-placeholder">No preview available for this embed code.</p>'
+		}
+		return sanitized
+	})
+
 	onMount(async () => {
 		const {default: pell} = await import("pell")
 		const iconProps = {
@@ -1872,6 +1991,12 @@
 				title: "Link",
 				result: () => toggleLink(pellEditor?.content),
 			},
+			addButton: {
+				icon: createElement(ButtonIcon, iconProps).outerHTML,
+				title: "Add buttons, iframes, or embed code",
+				result: () => openInsertModal("button"),
+			},
+
 			alignToggle: {
 				icon: alignCenterIcon,
 				title: "Toggle alignment",
@@ -1929,6 +2054,9 @@
 				? {name: a, ...defaultActionDefs[a]}
 				: a,
 		)
+		const resolvedActionsWithoutAddButton = resolvedActions.filter(
+			(a) => a?.name !== "addButton",
+		)
 
 		const imageIcon = createElement(ImageIcon, iconProps).outerHTML
 		const videoIcon = createElement(VideoIcon, iconProps).outerHTML
@@ -1938,7 +2066,7 @@
 		const minimizeIcon = createElement(Minimize2, iconProps).outerHTML
 
 		const allActions = [
-			...resolvedActions,
+			...resolvedActionsWithoutAddButton,
 			{
 				name: "removeFormatting",
 				icon: removeFormattingIcon,
@@ -1959,8 +2087,15 @@
 				result: () => imageFileInputEl?.click(),
 			},
 			{
+				name: "addButton",
+				icon: createElement(ButtonIcon, iconProps).outerHTML,
+				title: "Add buttons, iframes, or embed code",
+				result: () => openInsertModal("button"),
+			},
+
+			{
 				name: "htmlMode",
-				icon: '<span class="pell-html-mode-icon">&lt;/&gt;</span>',
+				icon: createElement(CodeIcon, iconProps).outerHTML,
 				title: "Toggle HTML mode",
 				result: () => toggleHtmlMode(),
 			},
@@ -1991,6 +2126,7 @@
 					}
 				},
 			},
+			
 			// {
 			// 	name: "insertVideo",
 			// 	icon: videoIcon,
@@ -1998,6 +2134,7 @@
 			// 	result: () => videoFileInputEl?.click(),
 			// },
 		]
+		toolbarActions = allActions
 
 		pellEditor = pell.init({
 			element: containerEl,
@@ -2010,7 +2147,7 @@
 			},
 			defaultParagraphSeparator: "br",
 			styleWithCSS: false,
-			actions: allActions,
+			actions: [],
 		})
 
 		// Set initial value
@@ -2397,6 +2534,10 @@
 	{ondragleave}
 	{ondrop}
 >
+	{#if toolbarActions.length}
+		<EditorToolbar actions={toolbarActions} />
+	{/if}
+
 	{#if mediaDeleteVisible && !htmlMode}
 		<button
 			bind:this={mediaDeleteButtonEl}
@@ -2419,6 +2560,20 @@
 		</button>
 	{/if}
 </div>
+
+
+<InsertModal
+	open={insertModalOpen}
+	bind:tab={insertModalTab}
+	bind:buttonLabel={insertButtonLabel}
+	bind:buttonUrl={insertButtonUrl}
+	bind:iframeUrl={insertIframeUrl}
+	bind:embedCode={insertEmbedCode}
+	bind:error={insertModalError}
+	previewHtml={insertPreviewHtml}
+	onclose={closeInsertModal}
+	oninsert={insertFromModal}
+/>
 
 <div
 	class="html-source"
@@ -2532,6 +2687,10 @@
 		gap: 2px;
 	}
 
+	.pell-wrapper :global(.pell-actionbar:not(.editor-toolbar):empty) {
+		display: none;
+	}
+
 	.pell-wrapper :global(.pell-button) {
 		background: transparent;
 		border: 1px solid transparent;
@@ -2603,6 +2762,24 @@
 		word-break: break-word;
 		word-wrap: break-word;
 	}
+
+	:global(.pell-content a.editor-inline-button) {
+		display: inline-block;
+		padding: 0.45rem 0.75rem;
+		margin: 0.2rem 0;
+		border-radius: 8px;
+		border: 1px solid #3f6b44;
+		background: #3f6b44;
+		color: #ffffff;
+		text-decoration: none;
+		font-weight: 600;
+	}
+
+	:global(.pell-content a.editor-inline-button:hover) {
+		background: #355c3a;
+		border-color: #355c3a;
+	}
+
 	.pell-wrapper :global(.pell-content) {
 		height: 50dvh;
 		/* resize: none; */

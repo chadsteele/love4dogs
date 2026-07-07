@@ -285,11 +285,7 @@
 	}
 
 	function buildMapHref(data = {}) {
-		const lat = Number(data?.location?.lat);
-		const lon = Number(data?.location?.lon);
-		if (Number.isFinite(lat) && Number.isFinite(lon)) {
-			return `https://maps.google.com/maps?q=${encodeURIComponent(`${lat},${lon}`)}&z=15`;
-		}
+		
 		const fullAddress = formatDisplayAddress({
 			address: data?.address,
 			city: data?.city || data?.location?.city,
@@ -297,8 +293,16 @@
 			zip: data?.zip || data?.location?.zip,
 			country: data?.country || data?.location?.country,
 		});
-		if (!fullAddress) return "";
-		return `https://maps.google.com/maps?q=${encodeURIComponent(fullAddress)}&z=15`;
+
+		if (fullAddress){
+			return `https://maps.google.com/maps?q=${encodeURIComponent(fullAddress)}&z=15`;
+		}
+
+		const lat = Number(data?.location?.lat);
+		const lon = Number(data?.location?.lon);
+		if (Number.isFinite(lat) && Number.isFinite(lon)) {
+			return `https://maps.google.com/maps?q=${encodeURIComponent(`${lat},${lon}`)}&z=15`;
+		}
 	}
 
 	// ── profile-only: chunk URI helpers ───────────────────────────────────────
