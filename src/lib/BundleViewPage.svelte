@@ -7,7 +7,7 @@
 	import ProfilePostHeader from "$lib/ProfilePostHeader.svelte";
 	import AuthorRow from "$lib/AuthorRow.svelte";
 	import PostStats from "$lib/PostStats.svelte";
-	import { deriveBundleCreatedAtMs } from "$lib/dateTime";
+	import { deriveBundleCreatedAtMs, parseTimestampMs } from "$lib/dateTime";
 	import {
 		CircleAlert as NoticeIcon,
 		User,
@@ -33,8 +33,13 @@
 	import {
 		listStoredProfiles,
 		getCurrentProfileUuid,
+		setCurrentProfileUuid,
+		writeStoredProfileByUuid,
+		upsertStoredProfile,
+		deleteStoredProfileByUuid,
+		rebuildStoredProfileFromBundle,
 	} from "$lib/profileRegistry";
-	import { isLocalHost, removeApproxPostFromCache } from "$lib/utils";
+	import { removeApproxPostFromCache } from "$lib/utils";
 	import { formatDisplayAddress } from "$lib/addressFormat";
 	import { scrollToTarget } from "$lib/autoscroll.js";
 	import Chat from "$lib/Chat.svelte";
@@ -66,11 +71,13 @@
 	let chunkUris = $state([]);
 	let searchTerm = $state("");
 	let fetchingMore = $state(false);
+	let loadedBundle = $state(null);
 
 	let likeCount = $state(0);
 	let repostCount = $state(0);
 	let replyCount = $state(0);
 	let postCreatedAt = $state("");
+	const EPOCH_OFFSET = 946684740000;
 
 	function slugifyValue(value = "") {
 		return String(value || "")
@@ -608,6 +615,7 @@
 				if (!bundle || typeof bundle !== "object" || !bundle.combined) {
 					throw new Error("Failed to load profile bundle from API and Bluesky");
 				}
+				loadedBundle = bundle;
 
 				const { primary, subsequent } = bundle?.combined || {};
 				const htmlChunks = Array.isArray(subsequent)
@@ -702,6 +710,7 @@
 			if (isProfile) {
 				const sessionBundle = readSessionBundle(uuid);
 				if (sessionBundle) {
+					loadedBundle = sessionBundle;
 					const { primary, subsequent } =
 						sessionBundle?.combined || {};
 					const originPost = getOriginPost(sessionBundle);
@@ -727,6 +736,7 @@
 					const cached = await readLocalProfile(uuid);
 					if (cached) {
 						jsonData = cached;
+						loadedBundle = null;
 						editProfileUrl = `/profile/edit/${encodeURIComponent(uuid)}${slugPath}`;
 						hasLocal = true;
 					}
@@ -738,6 +748,7 @@
 				);
 				if (cached) {
 					jsonData = cached;
+					loadedBundle = null;
 					hasLocal = true;
 				}
 			}
@@ -914,7 +925,75 @@
 		}, 4000);
 	}
 
+	function derivePinFromPayload(payload = {}) {
+		const birthdate = String(payload?.birthdate || "").trim();
+		const stamp = String(payload?.stamp || "").trim();
+		if (!birthdate || !stamp) return "";
+
+		const birthdateVal = parseInt(birthdate, 36);
+		if (!Number.isFinite(birthdateVal)) return "";
+
+		const timestamp = parseTimestampMs(stamp, { allowBase36: true });
+		if (!timestamp) return "";
+
+		const diff = birthdateVal - (timestamp - EPOCH_OFFSET);
+		if (!Number.isFinite(diff) || diff < 0) return "";
+		return String(diff).padStart(6, "0");
+	}
+
+	function getExpectedModerationPin() {
+		const fromView = derivePinFromPayload(jsonData || {});
+		if (fromView) return fromView;
+		return derivePinFromPayload(loadedBundle?.combined?.primary || {});
+	}
+
+	function promptForModerationPin(actionLabel = "continue") {
+		const provided = String(
+			prompt(`Enter the 6-digit PIN to ${actionLabel}.`) || "",
+		).trim();
+		if (!provided) return null;
+		if (!/^\d{6}$/.test(provided)) {
+			showToast("PIN must be exactly 6 digits.", "error");
+			return null;
+		}
+		return provided;
+	}
+
+	async function deleteUrisFromBskyAndCache(uris = []) {
+		for (const uri of uris) {
+			const formData = new FormData();
+			formData.append("mode", "delete-post-uri");
+			formData.append("uri", uri);
+			const res = await fetch("/api/post", {
+				method: "POST",
+				body: formData,
+			});
+			if (!res.ok) {
+				const data = await res.json().catch(() => ({}));
+				console.warn(`Failed to delete post on Bluesky for URI ${uri}:`, data.error);
+			}
+		}
+
+		for (const uri of uris) {
+			await deletePost(uri);
+			await removeApproxPostFromCache(uri);
+		}
+	}
+
 	async function handleDeletePost() {
+		const expectedPin = getExpectedModerationPin();
+		if (!expectedPin) {
+			showToast("This post cannot be deleted because no PIN is available.", "error");
+			return;
+		}
+
+		const enteredPin = promptForModerationPin("delete this post");
+		if (!enteredPin) return;
+		if (enteredPin !== expectedPin) {
+			showToast("Incorrect PIN.", "error");
+			return;
+		}
+
 		const confirmDelete = confirm(
 			"Are you sure you want to delete this post? This will permanently remove it from both the local database and Bluesky.",
 		);
@@ -935,27 +1014,7 @@
 				return;
 			}
 
-			for (const uri of urisToDelete) {
-				const formData = new FormData();
-				formData.append("mode", "delete-post-uri");
-				formData.append("uri", uri);
-				const res = await fetch("/api/post", {
-					method: "POST",
-					body: formData,
-				});
-				if (!res.ok) {
-					const data = await res.json().catch(() => ({}));
-					console.warn(
-						`Failed to delete post on Bluesky for URI ${uri}:`,
-						data.error,
-					);
-				}
-			}
-
-			for (const uri of urisToDelete) {
-				await deletePost(uri);
-				await removeApproxPostFromCache(uri);
-			}
+			await deleteUrisFromBskyAndCache(urisToDelete);
 
 			showToast("Post deleted successfully.");
 			setTimeout(() => {
@@ -964,6 +1023,89 @@
 		} catch (err) {
 			console.error("Delete failed:", err);
 			showToast("Failed to delete post.", "error");
+		}
+	}
+
+	async function handleRecoverProfile() {
+		if (!isProfile) return;
+
+		const enteredPin = promptForModerationPin("recover this profile");
+		if (!enteredPin) return;
+
+		const sourceBundle =
+			loadedBundle && loadedBundle.combined
+				? loadedBundle
+				: {
+					combined: {
+						primary: { ...(jsonData || {}) },
+						subsequent: [String(jsonData?.html || "")],
+					},
+				};
+
+		const rebuilt = rebuildStoredProfileFromBundle(sourceBundle, { uuid });
+		const expectedPin = String(rebuilt?.profile?.pin || "").trim();
+		if (!rebuilt || !expectedPin) {
+			showToast("This profile cannot be recovered because PIN data is unavailable.", "error");
+			return;
+		}
+		if (enteredPin !== expectedPin) {
+			showToast("Incorrect PIN.", "error");
+			return;
+		}
+
+		await writeStoredProfileByUuid(rebuilt.uuid, rebuilt.profile);
+		await upsertStoredProfile(rebuilt.profile);
+		await setCurrentProfileUuid(rebuilt.uuid);
+		localProfiles = await listStoredProfiles();
+
+		showToast("Profile recovered and set as current profile.");
+		await goto(`/profile/edit/${encodeURIComponent(rebuilt.uuid)}`);
+	}
+
+	async function handleDeleteProfile() {
+		if (!isProfile) return;
+
+		const expectedPin = getExpectedModerationPin();
+		if (!expectedPin) {
+			showToast("This profile cannot be deleted because no PIN is available.", "error");
+			return;
+		}
+
+		const enteredPin = promptForModerationPin("delete this profile");
+		if (!enteredPin) return;
+		if (enteredPin !== expectedPin) {
+			showToast("Incorrect PIN.", "error");
+			return;
+		}
+
+		const confirmDelete = confirm(
+			"Are you sure you want to delete this profile? This removes published bundle posts and local profile data.",
+		);
+		if (!confirmDelete) return;
+
+		try {
+			showToast("Deleting profile...");
+			const urisToDelete = [...chunkUris];
+			const mainUri =
+				jsonData?.uri || jsonData?.rootUri || jsonData?.atUri;
+			if (mainUri && !urisToDelete.includes(mainUri)) {
+				urisToDelete.push(mainUri);
+			}
+
+			if (urisToDelete.length > 0) {
+				await deleteUrisFromBskyAndCache(urisToDelete);
+			}
+
+			await deleteStoredProfileByUuid(uuid);
+			localProfiles = await listStoredProfiles();
+
+			showToast("Profile deleted successfully.");
+			setTimeout(() => {
+				goto("/profile/select");
+			}, 1000);
+		} catch (err) {
+			console.error("Profile delete failed:", err);
+			showToast("Failed to delete profile.", "error");
 		}
 	}
 </script>
@@ -1048,7 +1190,7 @@
 				</button>
 				{#if menuOpen}
 					<div class="moderation-dropdown">
-						{#if isAuthor}
+						{#if isProfile || isAuthor}
 							<button
 								type="button"
 								onclick={() => {
@@ -1066,6 +1208,18 @@
 							>
 								<Pencil size={16} />
 								Edit
+							</button>
+						{/if}
+						{#if isProfile}
+							<button
+								type="button"
+								onclick={async () => {
+									menuOpen = false;
+									await handleRecoverProfile();
+								}}
+							>
+								<UserCheck size={16} />
+								Recover
 							</button>
 						{/if}
 						<button
@@ -1111,7 +1265,18 @@
 							Report
 						</button>
 
-						{#if !isProfile && (isAuthor || isLocalHost())}
+						{#if isProfile}
+							<button
+								type="button"
+								onclick={async () => {
+									menuOpen = false;
+									await handleDeleteProfile();
+								}}
+							>
+								<Trash2 size={16} />
+								Delete
+							</button>
+						{:else}
 							<button
 								type="button"
 								onclick={async () => {
