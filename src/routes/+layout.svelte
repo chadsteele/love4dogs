@@ -27,26 +27,39 @@
 				})
 			})
 
-			// Handle broken image tags (hide and retry loading them)
+			// Handle broken image tags: retry only local/transient sources.
+			const shouldRetryImageSource = (src = "") => {
+				const value = String(src || "").trim()
+				if (!value) return false
+				if (value.startsWith("blob:")) return true
+				if (value.startsWith("/offline-media/")) return true
+				if (value.startsWith("/")) return true
+				if (/^https?:\/\/cdn\.bsky\.app\//i.test(value)) return false
+				return false
+			}
+
+			// Handle broken image tags (hide and retry them only when retryable)
 			const handleImageError = (event) => {
 				if (event.target && event.target.tagName === "IMG") {
 					const img = event.target
 					img.style.opacity = "0"
+					const src = String(img.src || "")
+					if (!shouldRetryImageSource(src)) return
 					const retries = parseInt(
 						img.getAttribute("data-retry-count") || "0",
 						10,
 					)
-					if (retries < 15) {
+					if (retries < 2) {
 						img.setAttribute(
 							"data-retry-count",
 							String(retries + 1),
 						)
-						const src = img.src
 						if (src) {
+							const retryDelayMs = retries === 0 ? 1200 : 2400
 							setTimeout(() => {
 								img.src = ""
 								img.src = src
-							}, 2000)
+							}, retryDelayMs)
 						}
 					}
 				}
