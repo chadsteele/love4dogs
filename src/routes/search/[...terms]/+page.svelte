@@ -15,11 +15,17 @@
 	const FAVORITE_SEARCH_TERMS_KEY =
 		"love4dogs.settings.favorite-search-terms-v1"
 	const DEFAULT_SEARCH_TERM_KEY = "love4dogs.settings.default-search-term-v1"
+	const SEARCH_CACHE_TTL_MS = 20 * 60 * 1000
+	const SESSION_SEARCH_RESULTS_KEY = "love4dogs.last-search-results"
+	const SESSION_SEARCH_QUERY_KEY = "love4dogs.last-search-query"
+	const SESSION_SEARCH_SORT_KEY = "love4dogs.last-search-sort"
+	const SESSION_SEARCH_FETCHED_AT_KEY = "love4dogs.last-search-fetched-at"
 
 	let posts = $state([])
 	let searchTerm = $state("")
 	let lastUsedQuery = $state("")
 	let loadingPosts = $state(false)
+	let refreshingPosts = $state(false)
 	let blockedUuids = $state([])
 	let blockedAuthors = $state([])
 	let feedError = $state("")
@@ -285,17 +291,89 @@
 		}
 	}
 
+	function readSessionCachedResults(term = "", sort = "latest") {
+		if (typeof sessionStorage === "undefined") return null
+		try {
+			const cachedQuery = normalizeSearchTerm(
+				sessionStorage.getItem(SESSION_SEARCH_QUERY_KEY) || "",
+			)
+			const targetQuery = normalizeSearchTerm(term)
+			if (cachedQuery.toLowerCase() !== targetQuery.toLowerCase()) {
+				return null
+			}
+
+			const cachedSort = String(
+				sessionStorage.getItem(SESSION_SEARCH_SORT_KEY) || "latest",
+			)
+			if (cachedSort !== String(sort || "latest")) {
+				return null
+			}
+
+			const rawResults = sessionStorage.getItem(SESSION_SEARCH_RESULTS_KEY)
+			if (!rawResults) return null
+
+			const parsedResults = JSON.parse(rawResults)
+			if (!Array.isArray(parsedResults)) return null
+
+			const fetchedAtRaw = Number(
+				sessionStorage.getItem(SESSION_SEARCH_FETCHED_AT_KEY) || 0,
+			)
+			const fetchedAt = Number.isFinite(fetchedAtRaw) ? fetchedAtRaw : 0
+			const ageMs = fetchedAt > 0 ? Math.max(0, Date.now() - fetchedAt) : Number.MAX_SAFE_INTEGER
+
+			return {
+				posts: parsedResults,
+				fetchedAt,
+				ageMs,
+			}
+		} catch (error) {
+			console.error("Failed to read search cache from sessionStorage:", error)
+			return null
+		}
+	}
+
+	function markSessionCacheFresh() {
+		if (typeof sessionStorage === "undefined") return
+		try {
+			sessionStorage.setItem(SESSION_SEARCH_FETCHED_AT_KEY, String(Date.now()))
+		} catch (error) {
+			console.error("Failed to update search cache freshness:", error)
+		}
+	}
+
 	async function loadFeed({forceFresh = false} = {}) {
 		const requestId = ++lastFeedRequestId
-		loadingPosts = true
+		const cached = !forceFresh && !showBlockedOnly
+			? readSessionCachedResults(searchTerm, searchSort)
+			: null
+		const hasCachedBaseline = Boolean(cached)
+
+		if (cached) {
+			posts = cached.posts
+			lastUsedQuery = buildFeedQuery(searchTerm)
+			feedCursor = null
+			feedCursorHost = null
+			hasMorePosts = false
+			loadingPosts = false
+			refreshingPosts = cached.ageMs > SEARCH_CACHE_TTL_MS
+		} else {
+			loadingPosts = true
+			refreshingPosts = false
+		}
 		feedError = ""
-		feedCursor = null
-		feedCursorHost = null
-		hasMorePosts = true
+		if (!cached) {
+			feedCursor = null
+			feedCursorHost = null
+			hasMorePosts = true
+		}
 		automateFailed = false
 		searchTermsChanged = false
 		if (searchTerm.trim() !== "") {
 			showNoResultsInfo = ""
+		}
+
+		if (cached && cached.ageMs <= SEARCH_CACHE_TTL_MS) {
+			return
 		}
 
 		if (showBlockedOnly) {
@@ -322,7 +400,10 @@
 				console.error("Failed loading blocked posts locally:", err)
 				feedError = "Failed loading blocked posts."
 			} finally {
-				if (requestId === lastFeedRequestId) loadingPosts = false
+				if (requestId === lastFeedRequestId) {
+					loadingPosts = false
+					refreshingPosts = false
+				}
 			}
 			return
 		}
@@ -364,6 +445,7 @@
 					feedCursor = json.cursor || null
 					feedCursorHost = json.cursorHost || null
 					hasMorePosts = !!json.cursor
+					markSessionCacheFresh()
 
 					// Cache fetched posts to IndexedDB
 					for (const post of posts) {
@@ -455,12 +537,17 @@
 						console.error("Local search fallback failed:", cacheErr)
 					}
 				}
-				feedError = error.message || "Failed loading feed."
+				if (!hasCachedBaseline) {
+					feedError = error.message || "Failed loading feed."
+				}
 				break
 			}
 		}
 
-		if (requestId === lastFeedRequestId) loadingPosts = false
+		if (requestId === lastFeedRequestId) {
+			loadingPosts = false
+			refreshingPosts = false
+		}
 	}
 
 	async function loadMorePosts(isManual = false) {
@@ -530,6 +617,7 @@
 				feedCursor = json.cursor || null
 				feedCursorHost = json.cursorHost || feedCursorHost || null
 				hasMorePosts = !!json.cursor
+				markSessionCacheFresh()
 
 				newlyAddedCount += batchNewCount
 
@@ -620,11 +708,12 @@
 
 	// Save the current search results and query to sessionStorage for the map view
 	$effect(() => {
-		const results = visiblePosts();
+		const results = posts;
 		if (typeof sessionStorage !== 'undefined') {
 			try {
-				sessionStorage.setItem('love4dogs.last-search-results', JSON.stringify(results));
-				sessionStorage.setItem('love4dogs.last-search-query', searchTerm);
+				sessionStorage.setItem(SESSION_SEARCH_RESULTS_KEY, JSON.stringify(results));
+				sessionStorage.setItem(SESSION_SEARCH_QUERY_KEY, normalizeSearchTerm(searchTerm));
+				sessionStorage.setItem(SESSION_SEARCH_SORT_KEY, String(searchSort || "latest"));
 			} catch (e) {
 				console.error("Failed to save search results to sessionStorage:", e);
 			}
@@ -792,6 +881,8 @@
 
 			{#if loadingPosts}
 				<p class="muted">Loading posts...</p>
+			{:else if refreshingPosts && visiblePosts().length > 0}
+				<p class="muted">Refreshing cached results...</p>
 			{:else if feedError}
 				<p class="warning"><CircleAlert size={15} /> {feedError}</p>
 			{:else if visiblePosts().length === 0}

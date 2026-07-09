@@ -7,7 +7,7 @@ import {
 	getProfile
 } from './db.js';
 import { publishChunkBundleToBsky } from './bskyChunkStore.js';
-import { upsertStoredProfile } from './profileRegistry.js';
+import { getCurrentProfileUuid, upsertStoredProfile } from './profileRegistry.js';
 
 let syncInFlight = false;
 
@@ -132,6 +132,20 @@ async function syncItem(item) {
 
 	// Update primaryPayload fields
 	const updatedPrimaryPayload = { ...primaryPayload };
+	if (String(type || '').trim().toLowerCase() === 'post') {
+		const payloadUuid = String(updatedPrimaryPayload.uuid || uuid || '').trim();
+		const payloadAuthorId = String(updatedPrimaryPayload.authorid || updatedPrimaryPayload.authorId || '').trim();
+		if (!payloadAuthorId || (payloadUuid && payloadAuthorId === payloadUuid)) {
+			const currentProfileUuid = String(await getCurrentProfileUuid() || '').trim();
+			if (!currentProfileUuid) {
+				throw new Error('Cannot sync post: missing selected profile author UUID.');
+			}
+			if (payloadUuid && currentProfileUuid === payloadUuid) {
+				throw new Error('Cannot sync post: selected profile UUID matches post UUID (invalid author mapping).');
+			}
+			updatedPrimaryPayload.authorid = currentProfileUuid;
+		}
+	}
 	if (updatedPrimaryPayload.html) {
 		updatedPrimaryPayload.html = replaceOfflineUrlsInString(updatedPrimaryPayload.html);
 	}

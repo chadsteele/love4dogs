@@ -1890,6 +1890,18 @@
 				publishing = false
 				return
 			}
+			const normalizedPostUuid = String(uuid || "").trim()
+			const normalizedAuthorUuid = String(postAuthorUuid || "").trim()
+			if (
+				normalizedPostUuid &&
+				normalizedAuthorUuid &&
+				normalizedPostUuid === normalizedAuthorUuid
+			) {
+				publishError =
+					"Invalid author mapping: post author cannot match post UUID. Select a profile and try again."
+				publishing = false
+				return
+			}
 		}
 
 		// Always require location confirmation before publishing.

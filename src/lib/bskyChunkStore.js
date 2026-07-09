@@ -679,7 +679,24 @@ export async function publishChunkBundleToBsky({
 		chunkGroups.push(normalizedChunks.slice(i, i + 4))
 	}
 
-	let manifestPrimaryPayload = { ...primaryPayload, tags: normalizedTags }
+	const normalizedPrimaryPayload = { ...primaryPayload }
+	const primaryType = String(normalizedPrimaryPayload?.type || postType || "").trim().toLowerCase()
+	if (primaryType === "post") {
+		const postUuid = String(normalizedPrimaryPayload?.uuid || uuid || "").trim()
+		const authorId = String(
+			normalizedPrimaryPayload?.authorid || normalizedPrimaryPayload?.authorId || "",
+		).trim()
+		if (!authorId) {
+			throw new Error("Invalid post payload: missing authorid.")
+		}
+		if (postUuid && authorId === postUuid) {
+			throw new Error(
+				"Invalid post payload: authorid cannot match post uuid for post records.",
+			)
+		}
+	}
+
+	let manifestPrimaryPayload = { ...normalizedPrimaryPayload, tags: normalizedTags }
 
 	       const chunkResults = []
 	       for (let i = 0; i < chunkGroups.length; i += 1) {
