@@ -12,6 +12,7 @@
 		"test:regression:posts": "node regression-test-posts.mjs",
 		"test:regression:chunks": "node regression-test-profiles.mjs",
 		"delete-water-posts": "node delete_water_posts.js",
+		"delete-invalid-authorid-posts": "node delete_invalid_authorid_posts.js",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''"
 	},

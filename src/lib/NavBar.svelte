@@ -288,11 +288,11 @@
 			class="brand"
 			role="link"
 			tabindex="0"
-			onclick={() => goto("/about")}
+			onclick={() => goto("/search")}
 			onkeydown={(event) => {
 				if (event.key === "Enter" || event.key === " ") {
 					event.preventDefault()
-					goto("/about")
+					goto("/search")
 				}
 			}}
 		>

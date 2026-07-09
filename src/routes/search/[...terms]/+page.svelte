@@ -372,7 +372,7 @@
 			showNoResultsInfo = ""
 		}
 
-		if (cached && cached.ageMs <= SEARCH_CACHE_TTL_MS) {
+		if (cached && cached.posts.length > 0 && cached.ageMs <= SEARCH_CACHE_TTL_MS) {
 			return
 		}
 
@@ -712,7 +712,7 @@
 		if (typeof sessionStorage !== 'undefined') {
 			try {
 				sessionStorage.setItem(SESSION_SEARCH_RESULTS_KEY, JSON.stringify(results));
-				sessionStorage.setItem(SESSION_SEARCH_QUERY_KEY, normalizeSearchTerm(searchTerm));
+				sessionStorage.setItem(SESSION_SEARCH_QUERY_KEY, normalizeSearchTerm(lastUsedQuery || searchTerm));
 				sessionStorage.setItem(SESSION_SEARCH_SORT_KEY, String(searchSort || "latest"));
 			} catch (e) {
 				console.error("Failed to save search results to sessionStorage:", e);
@@ -879,10 +879,12 @@
 				</div>
 			{/if}
 
+			{#if refreshingPosts && visiblePosts().length > 0}
+				<p class="muted">Refreshing cached results...</p>
+			{/if}
+
 			{#if loadingPosts}
 				<p class="muted">Loading posts...</p>
-			{:else if refreshingPosts && visiblePosts().length > 0}
-				<p class="muted">Refreshing cached results...</p>
 			{:else if feedError}
 				<p class="warning"><CircleAlert size={15} /> {feedError}</p>
 			{:else if visiblePosts().length === 0}
