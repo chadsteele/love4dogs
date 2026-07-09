@@ -1333,9 +1333,7 @@
 							? String(derivedCreatedAtMs)
 							: "")}
 					dateAllowBase36={true}
-					href={isProfile
-						? asUrl(jsonData?.canonicalurl) || undefined
-						: authorSearchHref || undefined}
+					href={authorSearchHref || undefined}
 					location={mapHref && jsonData
 						? formatDisplayAddress({
 								address: jsonData.address,

@@ -164,12 +164,54 @@
 	let lastAutosaveSnapshot = ""
 	let profileRecordStamp = $state(buildCompressedTimestamp())
 	let postTags = $state([])
+	let postAuthorUuid = $state("")
+	let postAuthorName = $state("")
+	let postAuthorAvatar = $state("")
+
+	function setPostAuthorFromProfile(profileUuid = "", profile = null) {
+		postAuthorUuid = String(profileUuid || "").trim()
+		const profileName = String(profile?.profileName || profile?.name || "").trim()
+		postAuthorName = profileName
+		const firstImage = Array.isArray(profile?.profileUploadedMedia)
+			? profile.profileUploadedMedia.find((entry) => entry && typeof entry === "object")
+			: null
+		postAuthorAvatar = String(firstImage?.bskyUrl || firstImage?.url || "").trim()
+	}
+
+	async function ensurePostAuthorSelected(routeUuid = "") {
+		if (!isPostEditRoute) return true
+
+		const currentUuid = String(await getCurrentProfileUuid() || "").trim()
+		if (!currentUuid) {
+			publishError = "Select or create a profile before creating a post."
+			const nextPath = `/post/edit/${encodeURIComponent(String(routeUuid || uuid || generateShortUuid()))}`
+			await goto(`/profile/select?next=${encodeURIComponent(nextPath)}`)
+			return false
+		}
+
+		const currentProfile = await readStoredProfileByUuid(currentUuid)
+		if (!currentProfile || !String(currentProfile?.profileName || "").trim()) {
+			publishError = "Select or create a profile before creating a post."
+			await goto("/profile/select")
+			return false
+		}
+
+		setPostAuthorFromProfile(currentUuid, currentProfile)
+		return true
+	}
 
 	function getHashtagWord(tag) {
 		return String(tag || "")
+			.replace(/#/g, "")
 			.replace(/[^\w\s]/g, "")
 			.replace(/\s+/g, "")
 			.toLowerCase()
+	}
+
+	function normalizePublishTags(tags = []) {
+		return (Array.isArray(tags) ? tags : [])
+			.map((tag) => getHashtagWord(tag))
+			.filter(Boolean)
 	}
 
 	function togglePostTag(tag) {
@@ -1183,7 +1225,9 @@
 
 	const primaryPostPayload = $derived({
 		uuid,
-		authorid: uuid,
+		authorid: isPostEditRoute ? postAuthorUuid : uuid,
+		authorName: isPostEditRoute ? postAuthorName : "",
+		authorAvatar: isPostEditRoute ? postAuthorAvatar : "",
 		stamp: profileRecordStamp,
 		email: encryptEmailForPayload(email),
 		birthdate: encryptPinForPayload(pin, profileRecordStamp),
@@ -1200,7 +1244,9 @@
 			  null,
 		name: profileName,
 		description: profileDescription,
-		tags: isPostEditRoute ? $state.snapshot(postTags) : ["profile"],
+		tags: isPostEditRoute
+			? normalizePublishTags($state.snapshot(postTags))
+			: ["profile"],
 		address: locationConfirmed ? addressText : "",
 		city: locationConfirmed ? confirmedLocation?.city || "" : "",
 		state: locationConfirmed ? confirmedLocation?.state || "" : "",
@@ -1776,8 +1822,9 @@
 
 	const publishTagsForCounter = $derived.by(() => {
 		const baseTags = isPostEditRoute ? $state.snapshot(postTags) : ["profile"]
+		const normalizedTags = normalizePublishTags(baseTags)
 		const postType = isPostEditRoute ? "" : "profile"
-		return upsertTypeTag(baseTags, postType)
+		return upsertTypeTag(normalizedTags, postType)
 	})
 
 	const publishTextForCounter = $derived.by(() => {
@@ -1837,6 +1884,14 @@
 			return
 		}
 
+		if (isPostEditRoute) {
+			const hasAuthor = await ensurePostAuthorSelected(uuid)
+			if (!hasAuthor) {
+				publishing = false
+				return
+			}
+		}
+
 		// Always require location confirmation before publishing.
 		if (!locationConfirmed) {
 			debugProfile("[profile] location not confirmed, showing modal")
@@ -1848,7 +1903,9 @@
 			return
 		}
 
-		const activeTags = isPostEditRoute ? $state.snapshot(postTags) : ["profile"]
+		const activeTags = isPostEditRoute
+			? normalizePublishTags($state.snapshot(postTags))
+			: ["profile"]
 		const isOffline =
 			typeof navigator !== "undefined" && navigator.onLine === false
 
@@ -1967,7 +2024,9 @@
 				return {
 					type: isPostEditRoute ? "post" : "profile",
 					uuid,
-					authorid: uuid,
+					authorid: isPostEditRoute ? postAuthorUuid : uuid,
+					authorName: isPostEditRoute ? postAuthorName : "",
+					authorAvatar: isPostEditRoute ? postAuthorAvatar : "",
 					stamp: profileRecordStamp,
 					email: encryptEmailForPayload(email),
 					birthdate: encryptPinForPayload(pin, profileRecordStamp),
@@ -2465,13 +2524,13 @@
 					html: contentHtml,
 					images: postImages,
 					videos: postVideos,
-					tags: $state.snapshot(postTags),
+					tags: normalizePublishTags($state.snapshot(postTags)),
 					likeCount: 0,
 					repostCount: 0,
 					replyCount: 0,
 					createdAt: new Date().toISOString(),
-					authorName: "My Profile",
-					authorAvatar: "",
+					authorName: postAuthorName || "",
+					authorAvatar: postAuthorAvatar || "",
 				};
 
 				await setPost(uuid, postViewData);
@@ -2724,6 +2783,14 @@
 
 		async function init() {
 			try {
+				if (isPostEditRoute) {
+					const hasAuthor = await ensurePostAuthorSelected(routeUuid)
+					if (!hasAuthor) {
+						storageReady = true
+						return
+					}
+				}
+
 				if (!routeUuid) {
 					// Check for current/recent profile draft first
 					const currentUuid = await getCurrentProfileUuid()

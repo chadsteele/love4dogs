@@ -474,6 +474,16 @@
 		return profileDetailsPic || post?.author?.avatar || ""
 	})
 
+	const authorSearchHref = $derived.by(() => {
+		const commentAuthorUuid = String(card?.commentPayload?.author || "").trim()
+		const resolvedAuthorUuid =
+			card?.postType === "comment"
+				? commentAuthorUuid
+				: String(card?.authorId || "").trim()
+		if (!resolvedAuthorUuid) return ""
+		return `/search/${encodeURIComponent(resolvedAuthorUuid)}`
+	})
+
 	onMount(() => {
 		hasHydrated = true
 	})
@@ -622,6 +632,7 @@
 	<AuthorRow
 		avatar={authorAvatar}
 		name={authorName || "Anonymous"}
+		href={authorSearchHref || null}
 		dateValue={card?.postType === "comment" ? card.commentDate : (post?.createdAt || "")}
 		location={card?.postType === "comment" ? "" : card?.locationLine}
 		locationHref={card?.postType === "comment" ? "" : card?.locationMapsHref}

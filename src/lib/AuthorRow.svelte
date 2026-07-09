@@ -24,12 +24,28 @@
 >
 	{#if !hideAvatar}
 		<div class="author-media">
-			{#if avatar}
-				<img src={avatar} alt={name} class="author-avatar" />
+			{#if href && String(name || "")
+					.trim()
+					.toLowerCase() !== "anonymous"}
+				<a class="author-media-link" {href} aria-label={`View ${name}`}>
+					{#if avatar}
+						<img src={avatar} alt={name} class="author-avatar" />
+					{:else}
+						<span class="author-icon" aria-hidden="true">
+							<User size={16} />
+						</span>
+					{/if}
+				</a>
 			{:else}
-				<span class="author-icon" aria-hidden="true">
-					<User size={16} />
-				</span>
+				<div class="author-media-static">
+					{#if avatar}
+						<img src={avatar} alt={name} class="author-avatar" />
+					{:else}
+						<span class="author-icon" aria-hidden="true">
+							<User size={16} />
+						</span>
+					{/if}
+				</div>
 			{/if}
 		</div>
 	{/if}
@@ -38,11 +54,11 @@
 		{#if href && String(name || "")
 				.trim()
 				.toLowerCase() !== "anonymous"}
-			<a class="author-info" {href}>
+			<a class="author-info author-info-link" {href}>
 				<div class="author-name">{name}</div>
 			</a>
 		{:else}
-			<div class="author-info">
+			<div class="author-info author-info-text">
 				<div class="author-name">{name}</div>
 			</div>
 		{/if}
@@ -120,6 +136,22 @@
 		flex-shrink: 0;
 	}
 
+	.author-media-link,
+	.author-media-static {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		text-decoration: none;
+	}
+
+	.author-media-link {
+		cursor: pointer;
+	}
+
+	.author-media-static {
+		cursor: default;
+	}
+
 	.author-row.compact .author-media {
 		padding-top: 0;
 	}
@@ -140,9 +172,13 @@
 		padding-top: 0;
 	}
 
-	.author-info:hover .author-name,
-	.author-info:focus-visible .author-name {
+	.author-info-link:hover .author-name,
+	.author-info-link:focus-visible .author-name {
 		text-decoration: underline;
+	}
+
+	.author-info-text {
+		cursor: default;
 	}
 
 	.author-avatar {

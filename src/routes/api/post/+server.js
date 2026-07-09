@@ -37,11 +37,24 @@ function escapeRegExp(value = '') {
 	return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function normalizeHashtagToken(value = '') {
+	return String(value || '')
+		.replace(/#/g, '')
+		.replace(/[^\w\s]/g, '')
+		.replace(/\s+/g, '')
+		.trim()
+		.toLowerCase();
+}
+
+function normalizeHashtagList(tags = []) {
+	return (Array.isArray(tags) ? tags : [])
+		.map((entry) => normalizeHashtagToken(entry))
+		.filter(Boolean);
+}
+
 function buildTextWithVisibleTags(text = '', tags = []) {
 	const baseText = String(text || '').trim();
-	const normalizedTags = (Array.isArray(tags) ? tags : [])
-		.map((entry) => String(entry || '').trim().toLowerCase())
-		.filter(Boolean);
+	const normalizedTags = normalizeHashtagList(tags);
 	if (!normalizedTags.length) return baseText;
 
 	const missingTokens = [];
@@ -71,24 +84,17 @@ function parseExplicitTags(rawValue = '') {
 	       try {
 		       const parsed = JSON.parse(source);
 		       if (Array.isArray(parsed)) {
-			       return parsed
-				       .map((entry) => String(entry || '').trim().toLowerCase())
-				       .filter(Boolean);
+			       return normalizeHashtagList(parsed);
 		       }
 		       // If it's an object, check for tags property (manifest)
 		       if (parsed && typeof parsed === 'object' && Array.isArray(parsed.tags)) {
-			       return parsed.tags
-				       .map((entry) => String(entry || '').trim().toLowerCase())
-				       .filter(Boolean);
+			       return normalizeHashtagList(parsed.tags);
 		       }
 	       } catch {
 		       // Fall back to comma/space separated parsing below.
 	       }
 
-	return source
-		.split(/[\s,]+/)
-		.map((entry) => String(entry || '').trim().toLowerCase())
-		.filter(Boolean);
+	return normalizeHashtagList(source.split(/[\s,]+/));
 }
 
 export const __test = {
@@ -1239,16 +1245,12 @@ export async function POST({ request }) {
 					const manifest = JSON.parse(firstImage.alt);
 					if (manifest && Array.isArray(manifest.primary?.tags)) {
 						finalTags = upsertTypeTag(
-							manifest.primary.tags
-								.map((t) => String(t).trim().toLowerCase())
-								.filter(Boolean),
+							normalizeHashtagList(manifest.primary.tags),
 							requestedPostType
 						);
 					} else if (Array.isArray(manifest.tags)) {
 						finalTags = upsertTypeTag(
-							manifest.tags
-								.map((t) => String(t).trim().toLowerCase())
-								.filter(Boolean),
+							normalizeHashtagList(manifest.tags),
 							requestedPostType
 						);
 					}

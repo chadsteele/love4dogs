@@ -393,16 +393,8 @@
 		{:else if !hideCreateButton}
 			<a
 				class="post-route-btn"
-				href={navCurrentUuid ? "/post/edit" : "/profile/edit"}
-				onclick={async (e) => {
-					e.preventDefault()
-					const current = await getCurrentProfileUuid()
-					if (current) {
-						goto("/post/edit")
-					} else {
-						goto("/profile/edit")
-					}
-				}}
+				href={ "/post/new"}
+				
 				aria-label="Create Post"
 			>
 				<Plus size={16} /> &nbsp; Create

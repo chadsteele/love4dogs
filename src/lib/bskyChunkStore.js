@@ -738,13 +738,7 @@ export async function publishChunkBundleToBsky({
 		       }
 	       }
 
-	       let originText = String(postText || "")
-	       if (!originMedia.length && chunkUris.length > 0) {
-		       const manifestText = buildOriginManifestText(chunkManifest)
-		       originText = originText
-			       ? `${originText}\n\n${manifestText}`
-			       : manifestText
-	       }
+	       const originText = String(postText || "")
 
 	       const originFd = new FormData()
 	       // Defensive: ensure text is always present and non-empty
@@ -1584,11 +1578,4 @@ function buildChunkUriManifest(uris = []) {
 	const normalizedUris = normalizeChunkUriList(uris)
 	if (!normalizedUris.length) return ""
 	return normalizedUris.map((uri, index) => `${index + 1}. ${uri}`).join("\n")
-}
-
-function buildOriginManifestText(chunkManifest = []) {
-	const chunkUris = parseChunkUriManifest(chunkManifest)
-	if (!chunkUris.length) return "No chunks available."
-	const manifestLines = chunkUris.map((uri, index) => `Chunk ${index + 1}: ${uri}`)
-	return `Chunk Manifest:\n\n${manifestLines.join("\n")}`
 }
