@@ -606,8 +606,8 @@
 					text: commentText.trim(),
 					author: {
 						did: currentProfileUuid,
-						handle: currentProfile?.name || "anonymous",
-						displayName: currentProfile?.name || "Anonymous",
+						handle: currentProfile?.name,
+						displayName: currentProfile?.name,
 						avatar: currentProfile?.profilePic || ""
 					},
 					createdAt: new Date().toISOString(),
@@ -722,7 +722,7 @@
 				{#if replyingToComment}
 					<div class="replying-banner">
 						<CornerDownRight size={16} />
-						<span>Replying to <strong>{authorProfiles[replyingToComment.author]?.name || "Anonymous"}</strong></span>
+						<span>Replying to <strong>{authorProfiles[replyingToComment.author]?.name || ""}</strong></span>
 						<button type="button" class="cancel-reply-btn" onclick={() => replyingToComment = null} aria-label="Cancel reply">
 							<X size={14} />
 						</button>
@@ -732,7 +732,7 @@
 				<div class="editor-header">
 					<img src={currentProfile?.profilePic || "/dog-logo.jpg"} alt={currentProfile?.name || "My Avatar"} class="editor-avatar" />
 					<div class="editor-user-info">
-						<span class="editor-username">{currentProfile?.name || "Anonymous"}</span>
+						<span class="editor-username">{currentProfile?.name }</span>
 					</div>
 				</div>
 
@@ -817,7 +817,7 @@
 					<div class="comment-meta">
 						{#if c.author}
 							<a href="/profile/view/{c.author}" class="comment-author-name">
-								{authorProfiles[c.author]?.name || "Anonymous"}
+								{authorProfiles[c.author]?.name}
 							</a>
 						{:else}
 							<span class="comment-author-name anonymous">Anonymous</span>

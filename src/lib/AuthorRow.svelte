@@ -4,17 +4,26 @@
 
 	let {
 		avatar = null,
-		name = "Anonymous",
+		name = null,
 		date = null,
 		dateValue = "",
 		dateMode = "relative",
 		dateAllowBase36 = false,
+		authorId = "",
 		href = null,
 		location = null,
 		locationHref = null,
 		hideAvatar = false,
 		compact = false,
 	} = $props()
+
+	const effectiveHref = $derived.by(() => {
+		const explicitHref = String(href || "").trim()
+		if (explicitHref) return explicitHref
+		const normalizedAuthorId = String(authorId || "").trim()
+		if (!normalizedAuthorId) return ""
+		return `/search/uuid/${encodeURIComponent(normalizedAuthorId)}`
+	})
 </script>
 
 <div
@@ -24,10 +33,10 @@
 >
 	{#if !hideAvatar}
 		<div class="author-media">
-			{#if href && String(name || "")
+			{#if effectiveHref && String(name || "")
 					.trim()
 					.toLowerCase() !== "anonymous"}
-				<a class="author-media-link" {href} aria-label={`View ${name}`}>
+				<a class="author-media-link" href={effectiveHref} aria-label={`View ${name}`}>
 					{#if avatar}
 						<img src={avatar} alt={name} class="author-avatar" />
 					{:else}
@@ -51,10 +60,10 @@
 	{/if}
 
 	<div class="author-meta">
-		{#if href && String(name || "")
+		{#if effectiveHref && String(name || "")
 				.trim()
 				.toLowerCase() !== "anonymous"}
-			<a class="author-info author-info-link" {href}>
+			<a class="author-info author-info-link" href={effectiveHref}>
 				<div class="author-name">{name}</div>
 			</a>
 		{:else}

@@ -15,7 +15,7 @@
 	let hasHydrated = $state(false)
 	let discussionComment = $state(null)
 
-	let commentAuthorName = $state("Anonymous")
+	let commentAuthorName = $state(null)
 	let commentAuthorAvatar = $state("")
 	let profileDetailsName = $state("")
 	let profileDetailsPic = $state("")
@@ -265,6 +265,10 @@
 		// 6. Profile Pic & Background Pic
 		const profilePic = getNormalizedUrl(pickVal(candidates, ["profileImage", "profilePic", "profilepic"]))
 		const backgroundPic = getNormalizedUrl(pickVal(candidates, ["backgroundImage", "backgroundPic", "backgroundpic"]))
+		const payloadAuthorName = pickVal(candidates, ["authorName", "author_name", "author"])
+		const payloadAuthorAvatar = getNormalizedUrl(
+			pickVal(candidates, ["authorAvatar", "authorPic", "authorImage"]),
+		)
 
 		// 7. Primary Image
 		let primaryImage = null
@@ -413,6 +417,8 @@
 			postType: type,
 			uuid,
 			authorId,
+			payloadAuthorName,
+			payloadAuthorAvatar,
 			commentPayload,
 			tags: resolvedTags,
 			hasTestTag,
@@ -455,23 +461,57 @@
 	})
 
 	const authorName = $derived.by(() => {
+		const topLevelAuthorName = String(
+			post?.authorName || post?.name || post?.title || "",
+		).trim()
 		if (card?.postType === "comment") {
-			return commentAuthorName || "Anonymous"
+			return commentAuthorName
 		}
 		if (card?.postType === "profile") {
-			return profileDetailsName || card.profileName || post?.author?.displayName || post?.author?.handle || "Anonymous"
+			return (
+				profileDetailsName ||
+				card.profileName ||
+				card.payloadAuthorName ||
+				topLevelAuthorName ||
+				post?.author?.displayName ||
+				post?.author?.handle ||
+				""
+			)
 		}
-		return profileDetailsName || post?.author?.displayName || post?.author?.handle || "Anonymous"
+		return (
+			profileDetailsName ||
+			card?.payloadAuthorName ||
+			topLevelAuthorName ||
+			post?.author?.displayName ||
+			post?.author?.handle ||
+			""
+		)
 	})
 
 	const authorAvatar = $derived.by(() => {
+		const topLevelAuthorAvatar = String(
+			post?.authorAvatar || post?.profilePic || post?.profileImage || "",
+		).trim()
 		if (card?.postType === "comment") {
 			return commentAuthorAvatar || ""
 		}
 		if (card?.postType === "profile") {
-			return profileDetailsPic || card.profilePic || post?.author?.avatar || ""
+			return (
+				profileDetailsPic ||
+				card.profilePic ||
+				card.payloadAuthorAvatar ||
+				topLevelAuthorAvatar ||
+				post?.author?.avatar ||
+				""
+			)
 		}
-		return profileDetailsPic || post?.author?.avatar || ""
+		return (
+			profileDetailsPic ||
+			card?.payloadAuthorAvatar ||
+			topLevelAuthorAvatar ||
+			post?.author?.avatar ||
+			""
+		)
 	})
 
 	const authorSearchHref = $derived.by(() => {
@@ -481,7 +521,14 @@
 				? commentAuthorUuid
 				: String(card?.authorId || "").trim()
 		if (!resolvedAuthorUuid) return ""
-		return `/search/${encodeURIComponent(resolvedAuthorUuid)}`
+		return `/search/uuid/${encodeURIComponent(resolvedAuthorUuid)}`
+	})
+
+	const authorSearchId = $derived.by(() => {
+		if (card?.postType === "comment") {
+			return String(card?.commentPayload?.author || "").trim()
+		}
+		return String(card?.authorId || "").trim()
 	})
 
 	onMount(() => {
@@ -489,7 +536,7 @@
 	})
 
 	$effect(() => {
-		commentAuthorName = "Anonymous"
+		commentAuthorName = ""
 		commentAuthorAvatar = ""
 		profileDetailsName = ""
 		profileDetailsPic = ""
@@ -504,7 +551,7 @@
 
 		if (type === "comment" && commentPayload?.context) {
 			getProfileDetails(commentPayload.author).then((details) => {
-				commentAuthorName = details?.name || "Anonymous"
+				commentAuthorName = details?.name 
 				commentAuthorAvatar = details?.profilePic || ""
 			}).catch((err) => {
 				console.error("Failed to load comment author details:", err)
@@ -574,8 +621,8 @@
 									if (payload && payload.uuid && payload.context === uuid) {
 										discussionComment = {
 											uuid: payload.uuid,
-											handle: firstPost.author?.handle || "anonymous",
-											name: firstPost.author?.displayName || firstPost.author?.handle || "Anonymous",
+											handle: firstPost.author?.handle ,
+											name: firstPost.author?.displayName || firstPost.author?.handle ,
 											avatar: firstPost.author?.avatar || "",
 											text: payload.text || firstPost.text || ""
 										}
@@ -631,7 +678,8 @@
 
 	<AuthorRow
 		avatar={authorAvatar}
-		name={authorName || "Anonymous"}
+		name={authorName}
+		authorId={authorSearchId || ""}
 		href={authorSearchHref || null}
 		dateValue={card?.postType === "comment" ? card.commentDate : (post?.createdAt || "")}
 		location={card?.postType === "comment" ? "" : card?.locationLine}

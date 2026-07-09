@@ -14,7 +14,7 @@ const profileCache = new Map();
 
 export async function getProfileDetails(authorUuid) {
 	const key = String(authorUuid || "").trim();
-	if (!key) return { name: "Anonymous", profilePic: "" };
+	if (!key) return { name: "", profilePic: "" };
 	if (profileCache.has(key)) return profileCache.get(key);
 
 	// 1. Check local profiles registry
@@ -23,7 +23,7 @@ export async function getProfileDetails(authorUuid) {
 		const registryMatch = localProfiles.find(p => p.uuid === key);
 		if (registryMatch) {
 			const profile = {
-				name: registryMatch.name || "Anonymous",
+				name: registryMatch.name,
 				profilePic: registryMatch.avatarUrl || ""
 			};
 			profileCache.set(key, profile);
@@ -36,7 +36,7 @@ export async function getProfileDetails(authorUuid) {
 	// 2. Check full profile from local store
 	const local = await getProfile(key);
 	if (local) {
-		const name = local.profileName || local.name || "Anonymous";
+		const name = local.profileName || local.name ;
 		const firstImage = Array.isArray(local.profileUploadedMedia) ? local.profileUploadedMedia[0] : null;
 		const profilePic = local.profilePic || firstImage?.bskyUrl || firstImage?.url || "";
 		const profile = { name, profilePic };
@@ -51,7 +51,7 @@ export async function getProfileDetails(authorUuid) {
 			const bundle = await res.json();
 			const primary = bundle?.combined?.primary || {};
 			const profile = {
-				name: primary.name || "Anonymous",
+				name: primary.name,
 				profilePic: primary.profilePic || ""
 			};
 			profileCache.set(key, profile);
@@ -61,7 +61,7 @@ export async function getProfileDetails(authorUuid) {
 		console.error("Failed to load author profile details", key, e);
 	}
 
-	return { name: "Anonymous", profilePic: "" };
+	return { name: "", profilePic: "" };
 }
 
 async function resolveCarrierBlob(url) {

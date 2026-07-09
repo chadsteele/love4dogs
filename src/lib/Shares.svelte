@@ -202,7 +202,7 @@
 					commonRecentTags: []
 				};
 
-				const profileName = currentProfileUuid ? "Self" : "Anonymous";
+				const profileName = currentProfileUuid ? "Self" : "";
 				const newMappedPost = {
 					uri: `at://did:plc:local/app.bsky.feed.post/${chatUuid}`,
 					displayKey: chatUuid,

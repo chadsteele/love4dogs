@@ -1304,20 +1304,13 @@
 				{#if displayTags.length > 0}
 					<div class="tag-pills" aria-label="Description tags">
 						{#each displayTags as tag}
-							<button
-								type="button"
+							<span
 								class="tag-pill{activeSearchTokens.has(tag)
 									? ' is-active'
 									: ''}"
-								aria-pressed={activeSearchTokens.has(tag)}
-								onclick={(event) => {
-									event.preventDefault();
-									event.stopPropagation();
-									toggleSearchTag(tag);
-								}}
 							>
 								#{tag}
-							</button>
+							</span>
 						{/each}
 					</div>
 				{/if}
@@ -1327,7 +1320,8 @@
 						? jsonData?.name ||
 							jsonData?.title ||
 							jsonData?.authorName
-						: jsonData?.authorName) || "Anonymous"}
+						: jsonData?.authorName) || jsonData?.name || jsonData?.title || ""}
+					authorId={targetAuthorId || ""}
 					dateValue={jsonData?.stamp ||
 						(derivedCreatedAtMs > 0
 							? String(derivedCreatedAtMs)
@@ -1600,13 +1594,7 @@
 		font-size: 0.82rem;
 		font-weight: 600;
 		line-height: 1.2;
-		cursor: pointer;
-	}
-
-	.tag-pill:hover,
-	.tag-pill:focus-visible {
-		border-color: #305741;
-		background: rgba(59, 110, 79, 0.18);
+		cursor: default;
 	}
 
 	.tag-pill.is-active {
