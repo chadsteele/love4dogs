@@ -21,12 +21,6 @@
 				})
 		}
 		if (browser) {
-			import("$lib/utils").then((m) => {
-				m.cleanWaterPostsFromCaches().catch((err) => {
-					console.error("Failed to run cache clean-up:", err)
-				})
-			})
-
 			// Handle broken image tags: retry only local/transient sources.
 			const shouldRetryImageSource = (src = "") => {
 				const value = String(src || "").trim()

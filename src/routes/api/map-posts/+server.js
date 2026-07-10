@@ -429,11 +429,6 @@ function tryAddMappedPost({ postLike, approximate, posts, seen, pageStats, autho
 		});
 		return;
 	}
-	if (isSea(Number(gps.lat), Number(gps.lon))) {
-		pageStats.skippedWater = (pageStats.skippedWater || 0) + 1;
-		return;
-	}
-
 	posts.push({
 		...mapped,
 		uuid: extractUuidFromMappedPost(mapped),
@@ -637,7 +632,6 @@ async function collectFromAuthorFeed({ author, approximate, posts, seen, allFail
 				if (addedKeys.has(key)) return;
 				const gps = hashToGps(normalizedExact);
 				if (!gps) return;
-				if (isSea(Number(gps.lat), Number(gps.lon))) return;
 				allMappedPosts.push({
 					...mapped,
 					uuid: mappedUuid,

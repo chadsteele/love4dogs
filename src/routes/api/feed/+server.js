@@ -1,8 +1,6 @@
 import { env } from '$env/dynamic/private';
 import { parseTimestampMs } from '$lib/dateTime.js';
 import { getPost, setPost } from '$lib/db.js';
-import isSea from 'is-sea';
-import { isPostInWater } from '$lib/utils.js';
 
 const BSKY_PUBLIC_XRPC_HOSTS = [
 	'https://public.api.bsky.app/xrpc',
@@ -647,8 +645,6 @@ export async function GET({ url }) {
 			.filter((post) => !isReplyPost(post) && extractPostIdentity({ post }))
 			.map((post) => mapPost({ post }));
 
-		posts = posts.filter(post => !isPostInWater(post, isSea));
-
 		if (chatParam === '1') {
 			posts = posts.filter(post => hasChatTag(post));
 		} else if (chatParam !== 'all') {
@@ -715,7 +711,6 @@ export async function GET({ url }) {
 	const commonRecentTags = countTopTags(feedItems, 20);
 
 	let posts = feedItems.map(mapPost);
-	posts = posts.filter(post => !isPostInWater(post, isSea));
 	if (chatParam === '1') {
 		posts = posts.filter(post => hasChatTag(post));
 	} else if (chatParam !== 'all') {
