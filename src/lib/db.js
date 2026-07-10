@@ -1,7 +1,11 @@
+import { DbCacheEntry, DbCacheStore } from './models.js';
+
 const DB_NAME = 'love4dogs_db';
 const DB_VERSION = 1;
 
 let dbPromise = null;
+const postCacheStore = DbCacheStore.from({ storeName: 'posts', maxEntries: 100 });
+const offlineImageCacheStore = DbCacheStore.from({ storeName: 'offlineImages', maxEntries: 200 });
 
 // In-memory fallback for Node.js / SSR / testing environments
 const memoryStores = {
@@ -34,6 +38,10 @@ function unwrap(val) {
 		copy[key] = unwrap(val[key]);
 	}
 	return copy;
+}
+
+function createCachedRecord(key, value, options = {}) {
+	return DbCacheEntry.from(key, unwrap(value), options).toJSON();
 }
 
 export function getDB() {
@@ -242,24 +250,12 @@ export async function getPost(uri) {
 
 export async function setPost(uri, data) {
 	const db = await getDB();
-	const unwrapped = unwrap(data);
-	if (typeof unwrapped === 'object' && unwrapped !== null) {
-		unwrapped.cachedAt = unwrapped._testCachedAt || Date.now();
-	}
+	const cachedRecord = createCachedRecord(uri, data, {
+		cachedAt: data?._testCachedAt || data?.cachedAt || Date.now()
+	});
 	if (!db) {
-		memoryStores.posts.set(uri, unwrapped);
-		// Prune memory store
-		const remaining = [];
-		for (const [key, val] of memoryStores.posts.entries()) {
-			remaining.push({ key, val });
-		}
-		if (remaining.length > 100) {
-			remaining.sort((a, b) => (a.val?.cachedAt || 0) - (b.val?.cachedAt || 0));
-			const toDeleteCount = remaining.length - 100;
-			for (let i = 0; i < toDeleteCount; i++) {
-				memoryStores.posts.delete(remaining[i].key);
-			}
-		}
+		memoryStores.posts.set(uri, cachedRecord);
+		postCacheStore.pruneMemoryStore(memoryStores.posts);
 		return;
 	}
 	return new Promise((resolve, reject) => {
@@ -267,7 +263,7 @@ export async function setPost(uri, data) {
 		const store = tx.objectStore('posts');
 		
 		// Put the new post
-		store.put(unwrapped, uri);
+		store.put(cachedRecord, uri);
 		
 		// Read and prune in the same transaction
 		const items = [];
@@ -285,9 +281,9 @@ export async function setPost(uri, data) {
 					remaining.push(item);
 				}
 				
-				if (remaining.length > 100) {
+				if (remaining.length > postCacheStore.maxEntries) {
 					remaining.sort((a, b) => (a.value?.cachedAt || 0) - (b.value?.cachedAt || 0));
-					const deleteCount = remaining.length - 100;
+					const deleteCount = remaining.length - postCacheStore.maxEntries;
 					for (let i = 0; i < deleteCount; i++) {
 						toDelete.push(remaining[i].key);
 					}
@@ -424,21 +420,10 @@ export async function getOfflineImage(uuid) {
 
 export async function setOfflineImage(uuid, blob) {
 	const db = await getDB();
-	const unwrapped = unwrap(blob);
-	const entry = { blob: unwrapped, cachedAt: Date.now() };
+	const entry = createCachedRecord(uuid, { blob }, { cachedAt: Date.now() });
 	if (!db) {
 		memoryStores.offlineImages.set(uuid, entry);
-		const remaining = [];
-		for (const [key, val] of memoryStores.offlineImages.entries()) {
-			remaining.push({ key, cachedAt: val?.cachedAt || 0 });
-		}
-		if (remaining.length > 200) {
-			remaining.sort((a, b) => a.cachedAt - b.cachedAt);
-			const toDeleteCount = remaining.length - 200;
-			for (let i = 0; i < toDeleteCount; i++) {
-				memoryStores.offlineImages.delete(remaining[i].key);
-			}
-		}
+		offlineImageCacheStore.pruneMemoryStore(memoryStores.offlineImages);
 		return;
 	}
 	return new Promise((resolve, reject) => {
@@ -461,9 +446,9 @@ export async function setOfflineImage(uuid, blob) {
 					remaining.push({ key: item.key, cachedAt: val?.cachedAt || 0 });
 				}
 				
-				if (remaining.length > 200) {
+				if (remaining.length > offlineImageCacheStore.maxEntries) {
 					remaining.sort((a, b) => a.cachedAt - b.cachedAt);
-					const deleteCount = remaining.length - 200;
+					const deleteCount = remaining.length - offlineImageCacheStore.maxEntries;
 					for (let i = 0; i < deleteCount; i++) {
 						store.delete(remaining[i].key);
 					}

@@ -1,6 +1,7 @@
 import { env } from '$env/dynamic/private';
 import { parseTimestampMs } from '$lib/dateTime.js';
 import { getPost, setPost } from '$lib/db.js';
+import { Bsky, Post } from '$lib/models.js';
 
 const BSKY_PUBLIC_XRPC_HOSTS = [
 	'https://public.api.bsky.app/xrpc',
@@ -292,14 +293,15 @@ function dedupePosts(posts = []) {
 }
 
 function mapPost(postWrapper) {
-	const post = postWrapper.post;
-	const record = post.record || {};
+	const bsky = Bsky.from(postWrapper);
 	const images = [];
 	const imageAlts = [];
 	let video = null;
 	let altTags = [];
 
-	const embedView = post.embed;
+	const post = postWrapper.post;
+	const record = post.record || {};
+	const embedView = bsky.embed;
 	const mediaView = embedView?.$type === 'app.bsky.embed.recordWithMedia#view' ? embedView.media : embedView;
 
 	if (mediaView?.$type === 'app.bsky.embed.images#view') {
@@ -336,19 +338,14 @@ function mapPost(postWrapper) {
 		.map((tag) => String(tag || '').trim().toLowerCase())
 		.filter(Boolean))];
 
-	return {
-		uri: post.uri,
+	return Post.from({
+		uri: bsky.uri,
 		displayKey: identityKey,
-		cid: post.cid,
-		text: record.text || '',
-		author: {
-			did: String(post?.author?.did || '').trim(),
-			handle: String(post?.author?.handle || '').trim(),
-			displayName: String(post?.author?.displayName || '').trim(),
-			avatar: String(post?.author?.avatar || '').trim(),
-		},
-		facets: Array.isArray(record.facets) ? record.facets : [],
-		createdAt: record.createdAt || null,
+		cid: bsky.cid,
+		text: bsky.record.text,
+		author: bsky.author.toJSON(),
+		facets: bsky.record.facets,
+		createdAt: bsky.record.createdAt,
 		images,
 		imageAlts,
 		video,
@@ -357,11 +354,11 @@ function mapPost(postWrapper) {
 			tags: tagsArray,
 			createdAt: record.createdAt || null,
 		},
-		replyCount: post.replyCount || 0,
-		repostCount: post.repostCount || 0,
-		likeCount: post.likeCount || 0,
+		replyCount: bsky.replyCount,
+		repostCount: bsky.repostCount,
+		likeCount: bsky.likeCount,
 		comments: []
-	};
+	}).toJSON();
 }
 
 function isReplyPost(item) {

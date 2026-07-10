@@ -56,6 +56,7 @@
 	} from "$lib/dateTime"
 	import ShowAdmin from "$lib/ShowAdmin.svelte"
 	import {enqueueSync, setOfflineImage, setPost, setProfile} from "$lib/db"
+	import {BskyManifest, Chunk, Location, Profile} from "$lib/models.js"
 	import {upsertTypeTag} from "$lib/postTypeTags.js"
 	import {
 		buildLocalImageProxyUrl,
@@ -1223,58 +1224,73 @@
 		return (timestamp - EPOCH_OFFSET + Number(cleanPin)).toString(36)
 	}
 
-	const primaryPostPayload = $derived({
-		uuid,
-		authorid: isPostEditRoute ? postAuthorUuid : uuid,
-		authorName: isPostEditRoute ? postAuthorName : "",
-		authorAvatar: isPostEditRoute ? postAuthorAvatar : "",
-		stamp: profileRecordStamp,
-		email: encryptEmailForPayload(email),
-		birthdate: encryptPinForPayload(pin, profileRecordStamp),
-		profileImage: isPostEditRoute
-			? null
-			: selectedProfileImage?.bskyUrl || selectedProfileImage?.url || null,
-		profilePic: isPostEditRoute
-			? null
-			: selectedProfileImage?.bskyUrl || selectedProfileImage?.url || null,
-		backgroundPic: isPostEditRoute
-			? null
-			: selectedBackgroundImage?.bskyUrl ||
-			  selectedBackgroundImage?.url ||
-			  null,
-		name: profileName,
-		description: profileDescription,
-		tags: isPostEditRoute
-			? normalizePublishTags($state.snapshot(postTags))
-			: ["profile"],
-		address: locationConfirmed ? addressText : "",
-		city: locationConfirmed ? confirmedLocation?.city || "" : "",
-		state: locationConfirmed ? confirmedLocation?.state || "" : "",
-		zip: locationConfirmed ? confirmedLocation?.zip || "" : "",
-		country: locationConfirmed ? confirmedLocation?.country || "" : "",
-		location: locationConfirmed && confirmedLocation ? {
-			lat: confirmedLocation.lat,
-			lon: confirmedLocation.lon,
-			approximate: confirmedLocation.approximate,
-			exact: confirmedLocation.exact,
-			hashPath: confirmedLocation.hashPath,
-			formattedAddress: confirmedLocation.formattedAddress,
-			city: confirmedLocation.city || "",
-			state: confirmedLocation.state || "",
-			country: confirmedLocation.country || "",
-			zip: confirmedLocation.zip || "",
-		} : null,
-	})
+	function buildConfirmedLocationPayload() {
+		if (!locationConfirmed || !confirmedLocation) return null
+		return Location.from(confirmedLocation)?.toJSON() || null
+	}
 
-	const subsequentPostsPayload = $derived(
-		minifiedChunkEntries.map((entry, index) => ({
+	function buildManifestPayload({
+		publishProfileImage = null,
+		publishBackgroundImage = null,
+		omitImagesForPostEdit = false,
+	} = {}) {
+		const shouldOmitImages = omitImagesForPostEdit && isPostEditRoute
+		return BskyManifest.from({
+			type: isPostEditRoute ? "post" : "profile",
 			uuid,
-			index: index + 1,
-			total: minifiedChunkEntries.length,
-			htmlFragment: entry.htmlFragment,
-			postBody: entry.postBody,
-			forceCompression: Boolean(entry.forceCompression),
-		})),
+			author: {
+				id: isPostEditRoute ? postAuthorUuid : uuid,
+				displayName: isPostEditRoute ? postAuthorName : "",
+				avatar: isPostEditRoute ? postAuthorAvatar : "",
+			},
+			stamp: profileRecordStamp,
+			email: encryptEmailForPayload(email),
+			birthdate: encryptPinForPayload(pin, profileRecordStamp),
+			profileImage: shouldOmitImages
+				? null
+				: publishProfileImage?.bskyUrl ||
+				  selectedProfileImage?.bskyUrl ||
+				  selectedProfileImage?.url ||
+				  null,
+			profilePic: shouldOmitImages
+				? null
+				: publishProfileImage?.bskyUrl ||
+				  selectedProfileImage?.bskyUrl ||
+				  selectedProfileImage?.url ||
+				  null,
+			backgroundPic: shouldOmitImages
+				? null
+				: publishBackgroundImage?.bskyUrl ||
+				  selectedBackgroundImage?.bskyUrl ||
+				  selectedBackgroundImage?.url ||
+				  null,
+			name: profileName,
+			description: profileDescription,
+			tags: isPostEditRoute
+				? normalizePublishTags($state.snapshot(postTags))
+				: ["profile"],
+			address: locationConfirmed ? addressText : "",
+			city: locationConfirmed ? confirmedLocation?.city || "" : "",
+			state: locationConfirmed ? confirmedLocation?.state || "" : "",
+			zip: locationConfirmed ? confirmedLocation?.zip || "" : "",
+			country: locationConfirmed ? confirmedLocation?.country || "" : "",
+			location: buildConfirmedLocationPayload(),
+		}).toJSON()
+	}
+
+	const primaryPostPayload = $derived.by(() => buildManifestPayload())
+
+	const subsequentPostsPayload = $derived.by(() =>
+		minifiedChunkEntries.map((entry, index) =>
+			Chunk.from({
+				uuid,
+				index: index + 1,
+				total: minifiedChunkEntries.length,
+				htmlFragment: entry.htmlFragment,
+				postBody: entry.postBody,
+				forceCompression: Boolean(entry.forceCompression),
+			}).toJSON(),
+		),
 	)
 
 	function mapSubsequentPayloadForBundle(entries = []) {
@@ -1526,21 +1542,24 @@
 
 	function buildStoredProfile() {
 		return {
+			...Profile.from({
+				uuid,
+				email,
+				pin,
+				profileName,
+				profileDescription,
+				contentHtml,
+				profileUploadedMedia,
+				backgroundUploadedMedia,
+				editorMediaList,
+				locationConfirmed,
+				confirmedAddress: addressText,
+				confirmedLocation,
+				tags: $state.snapshot(postTags),
+			}).toStoredProfile(),
 			uuid,
 			existingProfileAtUri,
-			email,
-			pin,
-			profileName,
-			profileDescription,
-			contentHtml,
-			profileUploadedMedia,
-			backgroundUploadedMedia,
-			editorMediaList,
 			addressText,
-			locationConfirmed,
-			confirmedAddress: addressText,
-			confirmedLocation,
-			tags: $state.snapshot(postTags),
 		}
 	}
 
@@ -2032,60 +2051,13 @@
 				publishBackgroundImage,
 				omitImagesForPostEdit = false,
 			}) => {
-				const shouldOmitImages = omitImagesForPostEdit && isPostEditRoute
 				return {
-					type: isPostEditRoute ? "post" : "profile",
-					uuid,
-					authorid: isPostEditRoute ? postAuthorUuid : uuid,
-					authorName: isPostEditRoute ? postAuthorName : "",
-					authorAvatar: isPostEditRoute ? postAuthorAvatar : "",
-					stamp: profileRecordStamp,
-					email: encryptEmailForPayload(email),
-					birthdate: encryptPinForPayload(pin, profileRecordStamp),
-					profileImage: shouldOmitImages
-						? null
-						: publishProfileImage?.bskyUrl ||
-						  selectedProfileImage?.bskyUrl ||
-						  selectedProfileImage?.url ||
-						  null,
-					profilePic: shouldOmitImages
-						? null
-						: publishProfileImage?.bskyUrl ||
-						  selectedProfileImage?.bskyUrl ||
-						  selectedProfileImage?.url ||
-						  null,
-					backgroundPic: shouldOmitImages
-						? null
-						: publishBackgroundImage?.bskyUrl ||
-						  selectedBackgroundImage?.bskyUrl ||
-						  selectedBackgroundImage?.url ||
-						  null,
-					name: profileName,
-					description: profileDescription,
+					...buildManifestPayload({
+						publishProfileImage,
+						publishBackgroundImage,
+						omitImagesForPostEdit,
+					}),
 					tags: activeTags,
-					address: locationConfirmed ? addressText : "",
-					city: locationConfirmed ? confirmedLocation?.city || "" : "",
-					state: locationConfirmed ? confirmedLocation?.state || "" : "",
-					zip: locationConfirmed ? confirmedLocation?.zip || "" : "",
-					country: locationConfirmed
-						? confirmedLocation?.country || ""
-						: "",
-					location:
-						locationConfirmed && confirmedLocation
-							? {
-								lat: confirmedLocation.lat,
-								lon: confirmedLocation.lon,
-								approximate: confirmedLocation.approximate,
-								exact: confirmedLocation.exact,
-								hashPath: confirmedLocation.hashPath,
-								formattedAddress:
-									confirmedLocation.formattedAddress,
-								city: confirmedLocation.city || "",
-								state: confirmedLocation.state || "",
-								country: confirmedLocation.country || "",
-								zip: confirmedLocation.zip || "",
-							}
-							: null,
 				}
 			}
 

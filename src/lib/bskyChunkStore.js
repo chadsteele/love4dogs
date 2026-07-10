@@ -1,4 +1,5 @@
 import { resolvePostTimestampMs } from './dateTime.js';
+import { BskyManifest, Chunk } from './models.js';
 
 const DEFAULT_CHUNK_ALT_PAYLOAD_TARGET_CHARS = 2000
 const DEFAULT_CONTENT_CHUNK_SIZE = 1800
@@ -529,13 +530,14 @@ export function buildCombinedPayloadBundle(
 	subsequentPayload = [],
 	options = {},
 ) {
+	const manifest = BskyManifest.from(primaryPayload)
 	const maxPayloadChars = Number(
 		options?.maxPayloadChars || DEFAULT_CHUNK_ALT_PAYLOAD_TARGET_CHARS,
 	)
 	const forceCompression = true
 	// Strip large html blob from primary: the reader always uses subsequent.join("") for
 	// display, so storing html in primary is pure duplication and doubles the combined JSON.
-	const {html: _primaryHtml, ...primaryForBundle} = primaryPayload || {}
+	const {html: _primaryHtml, ...primaryForBundle} = manifest.toJSON() || {}
 	const combinedJson = JSON.stringify({
 		primary: primaryForBundle,
 		subsequent: subsequentPayload,
@@ -557,12 +559,14 @@ export function buildCombinedPayloadBundle(
 
 export function buildChunkEntriesFromBundle(bundle = {}) {
 	const fragments = Array.isArray(bundle?.fragments) ? bundle.fragments : []
-	return fragments.map((fragment, index) => ({
-		index: index + 1,
-		total: fragments.length,
-		bundleFragment: String(fragment || ""),
-		forceCompression: Boolean(bundle?.forceCompression),
-	}))
+	return fragments.map((fragment, index) =>
+		Chunk.from({
+			index: index + 1,
+			total: fragments.length,
+			bundleFragment: String(fragment || ""),
+			forceCompression: Boolean(bundle?.forceCompression),
+		}).toJSON(),
+	)
 }
 
 async function postToBskyApi(fetchImpl, endpoint, body) {
@@ -1504,6 +1508,7 @@ function parseOriginPayloadValue(value = "", expectedUuid = "") {
 	return {
 		...parsed,
 		uuid: payloadUuid,
+		primary: BskyManifest.from(parsed?.primary || {}).toJSON(),
 		chunkUris,
 	}
 }

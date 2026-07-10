@@ -1,6 +1,7 @@
 
 import { generateUuid } from './uuid.js';
 import { parseTimestampMs } from './dateTime.js';
+import { Location, Profile } from './models.js';
 
 import {
 	getSetting,
@@ -52,16 +53,9 @@ function normalizeRegistryEntry(entry = {}) {
 }
 
 function deriveRegistryFieldsFromStoredProfile(profile = {}) {
-	if (!profile || typeof profile !== "object") {
-		return {name: "", avatarUrl: ""}
-	}
-
-	const name = String(profile?.profileName || profile?.name || "").trim()
-	const firstImage = Array.isArray(profile?.profileUploadedMedia)
-		? profile.profileUploadedMedia.find((entry) => entry && typeof entry === "object")
-		: null
-	const avatarUrl = String(firstImage?.bskyUrl || firstImage?.url || "").trim()
-	return {name, avatarUrl}
+	const normalized = Profile.from(profile)
+	const entry = normalized.toRegistryEntry(profile?.savedAt || Date.now())
+	return {name: entry.name, avatarUrl: entry.avatarUrl}
 }
 
 function buildImportedMediaEntry(value = "", label = "Image") {
@@ -136,23 +130,13 @@ export function rebuildStoredProfileFromBundle(
 		editorMediaList: [],
 		locationConfirmed: Boolean(primary?.locationConfirmed || !!primary?.location),
 		confirmedAddress: String(primary?.confirmedAddress || primary?.address || "").trim(),
-		confirmedLocation: primary?.location && typeof primary.location === "object" ? {
-			lat: Number(primary.location.lat),
-			lon: Number(primary.location.lon),
-			approximate: String(primary.location.approximate || "").trim(),
-			exact: String(primary.location.exact || "").trim(),
-			hashPath: String(primary.location.hashPath || "").trim(),
-			formattedAddress: String(primary.location.formattedAddress || "").trim(),
-			city: String(primary.location.city || "").trim(),
-			state: String(primary.location.state || "").trim(),
-			country: String(primary.location.country || "").trim(),
-			zip: String(primary.location.zip || "").trim(),
-		} : null,
+		confirmedLocation: Location.from(primary?.location)?.toJSON() || null,
 	}
+	const normalizedProfile = Profile.from(profile)
 
 	return {
 		uuid: newUuid,
-		profile,
+		profile: normalizedProfile.toStoredProfile(),
 		registryEntry: {
 			uuid: newUuid,
 			name: profileName,
@@ -227,13 +211,14 @@ export async function hasStoredProfiles() {
 export async function readStoredProfileByUuid(uuid = "") {
 	const key = String(uuid || "").trim()
 	if (!key) return null
-	return await getProfile(key)
+	const stored = await getProfile(key)
+	return stored ? Profile.from(stored).toStoredProfile() : null
 }
 
 export async function writeStoredProfileByUuid(uuid = "", profile = {}) {
 	const key = String(uuid || "").trim()
 	if (!key) return
-	await setProfile(key, profile)
+	await setProfile(key, Profile.from({...profile, uuid: key}).toStoredProfile())
 }
 
 export async function getCurrentProfileUuid() {
@@ -267,14 +252,10 @@ export async function deleteStoredProfileByUuid(uuid = "") {
 }
 
 export async function upsertStoredProfile(profile = {}) {
-	const uuid = String(profile?.uuid || "").trim()
+	const normalized = Profile.from(profile)
+	const uuid = String(normalized?.uuid || "").trim()
 	if (!uuid) return
-	const entry = {
-		uuid,
-		name: String(profile?.profileName || profile?.name || "").trim(),
-		avatarUrl: String(profile?.avatarUrl || profile?.avatar || ""),
-		savedAt: Date.now(),
-	}
+	const entry = normalized.toRegistryEntry(Date.now())
 	const next = (await listStoredProfiles()).filter((item) => item.uuid !== uuid)
 	next.unshift(entry)
 	await setSetting(PROFILE_REGISTRY_KEY, next)

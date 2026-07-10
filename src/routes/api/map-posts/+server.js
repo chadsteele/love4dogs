@@ -1,5 +1,5 @@
 import { hashToGps } from '$lib/utils';
-import isSea from 'is-sea';
+import { Bsky, Post } from '$lib/models.js';
 
 const BSKY_PUBLIC_XRPC_HOSTS = ['https://public.api.bsky.app/xrpc'];
 const ACCOUNT_HANDLES = [ 'love4dogs.club'];
@@ -178,12 +178,13 @@ function hasChatTag(post) {
 }
 
 function mapPost(post) {
+	const bsky = Bsky.from(post);
 	const record = post?.record || {};
 	const images = [];
 	const imageAlts = [];
 	let video = null;
 
-	const embedView = post?.embed;
+	const embedView = bsky.embed;
 	const mediaView =
 		embedView?.$type === 'app.bsky.embed.recordWithMedia#view' ? embedView.media : embedView;
 
@@ -202,20 +203,21 @@ function mapPost(post) {
 		};
 	}
 
-	return {
-		uri: post?.uri || '',
-		cid: post?.cid || '',
-		text: record.text || '',
-		facets: Array.isArray(record.facets) ? record.facets : [],
-		createdAt: record.createdAt || null,
+	return Post.from({
+		uri: bsky.uri,
+		cid: bsky.cid,
+		text: bsky.record.text,
+		author: bsky.author.toJSON(),
+		facets: bsky.record.facets,
+		createdAt: bsky.record.createdAt,
 		images,
 		imageAlts,
 		video,
-		replyCount: post?.replyCount || 0,
-		repostCount: post?.repostCount || 0,
-		likeCount: post?.likeCount || 0,
+		replyCount: bsky.replyCount,
+		repostCount: bsky.repostCount,
+		likeCount: bsky.likeCount,
 		comments: []
-	};
+	}).toJSON();
 }
 
 function isValidHashPart(value = '', expectedLength = 0) {

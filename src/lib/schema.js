@@ -1,22 +1,14 @@
+import {
+	BskyManifest,
+	PROFILE_TAG,
+	normalizeSchemaTags,
+	isProfileSchemaRecord,
+} from "./models.js"
+
 const SHARED_AUTHOR_ID_KEY = "love4dogs.authorid"
-const PROFILE_TAG = "profile"
 
 function normalizeString(value = "") {
 	return String(value || "").trim()
-}
-
-function normalizeTags(tags = []) {
-	const out = []
-	for (const raw of Array.isArray(tags) ? tags : []) {
-		const value = normalizeString(raw).toLowerCase()
-		if (!value) continue
-		if (!out.includes(value)) out.push(value)
-	}
-	return out.slice(0, 50)
-}
-
-function hasProfileTag(tags = []) {
-	return normalizeTags(tags).includes(PROFILE_TAG)
 }
 
 function randomId(length = 12) {
@@ -72,54 +64,26 @@ if (typeof window !== 'undefined') {
 	}).catch(() => {});
 }
 
-export function normalizeSchemaTags(tags = []) {
-	return normalizeTags(tags)
-}
-
-export function isProfileSchemaRecord(value = {}) {
-	return hasProfileTag(value?.tags)
-}
-
-export class BlueskySchemaRecord {
+export class BlueskySchemaRecord extends BskyManifest {
 	constructor(value = {}) {
-		const uuid = normalizeString(value?.uuid)
-		const title = normalizeString(value?.title || value?.name)
-		const description = normalizeString(value?.description)
-		const tags = normalizeTags(value?.tags)
-
-		this.uuid = uuid
-		this.authorid = normalizeString(value?.authorid)
-		this.stamp = normalizeString(value?.stamp)
-		this.canonicalurl = normalizeString(value?.canonicalurl || value?.canonicalUrl)
-		this.title = title
-		this.profilePic = normalizeString(value?.profilePic)
-		this.backgroundPic = normalizeString(value?.backgroundPic)
-		this.description = description
+		super({
+			...value,
+			name: value?.title || value?.name,
+		})
+		this.canonicalurl = normalizeString(
+			value?.canonicalurl || value?.canonicalUrl,
+		)
 		this.html = String(value?.html || "")
-		this.tags = tags
-	}
-
-	isProfile() {
-		return hasProfileTag(this.tags)
+		this.title = this.name
 	}
 
 	toJSON({includeCompatAliases = true} = {}) {
-		const next = {
-			uuid: this.uuid,
-			authorid: this.authorid,
-			stamp: this.stamp,
-			title: this.title,
-			profilePic: this.profilePic || null,
-			backgroundPic: this.backgroundPic || null,
-			description: this.description,
-			html: this.html,
-			tags: this.tags,
+		const next = super.toJSON({includeCompatAliases})
+		next.title = this.name
+		next.html = this.html
+		if (this.canonicalurl) {
+			next.canonicalurl = this.canonicalurl
 		}
-
-		if (includeCompatAliases) {
-			next.name = this.title
-		}
-
 		return next
 	}
 

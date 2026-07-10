@@ -1,12 +1,10 @@
 import {lookupLocationDetails} from "./utils.js"
 import { getCurrentProfileUuid, readStoredProfileByUuid, listStoredProfiles } from './profileRegistry.js'
+import { Location } from './models.js'
 
 
 export function hasRequiredLocationParts(location) {
-	if (!location || typeof location !== "object") return false
-	return [location.state, location.country, location.zip].every(
-		(value) => String(value || "").trim().length > 0,
-	)
+	return Boolean(Location.from(location)?.hasRequiredAddressParts())
 }
 
 export function normalizeAddressPart(value = "") {
@@ -17,46 +15,11 @@ export function normalizeAddressPart(value = "") {
 }
 
 export function buildCompleteAddress(location = {}) {
-	const line1 = [location.houseNumber, location.road]
-		.map((value) => String(value || "").trim())
-		.filter(Boolean)
-		.join(" ")
-	const line2 = [location.neighbourhood, location.suburb]
-		.map((value) => String(value || "").trim())
-		.filter(Boolean)
-		.join(", ")
-	const structured = [
-		line1,
-		line2,
-		location.city,
-		location.state,
-		location.country,
-		location.zip,
-	]
-		.map((value) => String(value || "").trim())
-		.filter(Boolean)
-		.join(", ")
-
-	return String(location.formattedAddress || structured).trim()
+	return Location.from(location)?.buildCompleteAddress() || ""
 }
 
 export function addressOkay(newAddress, confirmedLocation) {
-	if (!hasRequiredLocationParts(confirmedLocation)) return false
-	const neu = normalizeAddressPart(newAddress)
-	const required = [
-		confirmedLocation?.city,
-		confirmedLocation?.state,
-		confirmedLocation?.country,
-		confirmedLocation?.zip,
-	]
-		.map((value) => normalizeAddressPart(value))
-		.filter(Boolean)
-
-	if (!neu) return false
-
-	if (required.some((part) => !neu.includes(part))) return false
-
-	return true
+	return Boolean(Location.from(confirmedLocation)?.matchesAddress(newAddress))
 }
 
 export async function handleLocationModalConfirm(
@@ -75,7 +38,7 @@ export async function handleLocationModalConfirm(
 			modalLocation.lon,
 		)
 		if (location) {
-			confirmedLocation = location
+			confirmedLocation = Location.from(location)?.toJSON() || location
 			const parts = [
 				location.city,
 				location.state,
@@ -98,7 +61,7 @@ export async function handleLocationModalConfirm(
 		}
 	}
 
-	const completeAddress = buildCompleteAddress(confirmedLocation)
+	const completeAddress = Location.from(confirmedLocation)?.buildCompleteAddress() || ""
 	if (completeAddress) addressText = completeAddress
 
 	const confirmedAddress = addressText.trim()
